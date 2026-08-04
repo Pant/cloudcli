@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildOpenCodeDefinitionFromVerboseModels,
   buildOpenCodeDefinitionFromIds,
+  OpenCodeProviderModels,
   parseOpenCodeModelsStdout,
   parseOpenCodeVerboseModelsStdout,
 } from '@/modules/providers/list/opencode/opencode-models.provider.js';
@@ -58,6 +59,11 @@ test('OpenCode models provider formats frontend labels from provider-prefixed id
       description: 'anthropic - anthropic/claude-opus-4-7-fast',
     },
     {
+      value: 'google/model-alpha',
+      label: 'Model Alpha',
+      description: 'google - google/model-alpha',
+    },
+    {
       value: 'openai/gpt-5.4-mini-fast',
       label: 'GPT-5.4 Mini Fast',
       description: 'openai - openai/gpt-5.4-mini-fast',
@@ -72,6 +78,29 @@ test('OpenCode models provider formats frontend labels from provider-prefixed id
       label: 'Alpha V12 Special (2026-12-31)',
       description: 'newprovider - newprovider/alpha-v12-special-20261231',
     },
+  ]);
+});
+
+test('OpenCode provider exposes every model returned by the CLI to the catalog', async () => {
+  const provider = new OpenCodeProviderModels(async () => `
+anthropic/claude-sonnet-5
+{
+  "id": "claude-sonnet-5",
+  "providerID": "anthropic",
+  "name": "Claude Sonnet 5"
+}
+google/gemini-3-pro
+openai/gpt-5.5
+opencode/big-pickle
+`);
+
+  const definition = await provider.getSupportedModels();
+
+  assert.deepEqual(definition.OPTIONS.map((model) => model.value), [
+    'anthropic/claude-sonnet-5',
+    'google/gemini-3-pro',
+    'openai/gpt-5.5',
+    'opencode/big-pickle',
   ]);
 });
 
@@ -138,5 +167,20 @@ google/model-alpha
         ],
       },
     },
+    {
+      value: 'google/model-alpha',
+      label: 'Model Alpha',
+      description: 'google - google/model-alpha',
+    },
+  ]);
+});
+
+test('OpenCode models provider accepts upstream ids containing additional slashes', () => {
+  assert.deepEqual(parseOpenCodeModelsStdout(`
+cloudcli-openai/provider/model-name
+cloudcli-openai/simple-model
+`), [
+    'cloudcli-openai/provider/model-name',
+    'cloudcli-openai/simple-model',
   ]);
 });

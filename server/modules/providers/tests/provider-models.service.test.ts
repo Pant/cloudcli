@@ -126,8 +126,8 @@ test('provider models are cached for the three-day ttl', async () => {
   }
 });
 
-test('claude provider models are always loaded directly from the provider', async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'provider-model-cache-claude-direct-'));
+test('claude and opencode provider models are always loaded directly from the provider', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'provider-model-cache-direct-'));
   let loadCount = 0;
 
   try {
@@ -144,13 +144,18 @@ test('claude provider models are always loaded directly from the provider', asyn
       }),
     });
 
-    const first = await service.getProviderModels('claude');
-    const second = await service.getProviderModels('claude');
+    for (const provider of ['claude', 'opencode'] as const) {
+      const firstCount = loadCount + 1;
+      const first = await service.getProviderModels(provider);
+      const secondCount = firstCount + 1;
+      const second = await service.getProviderModels(provider);
 
-    assert.equal(loadCount, 2);
-    assert.equal(first.models.DEFAULT, 'claude-1');
-    assert.equal(second.models.DEFAULT, 'claude-2');
-    assert.equal(second.cache.source, 'fresh');
+      assert.equal(first.models.DEFAULT, `${provider}-${firstCount}`);
+      assert.equal(second.models.DEFAULT, `${provider}-${secondCount}`);
+      assert.equal(second.cache.source, 'fresh');
+    }
+
+    assert.equal(loadCount, 4);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

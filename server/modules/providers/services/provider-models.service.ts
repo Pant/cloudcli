@@ -16,7 +16,7 @@ import type {
 
 export const PROVIDER_MODELS_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const PROVIDER_MODELS_CACHE_VERSION = 2;
-const UNCACHED_PROVIDERS = new Set<LLMProvider>(['claude']);
+const UNCACHED_PROVIDERS = new Set<LLMProvider>(['claude', 'opencode']);
 
 /** Session-row access the service needs, narrowed so tests can stub it. */
 type ProviderModelsSessionStore = {

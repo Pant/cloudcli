@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from 'express';
 
 import { providerAuthService } from '@/modules/providers/services/provider-auth.service.js';
+import { providerAgentsService } from '@/modules/providers/services/agents.service.js';
 import { providerCapabilitiesService } from '@/modules/providers/services/provider-capabilities.service.js';
 import { providerMcpService } from '@/modules/providers/services/mcp.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
@@ -14,6 +15,7 @@ import type {
   McpTransport,
   ProviderSkillCreateFile,
   ProviderSkillCreateInput,
+  UpsertProviderAgentInput,
   UpsertProviderMcpServerInput,
 } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
@@ -279,6 +281,16 @@ const parseProviderSkillCreatePayload = (payload: unknown): ProviderSkillCreateI
   return { entries };
 };
 
+const parseProviderAgentPayload = (payload: unknown): UpsertProviderAgentInput => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new AppError('Request body must be an object.', {
+      code: 'INVALID_REQUEST_BODY',
+      statusCode: 400,
+    });
+  }
+  return payload as UpsertProviderAgentInput;
+};
+
 const parseProvider = (value: unknown): LLMProvider => {
   const normalized = normalizeProviderParam(value);
   if (
@@ -422,6 +434,48 @@ router.post(
     res.json(createApiSuccessResponse(
       stored ?? { provider, sessionId, model, source: 'session' as const },
     ));
+  }),
+);
+
+// ----------------- Global agent definition routes -----------------
+router.get(
+  '/:provider/agents/available',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const workspacePath = readOptionalQueryString(req.query.workspacePath);
+    const agents = await providerAgentsService.listAvailableProviderAgents(provider, workspacePath);
+    res.json(createApiSuccessResponse({ provider, agents }));
+  }),
+);
+
+router.get(
+  '/:provider/agents',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const agents = await providerAgentsService.listProviderAgents(provider);
+    res.json(createApiSuccessResponse({ provider, agents }));
+  }),
+);
+
+router.post(
+  '/:provider/agents',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const input = parseProviderAgentPayload(req.body);
+    const agent = await providerAgentsService.upsertProviderAgent(provider, input);
+    res.status(201).json(createApiSuccessResponse({ provider, agent }));
+  }),
+);
+
+router.delete(
+  '/:provider/agents/:name',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const result = await providerAgentsService.removeProviderAgent(
+      provider,
+      readPathParam(req.params.name, 'name'),
+    );
+    res.json(createApiSuccessResponse(result));
   }),
 );
 

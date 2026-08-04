@@ -418,7 +418,22 @@ async function getActionPoint(page: any, input: { selector?: string; text?: stri
   };
 }
 
+/**
+ * Owns Browser settings, runtime sessions, and managed MCP registration.
+ * The server entrypoint initializes it at startup, while Browser routes use it
+ * for settings and monitored agent-session operations.
+ */
 export const browserUseService = {
+  async initialize() {
+    const settings = readSettings();
+    if (!settings.enabled) {
+      return { enabled: false, registered: false };
+    }
+
+    const registration = await this.registerAgentMcp();
+    return { enabled: true, registered: true, registration };
+  },
+
   async getSettings() {
     return readSettings();
   },

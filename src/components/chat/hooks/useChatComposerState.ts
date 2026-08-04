@@ -48,6 +48,8 @@ interface UseChatComposerStateArgs {
    */
   currentProviderModel: string;
   currentProviderEffort: string;
+  /** Named OpenCode agent selected for immediate and queued sends. */
+  currentProviderAgent: string;
   isLoading: boolean;
   processingSessions?: SessionActivityMap;
   canAbortSession: boolean;
@@ -243,6 +245,7 @@ export function useChatComposerState({
   resolvePermissionModeForProvider,
   currentProviderModel,
   currentProviderEffort,
+  currentProviderAgent,
   isLoading,
   processingSessions,
   canAbortSession,
@@ -656,6 +659,7 @@ export function useChatComposerState({
     return {
       model: currentProviderModel,
       effort: currentProviderEffort,
+      ...(provider === 'opencode' ? { agent: currentProviderAgent } : {}),
       permissionMode: resolvePermissionModeForProvider(provider, permissionMode),
       toolsSettings,
       skipPermissions: toolsSettings?.skipPermissions || false,
@@ -663,6 +667,7 @@ export function useChatComposerState({
     };
   }, [
     currentProviderEffort,
+    currentProviderAgent,
     currentProviderModel,
     permissionMode,
     provider,

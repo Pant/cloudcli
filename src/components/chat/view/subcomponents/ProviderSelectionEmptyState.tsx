@@ -24,10 +24,10 @@ import {
 } from "../../../../shared/view/ui";
 
 const PROVIDER_META: { id: LLMProvider; name: string }[] = [
+  { id: "opencode", name: "OpenCode" },
   { id: "claude", name: "Anthropic" },
   { id: "codex", name: "OpenAI" },
   { id: "cursor", name: "Cursor" },
-  { id: "opencode", name: "OpenCode" },
 ];
 
 const MOD_KEY =

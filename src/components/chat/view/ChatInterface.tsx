@@ -5,11 +5,12 @@ import { ArrowDownIcon } from 'lucide-react';
 import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
 import { useWebSocket } from '../../../contexts/WebSocketContext';
 import PermissionContext from '../../../contexts/PermissionContext';
-import type { ChatInterfaceProps, PermissionMode, Provider  } from '../types/types';
+import type { ChatInterfaceProps, Provider } from '../types/types';
 import { useChatProviderState } from '../hooks/useChatProviderState';
 import { useChatSessionState } from '../hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '../hooks/useChatRealtimeHandlers';
 import { useChatComposerState } from '../hooks/useChatComposerState';
+import { useOpenCodeAgentState } from '../hooks/useOpenCodeAgentState';
 import { useSessionStore } from '../../../stores/useSessionStore';
 
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
@@ -43,6 +44,7 @@ function ChatInterface({
   const sessionStore = useSessionStore();
   const streamTimerRef = useRef<number | null>(null);
   const accumulatedStreamRef = useRef('');
+  const agentModelSyncKeyRef = useRef('');
   // When each session's `chat.subscribe` was last sent; idle acks older than
   // a later local request are discarded as stale.
   const statusCheckSentAtRef = useRef(new Map<string, number>());
@@ -77,8 +79,6 @@ function ChatInterface({
     permissionMode,
     pendingPermissionRequests,
     setPendingPermissionRequests,
-    availablePermissionModes,
-    selectPermissionMode,
     cyclePermissionMode,
     providerModelCatalog,
     providerModelCacheCatalog,
@@ -92,6 +92,16 @@ function ChatInterface({
     selectedSession,
     selectedProject,
   });
+
+  const {
+    selectedAgent,
+    agentOptions,
+    agentsLoading,
+    selectAgent,
+    rememberAgentModel,
+    getAgentModel,
+    refreshAgents,
+  } = useOpenCodeAgentState(provider, selectedProject?.fullPath || selectedProject?.path);
 
   const {
     chatMessages,
@@ -203,6 +213,7 @@ function ChatInterface({
     cyclePermissionMode,
     currentProviderModel,
     currentProviderEffort,
+    currentProviderAgent: selectedAgent,
     isLoading: isProcessing,
     processingSessions,
     canAbortSession,
@@ -287,15 +298,77 @@ function ChatInterface({
     handlePermissionDecision,
   }), [pendingPermissionRequests, handlePermissionDecision]);
 
+  const resolveAgentModelOption = useCallback((agent: string) => {
+    const preferredModel = getAgentModel(agent);
+    if (!preferredModel) {
+      return null;
+    }
+    const exactMatch = currentProviderModelOptions.find((option) => option.value === preferredModel);
+    if (exactMatch) {
+      return exactMatch.value;
+    }
+    const suffixMatches = currentProviderModelOptions.filter(
+      (option) => option.value.endsWith(`/${preferredModel}`),
+    );
+    return suffixMatches.length === 1 ? suffixMatches[0].value : null;
+  }, [currentProviderModelOptions, getAgentModel]);
+
   // A composer pick becomes the default for new chats and, when a session is
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
     try {
       await selectProviderModel(provider, model, currentSessionId || selectedSession?.id || null);
+      if (provider === 'opencode' && selectedAgent) {
+        rememberAgentModel(selectedAgent, model);
+      }
     } catch (error) {
       console.error('Error changing the active session model:', error);
     }
-  }, [currentSessionId, provider, selectProviderModel, selectedSession?.id]);
+  }, [currentSessionId, provider, rememberAgentModel, selectProviderModel, selectedAgent, selectedSession?.id]);
+
+  useEffect(() => {
+    if (provider !== 'opencode') {
+      agentModelSyncKeyRef.current = '';
+      return;
+    }
+    if (!selectedAgent || agentOptions.length === 0 || currentProviderModelOptions.length === 0) {
+      return;
+    }
+
+    const workspacePath = selectedProject?.fullPath || selectedProject?.path || '';
+    const syncKey = `${workspacePath}::${selectedAgent}`;
+    if (agentModelSyncKeyRef.current === syncKey) {
+      return;
+    }
+    agentModelSyncKeyRef.current = syncKey;
+
+    const restoredModel = resolveAgentModelOption(selectedAgent);
+    if (!restoredModel || restoredModel === currentProviderModel) {
+      return;
+    }
+    void selectProviderModel(
+      provider,
+      restoredModel,
+      currentSessionId || selectedSession?.id || null,
+    ).then(() => {
+      rememberAgentModel(selectedAgent, restoredModel);
+    }).catch((error) => {
+      console.error('Error restoring the selected agent model:', error);
+    });
+  }, [
+    agentOptions.length,
+    currentProviderModel,
+    currentProviderModelOptions.length,
+    currentSessionId,
+    provider,
+    rememberAgentModel,
+    resolveAgentModelOption,
+    selectedAgent,
+    selectedProject?.fullPath,
+    selectedProject?.path,
+    selectedSession?.id,
+    selectProviderModel,
+  ]);
 
   // Mirrors ChatComposer's own visibility check so the message pane can
   // reserve enough bottom space to keep the floating status tab from
@@ -399,10 +472,11 @@ function ChatInterface({
           activity={sessionActivity}
           isLoading={isProcessing}
           onAbortSession={handleAbortSession}
-          permissionMode={permissionMode}
-          availablePermissionModes={availablePermissionModes}
-          onSelectPermissionMode={(mode) => selectPermissionMode(mode as PermissionMode)}
-          providerLabel={selectedProviderLabel}
+          agent={selectedAgent}
+          availableAgentOptions={agentOptions}
+          agentsLoading={agentsLoading}
+          onSelectAgent={selectAgent}
+          onRefreshAgents={() => void refreshAgents()}
           effort={currentProviderEffort}
           availableEffortOptions={currentProviderEffortOptions}
           onSelectEffort={(nextEffort) => setStoredProviderEffort(provider, nextEffort)}
@@ -457,7 +531,6 @@ function ChatInterface({
           onInputFocusChange={handleInputFocusChange}
           placeholder={t('input.placeholder', { provider: selectedProviderLabel })}
           isTextareaExpanded={isTextareaExpanded}
-          sendByCtrlEnter={sendByCtrlEnter}
         />
         </div>
       </div>

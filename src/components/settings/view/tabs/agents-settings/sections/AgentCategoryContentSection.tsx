@@ -6,6 +6,7 @@ import { ProviderSkills } from '../../../../../skills';
 
 import AccountContent from './content/AccountContent';
 import PermissionsContent from './content/PermissionsContent';
+import OpenCodeAgentsContent from './content/OpenCodeAgentsContent';
 
 export default function AgentCategoryContentSection({
   selectedAgent,
@@ -97,6 +98,10 @@ export default function AgentCategoryContentSection({
             path: project.path,
           }))}
         />
+      )}
+
+      {selectedCategory === 'agent-config' && selectedAgent === 'opencode' && (
+        <OpenCodeAgentsContent />
       )}
     </div>
   );

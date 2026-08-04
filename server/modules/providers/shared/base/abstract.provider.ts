@@ -1,6 +1,7 @@
 import type {
   IProvider,
   IProviderAuth,
+  IProviderAgents,
   IProviderMcp,
   IProviderModels,
   IProviderRuntime,
@@ -25,6 +26,7 @@ export abstract class AbstractProvider implements IProvider {
   abstract readonly skills: IProviderSkills;
   abstract readonly sessions: IProviderSessions;
   abstract readonly sessionSynchronizer: IProviderSessionSynchronizer;
+  readonly agents?: IProviderAgents;
 
   protected constructor(id: LLMProvider) {
     this.id = id;

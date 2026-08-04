@@ -39,15 +39,16 @@ export default function ComposerModelMenu({
 }: ComposerModelMenuProps) {
   const { t } = useTranslation('chat');
   const [isOpen, setIsOpen] = useState(false);
-  const [isModelSectionOpen, setIsModelSectionOpen] = useState(false);
+  const [isModelSectionOpen, setIsModelSectionOpen] = useState(true);
   const close = useCallback(() => setIsOpen(false), []);
   const { triggerRef, menuRef, anchor, updateAnchor } = useComposerMenuAnchor(isOpen, close);
 
-  // The model list starts collapsed every time the menu opens, the way Codex
-  // shows reasoning first and keeps the longer model list one click away.
+  // Show the already refreshed catalog as soon as the menu opens. Users can
+  // still collapse it, but reopening the menu never requires a second click
+  // on the current model before the available models appear.
   useEffect(() => {
     if (!isOpen) {
-      setIsModelSectionOpen(false);
+      setIsModelSectionOpen(true);
     }
   }, [isOpen]);
 

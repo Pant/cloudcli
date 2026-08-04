@@ -16,6 +16,7 @@ import { createCompleteMessage, createNormalizedMessage, flattenPromptForWindows
 const spawnFunction = crossSpawn;
 
 const activeOpenCodeProcesses = new Map();
+const OPENCODE_FALLBACK_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
 
 /**
  * Maps the UI permission mode onto OpenCode's non-interactive controls.
@@ -50,9 +51,16 @@ export function resolveOpenCodePermissionOptions(permissionMode) {
 function resolveOpenCodeEffort(model, effort, modelsDefinition) {
   const selectedModel = modelsDefinition?.OPTIONS?.find((option) => option.value === model);
   const allowedEfforts = selectedModel?.effort?.values?.map((value) => value.value) || [];
-  return typeof effort === 'string' && effort !== 'default' && allowedEfforts.includes(effort)
-    ? effort
-    : undefined;
+  if (typeof effort !== 'string' || effort === 'default') {
+    return undefined;
+  }
+  // Dynamically discovered OpenCode/custom-provider models do not always
+  // publish variant metadata. In that case accept OpenCode's known reasoning
+  // levels so the composer selection still reaches `opencode run --variant`.
+  const supportedEfforts = allowedEfforts.length > 0
+    ? new Set(allowedEfforts)
+    : OPENCODE_FALLBACK_EFFORTS;
+  return supportedEfforts.has(effort) ? effort : undefined;
 }
 
 function readOpenCodeSessionId(event) {
@@ -134,7 +142,8 @@ async function spawnOpenCode(command, options = {}, ws, context) {
       sessionSummary,
       images,
       files,
-      permissionMode
+      permissionMode,
+      agent
     } = options;
     // Callers pass the stable app session id; the CLI resumes with the
     // provider-native id recorded on the session row.
@@ -271,6 +280,14 @@ async function spawnOpenCode(command, options = {}, ws, context) {
         args.push('--variant', resolvedEffort);
       }
       const permissionOptions = resolveOpenCodePermissionOptions(permissionMode);
+      // Plan mode is itself implemented by selecting OpenCode's plan agent and
+      // therefore takes precedence over the composer-level agent choice.
+      const selectedAgent = typeof agent === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(agent)
+        ? agent
+        : null;
+      if (selectedAgent && permissionMode !== 'plan') {
+        args.push('--agent', selectedAgent);
+      }
       args.push(...permissionOptions.args);
       const hasAttachments =
         normalizeAttachmentDescriptors(images).length > 0

@@ -42,12 +42,14 @@ import {
 } from './modules/plugins/index.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import { voiceRoutes } from './modules/voice/index.js';
-import browserUseRoutes from './modules/browser-use/browser-use.routes.js';
+import {
+    browserUseMcpRoutes,
+    browserUseRoutes,
+    browserUseService,
+} from './modules/browser-use/index.js';
 import { assetsRoutes } from './modules/assets/index.js';
 import { fileTreeRoutes } from './modules/file-tree/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
-import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
-import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { initializeDatabase, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './modules/notifications/index.js';
 import { IS_PLATFORM } from './constants/config.js';
@@ -197,6 +199,19 @@ app.use('/api/agent', agentRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
 
+// Keep missing API endpoints out of the SPA fallback. This also gives clients
+// a stable JSON error when the frontend and a not-yet-restarted backend are on
+// different builds.
+app.use('/api', (_req, res) => {
+    res.status(404).json({
+        success: false,
+        error: {
+            code: 'API_ROUTE_NOT_FOUND',
+            message: 'API route not found',
+        },
+    });
+});
+
 // Serve public files (like api-docs.html)
 app.use(express.static(path.join(APP_ROOT, 'public')));
 
@@ -330,6 +345,10 @@ async function startServer() {
 
         // Configure Web Push (VAPID keys)
         configureWebPush();
+
+        // Reconcile managed Browser MCP entries on every startup. This backfills
+        // providers added after Browser was originally enabled, such as OpenCode.
+        await browserUseService.initialize();
 
         // Check if running in production mode (dist folder exists)
         const distIndexPath = path.join(APP_ROOT, 'dist', 'index.html');

@@ -16,8 +16,8 @@ import { useVoiceInput } from '../../hooks/useVoiceInput';
 import { useVoiceAvailable } from '../../hooks/useVoiceAvailable';
 import type { QueuedDraft } from '../../hooks/useChatComposerState';
 import type { SessionActivity } from '../../../../hooks/useSessionProtection';
-import type { PendingPermissionRequest, PermissionMode } from '../../types/types';
-import type { ProviderModelOption } from '../../../../types/app';
+import type { PendingPermissionRequest } from '../../types/types';
+import type { ProviderAgentOption, ProviderModelOption } from '../../../../types/app';
 import {
   PromptInput,
   PromptInputHeader,
@@ -36,8 +36,8 @@ import VoiceInputButton from './VoiceInputButton';
 import PermissionRequestsBanner from './PermissionRequestsBanner';
 import TokenUsageSummary from './TokenUsageSummary';
 import QueuedMessageCard from './QueuedMessageCard';
+import ComposerAgentMenu from './ComposerAgentMenu';
 import ComposerModelMenu from './ComposerModelMenu';
-import ComposerPermissionMenu from './ComposerPermissionMenu';
 
 interface MentionableFile {
   name: string;
@@ -64,10 +64,11 @@ interface ChatComposerProps {
   activity: SessionActivity | null;
   isLoading: boolean;
   onAbortSession: () => void;
-  permissionMode: PermissionMode | string;
-  availablePermissionModes: (PermissionMode | string)[];
-  onSelectPermissionMode: (mode: PermissionMode | string) => void;
-  providerLabel: string;
+  agent: string;
+  availableAgentOptions: ProviderAgentOption[];
+  agentsLoading: boolean;
+  onSelectAgent: (agent: string) => void;
+  onRefreshAgents: () => void;
   effort: string;
   availableEffortOptions: NonNullable<ProviderModelOption['effort']>['values'];
   onSelectEffort: (effort: string) => void;
@@ -118,7 +119,6 @@ interface ChatComposerProps {
   onInputFocusChange?: (focused: boolean) => void;
   placeholder: string;
   isTextareaExpanded: boolean;
-  sendByCtrlEnter?: boolean;
 }
 
 export default function ChatComposer({
@@ -128,10 +128,11 @@ export default function ChatComposer({
   activity,
   isLoading,
   onAbortSession,
-  permissionMode,
-  availablePermissionModes,
-  onSelectPermissionMode,
-  providerLabel,
+  agent,
+  availableAgentOptions,
+  agentsLoading,
+  onSelectAgent,
+  onRefreshAgents,
   effort,
   availableEffortOptions,
   onSelectEffort,
@@ -182,7 +183,6 @@ export default function ChatComposer({
   onInputFocusChange,
   placeholder,
   isTextareaExpanded,
-  sendByCtrlEnter,
 }: ChatComposerProps) {
   const { t } = useTranslation('chat');
   const commandMenuPosition = useMemo(() => {
@@ -233,9 +233,7 @@ export default function ChatComposer({
     ? hasQueuedDraft
       ? t('input.hintText.updateQueued', { defaultValue: 'Enter to update queued message' })
       : t('input.hintText.queue', { defaultValue: 'Enter to queue your next message' })
-    : sendByCtrlEnter
-      ? t('input.hintText.ctrlEnter')
-      : t('input.hintText.enter');
+    : null;
   const submitAriaLabel = canQueueDraft
     ? hasQueuedDraft
       ? t('input.queue.update', { defaultValue: 'Update queued message' })
@@ -423,13 +421,19 @@ export default function ChatComposer({
           </PromptInputTools>
 
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <div
-              className={`hidden text-xs text-muted-foreground/50 transition-opacity duration-200 lg:block ${
-                input.trim() && !canQueueDraft ? 'opacity-0' : 'opacity-100'
-              }`}
-            >
-              {submitHint}
-            </div>
+            {submitHint && (
+              <div className="hidden text-xs text-muted-foreground/50 lg:block">
+                {submitHint}
+              </div>
+            )}
+
+            <ComposerAgentMenu
+              agent={agent}
+              agentOptions={availableAgentOptions}
+              agentsLoading={agentsLoading}
+              onSelectAgent={onSelectAgent}
+              onOpen={onRefreshAgents}
+            />
 
             <ComposerModelMenu
               effort={effort}
@@ -439,13 +443,6 @@ export default function ChatComposer({
               modelOptions={availableModelOptions}
               onSelectModel={onSelectModel}
               modelsLoading={modelsLoading}
-            />
-
-            <ComposerPermissionMenu
-              permissionMode={permissionMode}
-              permissionModes={availablePermissionModes}
-              onSelectPermissionMode={onSelectPermissionMode}
-              providerLabel={providerLabel}
             />
 
             <PromptInputSubmit

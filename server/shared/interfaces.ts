@@ -13,10 +13,14 @@ import type {
   ProviderMcpServer,
   ProviderSkillCreateInput,
   ProviderSkillRemoveInput,
+  ProviderAvailableAgent,
+  ProviderAgentListOptions,
+  ProviderAgentDefinition,
   ProviderRuntimeContext,
   ProviderRuntimePermissionGateway,
   ProviderRuntimeWriter,
   UpsertProviderMcpServerInput,
+  UpsertProviderAgentInput,
 } from '@/shared/types.js';
 
 //----------------- PROVIDER CONTRACT INTERFACES ------------
@@ -53,6 +57,28 @@ export interface IProvider {
   readonly skills: IProviderSkills;
   readonly sessions: IProviderSessions;
   readonly sessionSynchronizer: IProviderSessionSynchronizer;
+  readonly agents?: IProviderAgents;
+}
+
+// ---------------------------
+//----------------- PROVIDER AGENT CONFIGURATION INTERFACE ------------
+/**
+ * Global agent-definition contract for providers that expose configurable
+ * named agents. The initial implementation is OpenCode-only and deliberately
+ * has no workspace parameter, preventing accidental project-scoped writes.
+ */
+export interface IProviderAgents {
+  /** Dynamically lists every agent exposed by the provider runtime. */
+  listAvailableAgents(options?: ProviderAgentListOptions): Promise<ProviderAvailableAgent[]>;
+
+  /** Lists all user-global agent definitions visible to the provider. */
+  listAgents(): Promise<ProviderAgentDefinition[]>;
+
+  /** Creates, updates, or renames one user-global agent definition. */
+  upsertAgent(input: UpsertProviderAgentInput): Promise<ProviderAgentDefinition>;
+
+  /** Removes one user-global agent definition without touching project files. */
+  removeAgent(name: string): Promise<{ removed: boolean; provider: LLMProvider; name: string }>;
 }
 
 // ---------------------------

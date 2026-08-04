@@ -13,6 +13,14 @@ export type ProviderModelOption = {
   };
 };
 
+export type ProviderAgentOption = {
+  value: string;
+  label: string;
+  description?: string;
+  mode: 'primary' | 'subagent' | 'all';
+  model?: string;
+};
+
 export type ProviderModelsDefinition = {
   OPTIONS: ProviderModelOption[];
   DEFAULT: string;

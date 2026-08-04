@@ -139,6 +139,9 @@
     }
   },
   "composer": {
+    "agent": "Agent",
+    "agentMenu": "Select OpenCode agent",
+    "loadingAgents": "Loading agents…",
     "reasoning": "Reasoning",
     "model": "Model",
     "effortDefault": "Default",

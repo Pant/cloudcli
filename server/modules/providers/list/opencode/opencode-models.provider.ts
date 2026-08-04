@@ -52,7 +52,11 @@ export const OPENCODE_FALLBACK_MODELS: ProviderModelsDefinition = {
 };
 
 const OPEN_CODE_MODELS_TIMEOUT_MS = 20_000;
-const MODEL_ID_LINE = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/i;
+// OpenCode prints one provider/model value per line. Model ids can contain
+// additional slashes (for example, some OpenRouter ids), so only validate the
+// provider separator and reject whitespace rather than imposing a slug format
+// on the upstream provider.
+const MODEL_ID_LINE = /^[^\s/][^\s]*\/[^\s]+$/;
 // cross-spawn resolves .cmd shims/PATHEXT on Windows and delegates to
 // child_process.spawn everywhere else.
 const spawnFunction = crossSpawn;
@@ -227,10 +231,6 @@ const readOpenCodeModelParts = (id: string): { upstreamProvider: string; slug: s
   };
 };
 
-const isSupportedOpenCodeModelId = (id: string): boolean => (
-  readOpenCodeModelParts(id).upstreamProvider.toLowerCase() !== 'google'
-);
-
 const readOpenCodeVerboseModelId = (model: OpenCodeVerboseModel): string | null => {
   const id = readOptionalString(model.id);
   if (!id) {
@@ -288,7 +288,7 @@ const readOpenCodeEffortValues = (
 
 const mapOpenCodeVerboseModel = (model: OpenCodeVerboseModel): ProviderModelOption | null => {
   const value = readOpenCodeVerboseModelId(model);
-  if (!value || !isSupportedOpenCodeModelId(value)) {
+  if (!value) {
     return null;
   }
 
@@ -298,61 +298,83 @@ const mapOpenCodeVerboseModel = (model: OpenCodeVerboseModel): ProviderModelOpti
     value,
     label: readOptionalString(model.name) ?? labelForOpenCodeModelId(value),
     description: descriptionForOpenCodeModelId(value),
-    effort: effortValues.length > 0
+    ...(effortValues.length > 0
       ? {
-          values: effortValues,
+          effort: {
+            values: effortValues,
+          },
         }
-      : undefined,
+      : {}),
+  };
+};
+
+const buildOpenCodeOptionFromId = (value: string): ProviderModelOption => ({
+  value,
+  label: labelForOpenCodeModelId(value),
+  description: descriptionForOpenCodeModelId(value),
+});
+
+const buildOpenCodeDefinitionFromOptions = (
+  options: ProviderModelOption[],
+): ProviderModelsDefinition => {
+  const uniqueOptions: ProviderModelOption[] = [];
+  const seenValues = new Set<string>();
+
+  for (const option of options) {
+    if (seenValues.has(option.value)) {
+      continue;
+    }
+
+    seenValues.add(option.value);
+    uniqueOptions.push(option);
+  }
+
+  if (uniqueOptions.length === 0) {
+    return OPENCODE_FALLBACK_MODELS;
+  }
+
+  const defaultValue = uniqueOptions.find((option) => option.value === OPENCODE_FALLBACK_MODELS.DEFAULT)?.value
+    ?? uniqueOptions[0].value;
+
+  return {
+    OPTIONS: uniqueOptions,
+    DEFAULT: defaultValue,
   };
 };
 
 export const buildOpenCodeDefinitionFromIds = (ids: string[]): ProviderModelsDefinition => {
-  const options: ProviderModelOption[] = ids
-    .filter(isSupportedOpenCodeModelId)
-    .map((value) => ({
-      value,
-      label: labelForOpenCodeModelId(value),
-      description: descriptionForOpenCodeModelId(value),
-    }));
-
-  const defaultValue = options.find((option) => option.value === OPENCODE_FALLBACK_MODELS.DEFAULT)?.value
-    ?? options[0]?.value
-    ?? OPENCODE_FALLBACK_MODELS.DEFAULT;
-
-  return {
-    OPTIONS: options,
-    DEFAULT: defaultValue,
-  };
+  return buildOpenCodeDefinitionFromOptions(ids.map(buildOpenCodeOptionFromId));
 };
 
 export const buildOpenCodeDefinitionFromVerboseModels = (
   models: OpenCodeVerboseModel[],
 ): ProviderModelsDefinition => {
-  const options: ProviderModelOption[] = [];
-  const seenValues = new Set<string>();
+  return buildOpenCodeDefinitionFromOptions(
+    models
+      .map(mapOpenCodeVerboseModel)
+      .filter((model): model is ProviderModelOption => Boolean(model)),
+  );
+};
 
-  for (const model of models) {
-    const mappedModel = mapOpenCodeVerboseModel(model);
-    if (!mappedModel || seenValues.has(mappedModel.value)) {
-      continue;
+const buildOpenCodeDefinitionFromCliOutput = (stdout: string): ProviderModelsDefinition => {
+  const ids = parseOpenCodeModelsStdout(stdout);
+  const verboseOptions = parseOpenCodeVerboseModelsStdout(stdout)
+    .map(mapOpenCodeVerboseModel)
+    .filter((model): model is ProviderModelOption => Boolean(model));
+  const verboseByValue = new Map(verboseOptions.map((model) => [model.value, model]));
+  const options = ids.map((id) => verboseByValue.get(id) ?? buildOpenCodeOptionFromId(id));
+  const seenValues = new Set(options.map((option) => option.value));
+
+  // Verbose output may contain metadata for a model without a separate plain
+  // id line. Keep those models too so the CLI's complete catalog is retained.
+  for (const option of verboseOptions) {
+    if (!seenValues.has(option.value)) {
+      seenValues.add(option.value);
+      options.push(option);
     }
-
-    seenValues.add(mappedModel.value);
-    options.push(mappedModel);
   }
 
-  if (options.length === 0) {
-    return OPENCODE_FALLBACK_MODELS;
-  }
-
-  const defaultValue = options.find((option) => option.value === OPENCODE_FALLBACK_MODELS.DEFAULT)?.value
-    ?? options[0]?.value
-    ?? OPENCODE_FALLBACK_MODELS.DEFAULT;
-
-  return {
-    OPTIONS: options,
-    DEFAULT: defaultValue,
-  };
+  return buildOpenCodeDefinitionFromOptions(options);
 };
 
 const parseOpenCodeSessionModelValue = (rawModel: unknown): string | null => {
@@ -382,7 +404,13 @@ const parseOpenCodeSessionModelValue = (rawModel: unknown): string | null => {
 };
 
 const runOpenCodeModelsCommand = (): Promise<string> => new Promise((resolve, reject) => {
-  const openCodeProcess = spawnFunction('opencode', ['models', '--verbose'], {
+  const configuredProvider = process.env.CLOUDCLI_OPENCODE_PROVIDER_ID?.trim();
+  const commandArgs = [
+    'models',
+    ...(configuredProvider ? [configuredProvider] : []),
+    '--verbose',
+  ];
+  const openCodeProcess = spawnFunction('opencode', commandArgs, {
     cwd: process.cwd(),
     env: { ...process.env },
   });
@@ -438,20 +466,14 @@ const runOpenCodeModelsCommand = (): Promise<string> => new Promise((resolve, re
 });
 
 export class OpenCodeProviderModels implements IProviderModels {
+  constructor(
+    private readonly loadModelList = runOpenCodeModelsCommand,
+  ) {}
+
   async getSupportedModels(): Promise<ProviderModelsDefinition> {
     try {
-      const stdout = await runOpenCodeModelsCommand();
-      const verboseModels = parseOpenCodeVerboseModelsStdout(stdout);
-      if (verboseModels.length > 0) {
-        return buildOpenCodeDefinitionFromVerboseModels(verboseModels);
-      }
-
-      const ids = parseOpenCodeModelsStdout(stdout);
-      if (ids.length === 0) {
-        return OPENCODE_FALLBACK_MODELS;
-      }
-
-      return buildOpenCodeDefinitionFromIds(ids);
+      const stdout = await this.loadModelList();
+      return buildOpenCodeDefinitionFromCliOutput(stdout);
     } catch {
       return OPENCODE_FALLBACK_MODELS;
     }

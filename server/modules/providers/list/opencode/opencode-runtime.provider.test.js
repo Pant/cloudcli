@@ -172,6 +172,68 @@ test('resolveOpenCodePermissionOptions maps UI permission modes onto OpenCode co
   assert.deepEqual(resolveOpenCodePermissionOptions(undefined), { args: [], env: {} });
 });
 
+test('spawnOpenCode passes the selected composer agent to the CLI', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-agent-'));
+  const argsCapturePath = path.join(tempRoot, 'opencode-agent-args.json');
+  const pathKey = findEnvKey('PATH');
+  const pathExtKey = findEnvKey('PATHEXT');
+  const previousPath = process.env[pathKey];
+  const previousPathExt = process.env[pathExtKey];
+  const previousArgsCapture = process.env.OPENCODE_ARGS_CAPTURE;
+  const writer = {
+    userId: null,
+    sessionId: null,
+    send() {},
+    setSessionId(sessionId) {
+      this.sessionId = sessionId;
+    },
+  };
+
+  try {
+    await createFakeOpenCodeExecutable(tempRoot);
+    process.env[pathKey] = `${tempRoot}${path.delimiter}${previousPath || ''}`;
+    process.env.OPENCODE_ARGS_CAPTURE = argsCapturePath;
+    if (process.platform === 'win32') {
+      process.env[pathExtKey] = previousPathExt?.toUpperCase().includes('.CMD')
+        ? previousPathExt
+        : `.COM;.EXE;.BAT;.CMD${previousPathExt ? `;${previousPathExt}` : ''}`;
+    }
+
+    await opencodeRuntime.run(
+      'Review this',
+      { cwd: tempRoot, agent: 'reviewer', effort: 'high' },
+      writer,
+      runtimeContext,
+    );
+
+    const capture = JSON.parse(await readFile(argsCapturePath, 'utf8'));
+    const agentFlagIndex = capture.args.indexOf('--agent');
+    assert.notEqual(agentFlagIndex, -1);
+    assert.equal(capture.args[agentFlagIndex + 1], 'reviewer');
+    const variantFlagIndex = capture.args.indexOf('--variant');
+    assert.notEqual(variantFlagIndex, -1);
+    assert.equal(capture.args[variantFlagIndex + 1], 'high');
+    assert.equal(capture.args[capture.args.length - 1], 'Review this');
+  } finally {
+    if (previousPath === undefined) {
+      delete process.env[pathKey];
+    } else {
+      process.env[pathKey] = previousPath;
+    }
+    if (previousPathExt === undefined) {
+      delete process.env[pathExtKey];
+    } else {
+      process.env[pathExtKey] = previousPathExt;
+    }
+    if (previousArgsCapture === undefined) {
+      delete process.env.OPENCODE_ARGS_CAPTURE;
+    } else {
+      process.env.OPENCODE_ARGS_CAPTURE = previousArgsCapture;
+    }
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('spawnOpenCode passes permission mode flags and env to the CLI', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-perms-'));
   const pathKey = findEnvKey('PATH');

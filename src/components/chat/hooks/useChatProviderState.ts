@@ -19,7 +19,7 @@ import {
 const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   claude: 'default',
   cursor: 'gpt-5.3-codex',
-  codex: 'gpt-5.4',
+  codex: 'gpt-5.6-sol',
   opencode: 'anthropic/claude-sonnet-4-5',
 };
 
@@ -229,7 +229,10 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   }, []);
 
   useEffect(() => {
-    void loadProviderModels();
+    // Refresh the dynamic provider catalogs as soon as the chat page mounts.
+    // This keeps newly configured models available without requiring the user
+    // to open the model menu or invoke the manual refresh action first.
+    void loadProviderModels({ bypassCache: true });
   }, [loadProviderModels]);
 
   useEffect(() => {
@@ -321,7 +324,13 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
     const option = getModelOption(targetProvider, model);
     if (option) {
-      return option.effort?.values ?? [];
+      const declaredValues = option.effort?.values ?? [];
+      // OpenCode's refreshed custom-model catalog may omit variant metadata.
+      // Keep the same provider fallback shown before the catalog loads so the
+      // Reasoning section does not disappear after a refresh.
+      if (declaredValues.length > 0 || targetProvider !== 'opencode') {
+        return declaredValues;
+      }
     }
 
     return toProviderEffortOptions(FALLBACK_PROVIDER_EFFORT_VALUES[targetProvider] ?? []);

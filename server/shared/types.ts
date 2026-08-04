@@ -118,6 +118,84 @@ export type ProviderModelsResult = {
 };
 
 // ---------------------------
+//----------------- PROVIDER AGENT CONFIGURATION TYPES ------------
+/**
+ * One agent currently exposed by a provider runtime.
+ *
+ * Unlike `ProviderAgentDefinition`, this is runtime inventory rather than an
+ * editable user-global config entry. It may therefore include built-in,
+ * internal, user-global, and workspace-scoped agents discovered by the CLI.
+ */
+export type ProviderAvailableAgent = {
+  name: string;
+  mode: 'primary' | 'subagent' | 'all';
+  description?: string;
+  /** Provider-native model identifier configured on the agent, when present. */
+  model?: string;
+};
+
+/**
+ * Scope used when discovering the provider's live agent inventory.
+ * `workspacePath` lets provider CLIs include project-local agent definitions.
+ */
+export type ProviderAgentListOptions = {
+  workspacePath?: string;
+};
+
+/**
+ * Permission decision understood by OpenCode agent definitions.
+ *
+ * A permission can use one of these values directly, or associate ordered
+ * command/tool patterns with these values for fine-grained control.
+ */
+export type ProviderAgentPermissionAction = 'allow' | 'ask' | 'deny';
+
+/**
+ * One OpenCode permission entry as represented in its global configuration.
+ *
+ * The record form preserves insertion order because OpenCode resolves matching
+ * rules from first to last and lets the last matching rule win.
+ */
+export type ProviderAgentPermissionValue =
+  | ProviderAgentPermissionAction
+  | Record<string, ProviderAgentPermissionAction>;
+
+/**
+ * Normalized global OpenCode agent definition returned by the provider API.
+ *
+ * `options` contains provider/model-specific pass-through fields that are not
+ * part of OpenCode's documented common fields. Keeping them separate on the
+ * wire lets the UI edit every supported model option without allowing those
+ * values to overwrite normalized fields accidentally.
+ */
+export type ProviderAgentDefinition = {
+  name: string;
+  description: string;
+  mode?: 'primary' | 'subagent' | 'all';
+  model?: string;
+  prompt?: string;
+  temperature?: number;
+  topP?: number;
+  steps?: number;
+  disable?: boolean;
+  hidden?: boolean;
+  color?: string;
+  permission?: Record<string, ProviderAgentPermissionValue>;
+  tools?: Record<string, boolean>;
+  options: Record<string, unknown>;
+};
+
+/**
+ * Input used to create, update, or rename one global OpenCode agent.
+ *
+ * `originalName` is present only when an existing definition is being renamed.
+ * Agent providers must reject a rename that would overwrite a different agent.
+ */
+export type UpsertProviderAgentInput = ProviderAgentDefinition & {
+  originalName?: string;
+};
+
+// ---------------------------
 //----------------- PROVIDER ACTIVE MODEL TYPES ------------
 /**
  * Provider-neutral result for the model that is actively driving a session or
