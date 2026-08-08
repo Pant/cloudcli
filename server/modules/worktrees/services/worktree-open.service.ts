@@ -21,7 +21,7 @@ function mapRowToProjectView(row: ProjectRepositoryRow): WorktreeProjectView {
     displayName: row.custom_project_name || path.basename(row.project_path),
     isStarred: Boolean(row.isStarred),
     sessions: [],
-    sessionMeta: { hasMore: false, total: 0 },
+    sessionMeta: { hasMore: false, total: 0, rootTotal: 0, rootOffset: 0, nextOffset: 0 },
   };
 }
 

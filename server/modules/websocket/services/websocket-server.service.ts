@@ -16,6 +16,11 @@ type WebSocketServerDependencies = {
   getPluginPort: Parameters<typeof handlePluginWsProxy>[2];
 };
 
+type HeartbeatScheduler = {
+  setInterval: (callback: () => void, delay?: number) => NodeJS.Timeout;
+  clearInterval: (timeout: NodeJS.Timeout | string | number | undefined) => void;
+};
+
 /**
  * Used by this module's websocket gateway to keep active transports alive and
  * close half-open connections so their route-specific clients can reconnect.
@@ -23,7 +28,7 @@ type WebSocketServerDependencies = {
 export function attachWebSocketHeartbeat(
   ws: WebSocket,
   intervalMs = 30_000,
-  scheduler = {
+  scheduler: HeartbeatScheduler = {
     setInterval,
     clearInterval,
   },

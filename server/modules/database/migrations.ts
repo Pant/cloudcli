@@ -1,11 +1,17 @@
 import { Database } from 'better-sqlite3';
 
 import {
+  APPOINTMENTS_INDEXES_SQL,
+  APPOINTMENTS_TABLE_SCHEMA_SQL,
   APP_CONFIG_TABLE_SCHEMA_SQL,
   LAST_SCANNED_AT_SQL,
   NOTIFICATION_CHANNEL_ENDPOINTS_TABLE_SCHEMA_SQL,
   PROJECTS_TABLE_SCHEMA_SQL,
   PUSH_SUBSCRIPTIONS_TABLE_SCHEMA_SQL,
+  SESSION_RUN_STATE_INDEXES_SQL,
+  SESSION_RUN_STATE_TABLE_SCHEMA_SQL,
+  SESSION_RUN_HISTORY_INDEXES_SQL,
+  SESSION_RUN_HISTORY_TABLE_SCHEMA_SQL,
   SESSIONS_TABLE_SCHEMA_SQL,
   USER_NOTIFICATION_PREFERENCES_TABLE_SCHEMA_SQL,
   VAPID_KEYS_TABLE_SCHEMA_SQL,
@@ -18,6 +24,9 @@ lower(hex(randomblob(2))) || '-' ||
 lower(hex(randomblob(2))) || '-' ||
 lower(hex(randomblob(6)))
 `;
+
+const OPENCODE_HIERARCHY_BACKFILL_VERSION = 1;
+const OPENCODE_HIERARCHY_BACKFILL_MARKER = 'opencode_hierarchy_backfill_version';
 
 type TableInfoRow = {
   name: string;
@@ -236,11 +245,11 @@ const rebuildProjectsTableWithPrimaryKeySchema = (db: Database): void => {
   }
 };
 
-const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
+const rebuildSessionsTableWithProjectSchema = (db: Database): boolean => {
   const hasSessions = tableExists(db, 'sessions');
   if (!hasSessions) {
     db.exec(SESSIONS_TABLE_SCHEMA_SQL);
-    return;
+    return false;
   }
 
   const sessionsTableInfo = getTableInfo(db, 'sessions');
@@ -256,6 +265,8 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
     primaryKeyColumns[0] !== 'session_id' ||
     !columnNames.includes('provider');
 
+  const hadProviderParentSessionId = columnNames.includes('provider_parent_session_id');
+
   if (!shouldRebuild) {
     addColumnToTableIfNotExists(db, 'sessions', columnNames, 'jsonl_path', 'TEXT');
     addColumnToTableIfNotExists(db, 'sessions', columnNames, 'isArchived', 'BOOLEAN DEFAULT 0');
@@ -264,7 +275,7 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
     db.exec('UPDATE sessions SET isArchived = COALESCE(isArchived, 0)');
     db.exec('UPDATE sessions SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)');
     db.exec('UPDATE sessions SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)');
-    return;
+    return !hadProviderParentSessionId;
   }
 
   console.log('Running migration: Rebuilding sessions table to project-based schema');
@@ -287,6 +298,18 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
     ? 'jsonl_path'
     : 'NULL';
 
+  const providerSessionIdExpression = columnNames.includes('provider_session_id')
+    ? 'provider_session_id'
+    : 'session_id';
+
+  const modelExpression = columnNames.includes('model') ? 'model' : 'NULL';
+
+  const agentExpression = columnNames.includes('agent') ? 'agent' : 'NULL';
+
+  const providerParentSessionIdExpression = columnNames.includes('provider_parent_session_id')
+    ? 'provider_parent_session_id'
+    : 'NULL';
+
   const isArchivedExpression = columnNames.includes('isArchived')
     ? 'COALESCE(isArchived, 0)'
     : '0';
@@ -307,9 +330,13 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
       CREATE TABLE sessions__new (
         session_id TEXT NOT NULL,
         provider TEXT NOT NULL DEFAULT 'claude',
+        provider_session_id TEXT,
         custom_name TEXT,
         project_path TEXT,
         jsonl_path TEXT,
+        model TEXT,
+        agent TEXT,
+        provider_parent_session_id TEXT,
         isArchived BOOLEAN DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -324,9 +351,13 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
         SELECT
           session_id,
           ${providerExpression} AS provider,
+          ${providerSessionIdExpression} AS provider_session_id,
           ${customNameExpression} AS custom_name,
           ${projectPathExpression} AS project_path,
           ${jsonlPathExpression} AS jsonl_path,
+          ${modelExpression} AS model,
+          ${agentExpression} AS agent,
+          ${providerParentSessionIdExpression} AS provider_parent_session_id,
           ${isArchivedExpression} AS isArchived,
           ${createdAtExpression} AS created_at,
           ${updatedAtExpression} AS updated_at,
@@ -338,9 +369,13 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
         SELECT
           session_id,
           provider,
+          provider_session_id,
           custom_name,
           project_path,
           jsonl_path,
+          model,
+          agent,
+          provider_parent_session_id,
           isArchived,
           created_at,
           updated_at,
@@ -353,9 +388,13 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
       INSERT INTO sessions__new (
         session_id,
         provider,
+        provider_session_id,
         custom_name,
         project_path,
         jsonl_path,
+        model,
+        agent,
+        provider_parent_session_id,
         isArchived,
         created_at,
         updated_at
@@ -363,9 +402,13 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
       SELECT
         session_id,
         provider,
+        provider_session_id,
         custom_name,
         project_path,
         jsonl_path,
+        model,
+        agent,
+        provider_parent_session_id,
         isArchived,
         created_at,
         updated_at
@@ -381,6 +424,8 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
   } finally {
     db.exec('PRAGMA foreign_keys = ON');
   }
+
+  return !hadProviderParentSessionId;
 };
 
 /**
@@ -393,6 +438,10 @@ const rebuildSessionsTableWithProjectSchema = (db: Database): void => {
 const addProviderSessionIdMapping = (db: Database): void => {
   const sessionsTableInfo = getTableInfo(db, 'sessions');
   const columnNames = sessionsTableInfo.map((column) => column.name);
+
+  if (columnNames.includes('provider_session_id')) {
+    return;
+  }
 
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'provider_session_id', 'TEXT');
   db.exec(`
@@ -416,6 +465,77 @@ const addSessionModelColumn = (db: Database): void => {
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'model', 'TEXT');
 };
 
+/**
+ * Adds the OpenCode agent recorded for each session.
+ *
+ * Adding this column invalidates the incremental provider scan cursor once so
+ * pre-existing OpenCode parent and subagent rows are re-read from opencode.db.
+ */
+const addSessionAgentColumn = (db: Database): void => {
+  const sessionsTableInfo = getTableInfo(db, 'sessions');
+  const columnNames = sessionsTableInfo.map((column) => column.name);
+
+  if (columnNames.includes('agent')) {
+    return;
+  }
+
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'agent', 'TEXT');
+  if (tableExists(db, 'scan_state')) {
+    db.exec('UPDATE scan_state SET last_scanned_at = NULL WHERE id = 1');
+  }
+};
+
+/**
+ * Adds the provider-native parent mapping used by recursive OpenCode sessions.
+ *
+ * Existing OpenCode databases must be rescanned once because rows already
+ * indexed before this column existed have no persisted relationship metadata.
+ */
+const addProviderParentSessionIdColumn = (db: Database): boolean => {
+  const sessionsTableInfo = getTableInfo(db, 'sessions');
+  const columnNames = sessionsTableInfo.map((column) => column.name);
+
+  if (columnNames.includes('provider_parent_session_id')) {
+    return false;
+  }
+
+  addColumnToTableIfNotExists(
+    db,
+    'sessions',
+    columnNames,
+    'provider_parent_session_id',
+    'TEXT',
+  );
+  return true;
+};
+
+/**
+ * Activates the one-time OpenCode hierarchy rescan independently of the
+ * provider-parent column migration. A partially upgraded database can already
+ * have the column while still retaining a cursor from a pre-hierarchy scan.
+ */
+const ensureOpenCodeHierarchyBackfill = (db: Database): boolean => {
+  const marker = db
+    .prepare('SELECT value FROM app_config WHERE key = ?')
+    .get(OPENCODE_HIERARCHY_BACKFILL_MARKER) as { value: string } | undefined;
+  const storedVersion = Number.parseInt(marker?.value ?? '', 10);
+
+  if (Number.isSafeInteger(storedVersion) && storedVersion >= OPENCODE_HIERARCHY_BACKFILL_VERSION) {
+    return false;
+  }
+
+  db.transaction(() => {
+    db.prepare('UPDATE scan_state SET last_scanned_at = NULL WHERE id = 1').run();
+    db.prepare(`
+      INSERT INTO app_config (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(OPENCODE_HIERARCHY_BACKFILL_MARKER, String(OPENCODE_HIERARCHY_BACKFILL_VERSION));
+  })();
+
+  return true;
+};
+
 const ensureProjectsForSessionPaths = (db: Database): void => {
   if (!tableExists(db, 'sessions')) {
     return;
@@ -432,6 +552,86 @@ const ensureProjectsForSessionPaths = (db: Database): void => {
     FROM sessions
     WHERE project_path IS NOT NULL AND trim(project_path) <> ''
     ON CONFLICT(project_path) DO NOTHING
+  `);
+};
+
+const migrateAppointmentsQueueSchema = (db: Database): void => {
+  if (!tableExists(db, 'appointments')) {
+    db.exec(APPOINTMENTS_TABLE_SCHEMA_SQL);
+    return;
+  }
+  const columns = getTableInfo(db, 'appointments').map(({ name }) => name);
+  addColumnToTableIfNotExists(db, 'appointments', columns, 'queue_position', 'INTEGER');
+  addColumnToTableIfNotExists(db, 'appointments', columns, 'run_generation', 'INTEGER');
+
+  const tableSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'appointments'").get() as { sql?: string } | undefined)?.sql ?? '';
+  if (!tableSql.includes("'queue'")) {
+    console.log('Running migration: Rebuilding appointments table for queue triggers');
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.exec('BEGIN TRANSACTION');
+      db.exec('ALTER TABLE appointments RENAME TO appointments__legacy');
+      db.exec(APPOINTMENTS_TABLE_SCHEMA_SQL);
+      db.exec(`
+        INSERT INTO appointments (
+          id, project_id, session_id, user_id, provider, prompt, options_json,
+          attachments_json, trigger_type, due_at, timer_duration_ms, project_idle_since,
+          queue_position, run_generation, is_active, status, error_message, created_at,
+          updated_at, claimed_at, completed_at
+        )
+        SELECT
+          id, project_id, session_id, user_id, provider, prompt, options_json,
+          attachments_json, trigger_type, due_at, timer_duration_ms, project_idle_since,
+          queue_position, run_generation, is_active, status, error_message, created_at,
+          updated_at, claimed_at, completed_at
+        FROM appointments__legacy
+      `);
+      db.exec('DROP TABLE appointments__legacy');
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  db.exec(`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY project_id, user_id
+        ORDER BY created_at, id
+      ) AS position
+      FROM appointments
+      WHERE trigger_type = 'queue' AND status NOT IN ('completed', 'failed', 'cancelled')
+    )
+    UPDATE appointments
+    SET queue_position = (SELECT position FROM ranked WHERE ranked.id = appointments.id)
+    WHERE id IN (SELECT id FROM ranked) AND queue_position IS NULL
+  `);
+};
+
+/**
+ * Repairs app-created OpenCode appointment sessions corrupted by the former
+ * repeated provider-id backfill while preserving provider-native legacy rows.
+ */
+const repairAppointmentOpenCodeSessionMappings = (db: Database): void => {
+  db.exec(`
+    UPDATE sessions
+    SET provider_session_id = NULL
+    WHERE provider = 'opencode'
+      AND provider_session_id = session_id
+      AND length(session_id) = 36
+      AND substr(session_id, 9, 1) = '-'
+      AND substr(session_id, 14, 1) = '-'
+      AND substr(session_id, 19, 1) = '-'
+      AND substr(session_id, 24, 1) = '-'
+      AND replace(session_id, '-', '') NOT GLOB '*[^0-9A-Fa-f]*'
+      AND EXISTS (
+        SELECT 1
+        FROM appointments
+        WHERE appointments.session_id = sessions.session_id
+      )
   `);
 };
 
@@ -463,10 +663,12 @@ export const runMigrations = (db: Database) => {
     rebuildProjectsTableWithPrimaryKeySchema(db);
 
     migrateLegacyWorkspaceTableIntoProjects(db);
-    rebuildSessionsTableWithProjectSchema(db);
+    const providerParentSessionBackfillRequired = rebuildSessionsTableWithProjectSchema(db);
     migrateLegacySessionNames(db);
     addProviderSessionIdMapping(db);
     addSessionModelColumn(db);
+    addSessionAgentColumn(db);
+    const providerParentSessionIdAdded = addProviderParentSessionIdColumn(db);
     ensureProjectsForSessionPaths(db);
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id)');
@@ -475,6 +677,14 @@ export const runMigrations = (db: Database) => {
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_is_archived ON sessions(isArchived)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_starred ON projects(isStarred)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_projects_is_archived ON projects(isArchived)');
+
+    db.exec(SESSION_RUN_STATE_TABLE_SCHEMA_SQL);
+    db.exec(SESSION_RUN_STATE_INDEXES_SQL);
+    db.exec(SESSION_RUN_HISTORY_TABLE_SCHEMA_SQL);
+    db.exec(SESSION_RUN_HISTORY_INDEXES_SQL);
+    migrateAppointmentsQueueSchema(db);
+    repairAppointmentOpenCodeSessionMappings(db);
+    db.exec(APPOINTMENTS_INDEXES_SQL);
 
     db.exec('DROP INDEX IF EXISTS idx_session_names_lookup');
     db.exec('DROP INDEX IF EXISTS idx_sessions_workspace_path');
@@ -487,6 +697,13 @@ export const runMigrations = (db: Database) => {
     }
 
     db.exec(LAST_SCANNED_AT_SQL);
+    const hierarchyBackfillRequired = ensureOpenCodeHierarchyBackfill(db);
+    if (
+      (providerParentSessionBackfillRequired || providerParentSessionIdAdded)
+      && !hierarchyBackfillRequired
+    ) {
+      db.exec('UPDATE scan_state SET last_scanned_at = NULL WHERE id = 1');
+    }
     console.log('Database migrations completed successfully');
   } catch (error: any) {
     console.error('Error running migrations:', error.message);

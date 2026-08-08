@@ -15,10 +15,12 @@ import type {
   McpTransport,
   ProviderSkillCreateFile,
   ProviderSkillCreateInput,
+  ProviderAgentPreferencesPatch,
   UpsertProviderAgentInput,
   UpsertProviderMcpServerInput,
 } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
+import { chatRunLifecycleService } from '@/modules/websocket/index.js';
 
 const router = express.Router();
 
@@ -145,12 +147,19 @@ const parseMcpUpsertPayload = (payload: unknown): UpsertProviderMcpServerInput =
   const transport = parseMcpTransport(body.transport);
   const scope = parseMcpScope(body.scope);
   const workspacePath = readOptionalQueryString(body.workspacePath);
+  if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+    throw new AppError('enabled must be a boolean.', {
+      code: 'INVALID_MCP_ENABLED',
+      statusCode: 400,
+    });
+  }
 
   return {
     name,
     transport,
     scope,
     workspacePath,
+    enabled: body.enabled as boolean | undefined,
     command: readOptionalQueryString(body.command),
     args: Array.isArray(body.args) ? body.args.filter((entry): entry is string => typeof entry === 'string') : undefined,
     env: typeof body.env === 'object' && body.env !== null
@@ -289,6 +298,33 @@ const parseProviderAgentPayload = (payload: unknown): UpsertProviderAgentInput =
     });
   }
   return payload as UpsertProviderAgentInput;
+};
+
+const parseProviderAgentPreferencesPayload = (payload: unknown): ProviderAgentPreferencesPatch => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new AppError('Request body must be an object.', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  const body = payload as Record<string, unknown>;
+  const keys = Object.keys(body);
+  if (keys.length === 0 || keys.some((key) => key !== 'model' && key !== 'reasoningEffort')) {
+    throw new AppError('Request body must contain only model and/or reasoningEffort.', {
+      code: 'INVALID_AGENT_PREFERENCES', statusCode: 400,
+    });
+  }
+  if (body.model !== undefined && (typeof body.model !== 'string' || !body.model.trim())) {
+    throw new AppError('model must be a non-empty string.', { code: 'INVALID_AGENT_PREFERENCES', statusCode: 400 });
+  }
+  if (body.reasoningEffort !== undefined && (
+    typeof body.reasoningEffort !== 'string' || !body.reasoningEffort.trim()
+  )) {
+    throw new AppError('reasoningEffort must be a non-empty string.', {
+      code: 'INVALID_AGENT_PREFERENCES', statusCode: 400,
+    });
+  }
+  return {
+    ...(body.model !== undefined ? { model: body.model.trim() } : {}),
+    ...(body.reasoningEffort !== undefined ? { reasoningEffort: body.reasoningEffort.trim() } : {}),
+  };
 };
 
 const parseProvider = (value: unknown): LLMProvider => {
@@ -434,6 +470,17 @@ router.post(
     res.json(createApiSuccessResponse(
       stored ?? { provider, sessionId, model, source: 'session' as const },
     ));
+  }),
+);
+
+router.patch(
+  '/:provider/agents/:name/preferences',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const name = readPathParam(req.params.name, 'name');
+    const patch = parseProviderAgentPreferencesPayload(req.body);
+    const preferences = await providerAgentsService.updateProviderAgentPreferences(provider, name, patch);
+    res.json(createApiSuccessResponse(preferences));
   }),
 );
 
@@ -612,9 +659,34 @@ router.post(
 );
 
 router.get(
+  '/sessions/manifest',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const sessions = sessionsService.listSessionCacheManifest();
+    res.json(createApiSuccessResponse({ sessions }));
+  }),
+);
+
+router.get(
   '/sessions/running',
   asyncHandler(async (_req: Request, res: Response) => {
     const sessions = sessionsService.listRunningSessions();
+    res.json(createApiSuccessResponse({ sessions }));
+  }),
+);
+
+router.post(
+  '/sessions/:sessionId/start',
+  asyncHandler(async (req: Request, res: Response) => {
+    const sessionId = parseSessionId(req.params.sessionId);
+    const result = await chatRunLifecycleService.manualStart(sessionId);
+    res.status(202).json(createApiSuccessResponse(result));
+  }),
+);
+
+router.get(
+  '/sessions/status',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const sessions = sessionsService.listSessionLifecycleStatus();
     res.json(createApiSuccessResponse({ sessions }));
   }),
 );

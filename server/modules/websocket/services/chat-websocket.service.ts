@@ -1,13 +1,11 @@
-import path from 'node:path';
-
 import type { WebSocket } from 'ws';
 
 import { sessionsDb } from '@/modules/database/index.js';
-import { providerModelsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
+import { chatRunLifecycleService } from '@/modules/websocket/services/chat-run-lifecycle.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
 import {
-  getGlobalImageAssetsDir,
+  filterAttachmentsToUploadStore,
   isImageAttachmentDescriptor,
   normalizeAttachmentDescriptors,
   type ChatAttachmentDescriptor,
@@ -21,40 +19,6 @@ import type {
 } from '@/shared/types.js';
 import { parseIncomingJsonObject } from '@/shared/utils.js';
 
-/**
- * Trust boundary for client-supplied image attachments: chat.send options come
- * straight from the browser, and the provider runtimes read the referenced
- * files off disk (Claude base64-encodes them into the prompt). Only images
- * that live directly inside the global upload store (`~/.cloudcli/assets`,
- * where POST /api/assets/images puts them) are allowed through — anything
- * else (absolute paths elsewhere, traversal, subdirectories) is dropped.
- *
- * Exported for tests; `assetsRootOverride` exists only for them.
- */
-export function filterAttachmentsToUploadStore(
-  attachments: unknown,
-  assetsRootOverride?: string,
-): ChatAttachmentDescriptor[] {
-  const assetsRoot = path.resolve(assetsRootOverride ?? getGlobalImageAssetsDir());
-
-  return normalizeAttachmentDescriptors(attachments).filter((descriptor) => {
-    // Relative paths are anchored in the store; absolute ones must already be in it.
-    const resolved = path.resolve(assetsRoot, descriptor.path);
-    const relative = path.relative(assetsRoot, resolved);
-    const isDirectChild =
-      relative.length > 0 &&
-      !relative.startsWith('..') &&
-      !path.isAbsolute(relative) &&
-      !relative.includes(path.sep) &&
-      !relative.includes('/');
-
-    if (!isDirectChild) {
-      console.warn(`[Chat] Dropping attachment outside the upload store: ${descriptor.path}`);
-    }
-    return isDirectChild;
-  });
-}
-
 /** Backward-compatible image filter consumed by existing websocket tests. */
 export function filterImagesToUploadStore(
   images: unknown,
@@ -62,6 +26,9 @@ export function filterImagesToUploadStore(
 ): ChatAttachmentDescriptor[] {
   return filterAttachmentsToUploadStore(images, assetsRootOverride);
 }
+
+// Backward-compatible test export; production consumers import the shared helper.
+export { filterAttachmentsToUploadStore };
 
 /** Application boundary for dispatching provider runs and approvals. */
 type ProviderRuntimeGateway = {
@@ -172,32 +139,8 @@ async function handleChatSend(
     return;
   }
 
-  const run = chatRunRegistry.startRun({
-    appSessionId: sessionId,
-    provider,
-    providerSessionId: session.provider_session_id,
-    connection: ws,
-    userId,
-  });
-
-  if (!run) {
-    sendProtocolError(
-      ws,
-      'RUN_IN_PROGRESS',
-      `Session "${sessionId}" already has a run in progress.`,
-      sessionId
-    );
-    return;
-  }
-
   const clientOptions = (data.options ?? {}) as AnyRecord;
   const command = typeof data.content === 'string' ? data.content : '';
-
-  // Record what this turn runs with so reopening the session later restores the
-  // same model, and so the resume path has a session-scoped answer to use.
-  if (typeof clientOptions.model === 'string' && clientOptions.model.trim()) {
-    providerModelsService.setSessionModel(provider, sessionId, clientOptions.model);
-  }
 
   const attachmentCandidates = [
     ...normalizeAttachmentDescriptors(clientOptions.images),
@@ -227,19 +170,7 @@ async function handleChatSend(
     projectPath: session.project_path ?? clientOptions.projectPath,
   };
 
-  try {
-    await dependencies.runtime.run(provider, command, runtimeOptions, run.writer);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[Chat] Provider runtime "${provider}" failed`, { sessionId, error: message });
-  } finally {
-    // Safety net: a runtime that crashed (or resolved) without emitting its
-    // terminal `complete` would otherwise leave the session stuck in
-    // "processing" forever on every connected client. Scoped to THIS run —
-    // a queued message can start the session's next run before this promise
-    // settles, and the session-keyed completeRun would kill that new run.
-    chatRunRegistry.completeRunIfCurrent(run, { exitCode: 1 });
-  }
+  await chatRunLifecycleService.start({ sessionId, command, options: runtimeOptions, connection: ws, userId });
 }
 
 /**
@@ -264,12 +195,7 @@ async function handleChatAbort(
     return;
   }
 
-  const success = await dependencies.runtime.abort(run.provider, sessionId);
-
-  chatRunRegistry.completeRun(sessionId, {
-    exitCode: success ? 0 : 1,
-    aborted: true,
-  });
+  await chatRunLifecycleService.stop(sessionId);
 }
 
 /**
@@ -303,15 +229,11 @@ function handleChatSubscribe(
     const lastSeq = typeof lastSeqRaw === 'number' && Number.isFinite(lastSeqRaw)
       ? Math.max(0, Math.floor(lastSeqRaw))
       : 0;
-
-    const run = chatRunRegistry.getRun(sessionId);
-    const isProcessing = chatRunRegistry.isProcessing(sessionId);
-
-    // Future live events for this run should land on the socket that asked —
-    // this is what makes mid-stream page refreshes work for all providers.
-    if (isProcessing) {
-      chatRunRegistry.attachConnection(sessionId, ws);
-    }
+    const generationRaw = (target as AnyRecord).generation;
+    const generation = typeof generationRaw === 'number' && Number.isFinite(generationRaw)
+      ? Math.max(0, Math.floor(generationRaw))
+      : undefined;
+    const snapshot = chatRunRegistry.beginSubscription(sessionId, ws, generation, lastSeq);
 
     // Pending approvals are tracked under the app session id inside the
     // Claude runtime, so they can be looked up directly.
@@ -320,8 +242,13 @@ function handleChatSubscribe(
     sendJson(ws, {
       kind: 'chat_subscribed',
       sessionId,
-      isProcessing,
-      lastSeq: run?.lastSeq ?? 0,
+      generation: snapshot.generation,
+      isProcessing: snapshot.isProcessing,
+      lastSeq: snapshot.lastSeq,
+      replayFromSeq: snapshot.replayFromSeq,
+      replayToSeq: snapshot.replayToSeq,
+      replayGap: snapshot.replayGap,
+      refreshRequired: snapshot.refreshRequired,
       pendingPermissions,
       timestamp: new Date().toISOString(),
     });
@@ -330,11 +257,10 @@ function handleChatSubscribe(
     // are fully persisted to the provider transcript and served over REST —
     // replaying them (e.g. after a page reload where the client's lastSeq is
     // 0) would duplicate messages the history fetch already returned.
-    if (isProcessing) {
-      for (const event of chatRunRegistry.replayEvents(sessionId, lastSeq)) {
-        sendJson(ws, event);
-      }
+    for (const event of snapshot.events) {
+      sendJson(ws, event);
     }
+    chatRunRegistry.finishSubscription(sessionId, ws);
   }
 }
 
@@ -362,7 +288,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
  * - `chat.abort`               { sessionId }
- * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
+  * - `chat.subscribe`           { sessions: [{ sessionId, generation?, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
  *
  * Outbound protocol (server to client): every frame is `kind`-based — either
@@ -417,5 +343,6 @@ export function handleChatConnection(
   ws.on('close', () => {
     console.log('[INFO] Chat client disconnected');
     connectedClients.delete(ws);
+    chatRunRegistry.detachConnection(ws);
   });
 }

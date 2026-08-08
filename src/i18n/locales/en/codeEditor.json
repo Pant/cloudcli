@@ -17,6 +17,8 @@
     "download": "Download file",
     "save": "Save",
     "saving": "Saving...",
+    "reload": "Reload from disk",
+    "reloading": "Reloading...",
     "saved": "Saved!",
     "exitFullscreen": "Exit fullscreen",
     "fullscreen": "Fullscreen",

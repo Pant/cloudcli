@@ -231,6 +231,34 @@ function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function readOptionalUsageNumber(value: unknown): number | undefined {
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
+}
+
+function readCodexWindowTokens(value: unknown): number | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const usage = value as AnyRecord;
+  const totalTokens = readOptionalUsageNumber(usage.total_tokens ?? usage.totalTokens);
+  if (totalTokens !== undefined) {
+    return totalTokens;
+  }
+
+  const inputTokens = readOptionalUsageNumber(usage.input_tokens ?? usage.inputTokens);
+  const outputTokens = readOptionalUsageNumber(usage.output_tokens ?? usage.outputTokens);
+  const reasoningTokens = readOptionalUsageNumber(
+    usage.reasoning_output_tokens ?? usage.reasoningOutputTokens ?? usage.reasoning_tokens,
+  );
+  if (inputTokens === undefined && outputTokens === undefined && reasoningTokens === undefined) {
+    return undefined;
+  }
+
+  return (inputTokens ?? 0) + (outputTokens ?? 0) + (reasoningTokens ?? 0);
+}
+
 async function getCodexSessionMessages(
   sessionId: string,
   limit: number | null = null,
@@ -271,9 +299,16 @@ async function getCodexSessionMessages(
           const info = entry.payload.info as AnyRecord;
           if (info.total_token_usage) {
             const usage = info.total_token_usage as AnyRecord;
+            const windowTokens = readCodexWindowTokens(info.last_token_usage);
+            const inputTokens = Number(usage.input_tokens ?? 0);
+            const outputTokens = Number(usage.output_tokens ?? 0);
             tokenUsage = {
-              used: usage.total_tokens || 0,
+              used: Number(usage.total_tokens ?? 0) || inputTokens + outputTokens,
               total: info.model_context_window || 200000,
+              ...(windowTokens === undefined ? {} : { windowTokens }),
+              inputTokens,
+              outputTokens,
+              breakdown: { input: inputTokens, output: outputTokens },
             };
           }
         }

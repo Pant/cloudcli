@@ -109,7 +109,7 @@ When a chat socket connects:
 1. Add socket to `connectedClients`.
 2. Parse each incoming message with `parseIncomingJsonObject`.
 3. Dispatch by `data.type` (four message types, none provider-specific).
-4. On close, remove socket from `connectedClients`.
+4. On close, remove socket from `connectedClients` and every run subscription.
 
 ### Session identity model
 
@@ -140,16 +140,20 @@ flowchart TD
 
 1. **Unified envelope**: every server-to-client frame carries a `kind` — either a provider `NormalizedMessage` kind or a gateway kind (`chat_subscribed`, `session_upserted`, `loading_progress`, `protocol_error`). There is no second `type`-based protocol.
 2. **Unified terminal lifecycle**: every provider run ends with exactly one `complete` message built by `createCompleteMessage()` (`server/shared/utils.ts`): `{ kind: "complete", sessionId, actualSessionId, exitCode, success, aborted }`. The chat handler emits a synthetic `complete` for runs that crash or get aborted, and the run registry drops duplicate completes.
-3. **Per-run event log**: every live event gets a monotonically increasing `seq`. `chat.subscribe { sessions: [{ sessionId, lastSeq }] }` re-attaches the live stream to the requesting socket (any provider, not just Claude) and replays events with `seq > lastSeq`. If the buffer no longer covers `lastSeq`, the client refreshes over REST.
-4. `chat_subscribed` includes `isProcessing` (replaces `check-session-status`) and `pendingPermissions` (replaces `get-pending-permissions`).
+3. **Per-generation event log**: every live event carries canonical `sessionId`, durable `generation`, and monotonically increasing `seq`. `chat.subscribe { sessions: [{ sessionId, generation?, lastSeq? }] }` additively subscribes the requesting socket and replays requester-specific retained events. Omitting generation remains compatible and treats `lastSeq` as a cursor for the current run.
+4. `chat_subscribed` includes `generation`, `lastSeq`, the captured `replayFromSeq`/`replayToSeq` range, `replayGap`, `refreshRequired`, `isProcessing`, and `pendingPermissions`. Truncated, unknown, and stale completed coverage explicitly requires canonical REST history. A cursor from an older generation replays the current generation from its retained beginning when complete coverage remains.
+5. Replay delivery is boundary-safe: live events emitted after the acknowledgement boundary are queued for that requester until retained replay has finished, then flushed in sequence order. Other subscribers continue receiving live events without interruption.
 
 ## `/shell` Terminal Flow
 
 The shell handler manages persistent PTY sessions keyed by:
 
-`<projectPath>_<sessionIdOrDefault>[_cmd_<hash>]`
+`<projectPath>_<sessionIdOrDefault>[_cmd_<hash>]` for agent-backed and explicit-command
+shells, or `<projectPath>_plain-shell` for an interactive plain shell.
 
-This enables reconnect behavior and isolates command-specific plain-shell sessions.
+The mode-specific interactive key prevents a plain shell from reconnecting to an
+agent-backed default PTY, while retaining reconnect behavior for the same project.
+Command-specific plain-shell sessions remain isolated by their command suffix.
 
 ### Shell Lifecycle
 
@@ -186,7 +190,10 @@ For login-like commands, existing keyed PTY session is killed and recreated.
 3. Validation:
 Path must exist and be a directory; `sessionId` must match safe pattern.
 4. Command build:
-Provider-specific command construction with resume semantics.
+Provider-specific command construction with resume semantics. A plain-shell init with
+no `initialCommand` starts `bash` (or the Windows PowerShell fallback) without a
+command argument for an interactive PTY; a non-empty `initialCommand` remains a
+one-shot command invocation.
 5. PTY output buffering:
 Stores up to 5000 chunks for replay on reconnect.
 6. URL detection:

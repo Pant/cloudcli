@@ -13,7 +13,7 @@ import {
   CollapsibleContent,
   Shimmer,
 } from '../../../../shared/view/ui';
-import { usePermission } from '../../../../contexts/PermissionContext';
+import { usePermission } from '../../../../contexts/usePermission';
 
 import { MarkdownContent } from './ContentRenderers';
 

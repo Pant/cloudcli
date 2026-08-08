@@ -93,7 +93,35 @@
     "tasks": "Tâches",
     "notifications": "Notifications",
     "plugins": "Plugins",
+    "cache": "Cache",
     "about": "À propos"
+  },
+  "cache": {
+    "title": "Cache",
+    "description": "Gérez les historiques de session mis en cache localement pour ce compte.",
+    "statsTitle": "Historiques en cache",
+    "statsDescription": "Seuls les historiques locaux de ce compte sont comptés. Les autres comptes et les historiques du serveur sont préservés.",
+    "sessionCountLabel": "Sessions en cache",
+    "messageCountLabel": "Messages en cache",
+    "loading": "Chargement des statistiques du cache...",
+    "loadError": "Impossible de charger les statistiques du cache.",
+    "syncSectionTitle": "Synchroniser les historiques",
+    "syncDescription": "Récupérez tous les historiques disponibles pour ce compte. Les historiques peuvent être remis en cache automatiquement plus tard.",
+    "syncButton": "Synchroniser tous les historiques",
+    "syncPending": "Synchronisation des historiques...",
+    "syncSuccess": "{{succeeded}} historiques sur {{eligible}} synchronisés.",
+    "syncPartial": "Synchronisation terminée avec {{failed}} historiques en échec ({{succeeded}} sur {{eligible}} réussis).",
+    "syncError": "Impossible de synchroniser tous les historiques.",
+    "clearSectionTitle": "Effacer les historiques locaux",
+    "clearDescription": "Supprimez uniquement les historiques mis en cache localement pour ce compte. Les autres comptes et les historiques du serveur sont préservés.",
+    "clearButton": "Effacer le cache de ce compte",
+    "clearPending": "Effacement du cache...",
+    "clearSuccess": "Le cache local de ce compte a été effacé. Les historiques pourront être remis en cache plus tard.",
+    "clearError": "Impossible d'effacer le cache de ce compte.",
+    "confirmationTitle": "Effacer les historiques locaux de ce compte ?",
+    "confirmationDescription": "Cette action supprime uniquement les historiques de session mis en cache localement pour ce compte. Les autres comptes et les historiques du serveur sont préservés, et les historiques pourront être remis en cache plus tard.",
+    "cancel": "Annuler",
+    "confirm": "Effacer le cache"
   },
   "notifications": {
     "title": "Notifications",
@@ -443,6 +471,16 @@
     "actions": {
       "edit": "Modifier le serveur",
       "delete": "Supprimer le serveur"
+    },
+    "managed": {
+      "badge": "Géré",
+      "hint": "Géré par CloudCLI.",
+      "enabled": "Activé",
+      "disabled": "Désactivé",
+      "saving": "Enregistrement…",
+      "enable": "Activer le serveur MCP géré",
+      "disable": "Désactiver le serveur MCP géré",
+      "saveFailed": "Échec de l’enregistrement de l’état du serveur MCP géré."
     },
     "help": {
       "title": "À propos de Codex MCP",

@@ -1,16 +1,22 @@
 import { EditorView } from '@codemirror/view';
-import { unifiedMergeView } from '@codemirror/merge';
 import type { Extension } from '@codemirror/state';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { usePaletteOps } from '../../../contexts/PaletteOpsContext';
-import { useTheme } from '../../../contexts/ThemeContext';
+import { usePaletteOps } from '../../../contexts/paletteOps';
+import { useTheme } from '../../../contexts/useTheme';
 import { useCodeEditorDocument } from '../hooks/useCodeEditorDocument';
 import { useCodeEditorSettings } from '../hooks/useCodeEditorSettings';
 import { useEditorKeyboardShortcuts } from '../hooks/useEditorKeyboardShortcuts';
 import type { CodeEditorFile } from '../types/types';
-import { createMinimapExtension, createScrollToFirstChunkExtension, getLanguageExtensions } from '../utils/editorExtensions';
+import {
+  createScrollToFirstChunkExtension,
+  createCapabilityRequest,
+  loadLanguageExtensions,
+  loadMergeCapability,
+  loadMinimapExtension,
+  type MergeCapability,
+} from '../utils/editorExtensions';
 import { getEditorStyles } from '../utils/editorStyles';
 import { createEditorToolbarPanelExtension } from '../utils/editorToolbarPanel';
 
@@ -45,6 +51,11 @@ export default function CodeEditor({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDiff, setShowDiff] = useState(Boolean(file.diffInfo));
   const [markdownPreview, setMarkdownPreview] = useState(false);
+  const [languageExtensions, setLanguageExtensions] = useState<Extension[]>([]);
+  const [mergeCapability, setMergeCapability] = useState<MergeCapability | null>(null);
+  const [minimapExtension, setMinimapExtension] = useState<Extension[]>([]);
+  const languageRequest = useRef(0);
+  const diffCapabilityRequest = useRef(0);
 
   // The code editor follows the app-wide theme; it has no theme of its own.
   const { isDarkMode } = useTheme();
@@ -60,6 +71,7 @@ export default function CodeEditor({
     content,
     setContent,
     loading,
+    reloading,
     saving,
     saveSuccess,
     saveError,
@@ -67,6 +79,7 @@ export default function CodeEditor({
     previewKind,
     fileProjectId,
     handleSave,
+    handleReload,
     handleDownload,
   } = useCodeEditorDocument({
     file,
@@ -101,21 +114,39 @@ export default function CodeEditor({
     previewWindow.document.body.appendChild(iframe);
   }, [content, file.name]);
 
-  const minimapExtension = useMemo(
-    () => (
-      createMinimapExtension({
-        file,
-        showDiff,
-        minimapEnabled,
-        isDarkMode,
-      })
-    ),
-    [file, isDarkMode, minimapEnabled, showDiff],
-  );
+  useEffect(() => {
+    const request = createCapabilityRequest(languageRequest);
+    void loadLanguageExtensions(file.name).then((language) => {
+      if (request.isCurrent()) setLanguageExtensions(language);
+    });
+  }, [file.name]);
+
+  useEffect(() => {
+    const request = createCapabilityRequest(diffCapabilityRequest);
+    const needsMerge = Boolean(file.diffInfo && showDiff && file.diffInfo.old_string !== undefined);
+    if (!needsMerge) {
+      setMergeCapability(null);
+      setMinimapExtension([]);
+      return;
+    }
+
+    void loadMergeCapability().then(async (merge) => {
+      if (!request.isCurrent()) return;
+      setMergeCapability(merge);
+
+      const minimap = await loadMinimapExtension(
+        { file, showDiff, minimapEnabled, isDarkMode },
+        merge.getChunks,
+      );
+      if (request.isCurrent()) setMinimapExtension(minimap);
+    });
+  }, [file, isDarkMode, minimapEnabled, showDiff]);
 
   const scrollToFirstChunkExtension = useMemo(
-    () => createScrollToFirstChunkExtension({ file, showDiff }),
-    [file, showDiff],
+    () => mergeCapability
+      ? createScrollToFirstChunkExtension({ file, showDiff }, mergeCapability.getChunks)
+      : [],
+    [file, mergeCapability, showDiff],
   );
 
   const toolbarPanelExtension = useMemo(
@@ -137,26 +168,21 @@ export default function CodeEditor({
           collapse: t('toolbar.collapse'),
           expand: t('toolbar.expand'),
         },
+        getChunks: mergeCapability?.getChunks,
       })
     ),
-    [file, isExpanded, isSidebar, onPopOut, onToggleExpand, showDiff, t],
+    [file, isExpanded, isSidebar, mergeCapability, onPopOut, onToggleExpand, showDiff, t],
   );
 
   const extensions = useMemo(() => {
     const allExtensions: Extension[] = [
-      ...getLanguageExtensions(file.name),
+      ...languageExtensions,
       ...toolbarPanelExtension,
     ];
 
-    if (file.diffInfo && showDiff && file.diffInfo.old_string !== undefined) {
+    if (file.diffInfo && showDiff && file.diffInfo.old_string !== undefined && mergeCapability) {
       allExtensions.push(
-        unifiedMergeView({
-          original: file.diffInfo.old_string,
-          mergeControls: false,
-          highlightChanges: true,
-          syntaxHighlightDeletions: false,
-          gutter: true,
-        }),
+        mergeCapability.createExtension(file.diffInfo.old_string),
       );
       allExtensions.push(...minimapExtension);
       allExtensions.push(...scrollToFirstChunkExtension);
@@ -169,7 +195,8 @@ export default function CodeEditor({
     return allExtensions;
   }, [
     file.diffInfo,
-    file.name,
+    languageExtensions,
+    mergeCapability,
     minimapExtension,
     scrollToFirstChunkExtension,
     showDiff,
@@ -255,12 +282,14 @@ export default function CodeEditor({
             isHtmlPreviewFile={isHtmlPreviewFile}
             markdownPreview={markdownPreview}
             saving={saving}
+            reloading={reloading}
             saveSuccess={saveSuccess}
             onToggleMarkdownPreview={() => setMarkdownPreview((previous) => !previous)}
             onOpenHtmlPreview={openHtmlPreview}
             onOpenSettings={() => paletteOps.openSettings('appearance')}
             onDownload={handleDownload}
             onSave={handleSave}
+            onReload={handleReload}
             onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
             onClose={onClose}
             labels={{
@@ -272,6 +301,8 @@ export default function CodeEditor({
               download: t('actions.download'),
               save: t('actions.save'),
               saving: t('actions.saving'),
+              reload: t('actions.reload'),
+              reloading: t('actions.reloading'),
               saved: t('actions.saved'),
               fullscreen: t('actions.fullscreen'),
               exitFullscreen: t('actions.exitFullscreen'),

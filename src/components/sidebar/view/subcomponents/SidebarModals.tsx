@@ -1,16 +1,19 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
+import type { ReactElement } from 'react';
 import ReactDOM from 'react-dom';
 import { AlertTriangle, EyeOff, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
+
 import { Button } from '../../../../shared/view/ui';
-import Settings from '../../../settings/view/Settings';
-import VersionUpgradeModal from '../../../version-upgrade/view';
 import type { Project } from '../../../../types/app';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 import type { InstallMode } from '../../../../hooks/useVersionCheck';
 import { normalizeProjectForSettings } from '../../utils/utils';
 import type { DeleteProjectConfirmation, SessionDeleteConfirmation, SettingsProject } from '../../types/types';
-import ProjectCreationWizard from '../../../project-creation-wizard';
+
+const Settings = lazy(() => import('../../../settings/view/Settings'));
+const VersionUpgradeModal = lazy(() => import('../../../version-upgrade/view'));
+const ProjectCreationWizard = lazy(() => import('../../../project-creation-wizard'));
 
 type SidebarModalsProps = {
   projects: Project[];
@@ -42,7 +45,7 @@ type TypedSettingsProps = {
   initialTab: string;
 };
 
-const SettingsComponent = Settings as (props: TypedSettingsProps) => JSX.Element;
+const SettingsComponent = Settings as (props: TypedSettingsProps) => ReactElement;
 
 function TypedSettings(props: TypedSettingsProps) {
   return <SettingsComponent {...props} />;
@@ -80,21 +83,25 @@ export default function SidebarModals({
     <>
       {showNewProject &&
         ReactDOM.createPortal(
-          <ProjectCreationWizard
-            onClose={onCloseNewProject}
-            onProjectCreated={onProjectCreated}
-          />,
+          <Suspense fallback={null}>
+            <ProjectCreationWizard
+              onClose={onCloseNewProject}
+              onProjectCreated={onProjectCreated}
+            />
+          </Suspense>,
           document.body,
         )}
 
       {showSettings &&
         ReactDOM.createPortal(
-          <TypedSettings
-            isOpen={showSettings}
-            onClose={onCloseSettings}
-            projects={settingsProjects}
-            initialTab={settingsInitialTab}
-          />,
+          <Suspense fallback={null}>
+            <TypedSettings
+              isOpen={showSettings}
+              onClose={onCloseSettings}
+              projects={settingsProjects}
+              initialTab={settingsInitialTab}
+            />
+          </Suspense>,
           document.body,
         )}
 
@@ -208,14 +215,18 @@ export default function SidebarModals({
           document.body,
         )}
 
-      <VersionUpgradeModal
-        isOpen={showVersionModal}
-        onClose={onCloseVersionModal}
-        releaseInfo={releaseInfo}
-        currentVersion={currentVersion}
-        latestVersion={latestVersion}
-        installMode={installMode}
-      />
+      {showVersionModal && (
+        <Suspense fallback={null}>
+          <VersionUpgradeModal
+            isOpen={showVersionModal}
+            onClose={onCloseVersionModal}
+            releaseInfo={releaseInfo}
+            currentVersion={currentVersion}
+            latestVersion={latestVersion}
+            installMode={installMode}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

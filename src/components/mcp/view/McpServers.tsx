@@ -12,6 +12,7 @@ import {
 } from '../constants';
 import { useMcpServers } from '../hooks/useMcpServers';
 import { maskSecret } from '../utils/mcpFormatting';
+import SettingsToggle from '../../settings/view/SettingsToggle';
 
 import McpServerFormModal from './modals/McpServerFormModal';
 
@@ -108,6 +109,8 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
     isLoadingProjectScopes,
     loadError,
     deleteError,
+    toggleError,
+    pendingToggleIds,
     saveStatus,
     isFormOpen,
     isGlobalFormOpen,
@@ -119,6 +122,7 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
     submitForm,
     submitGlobalForm,
     deleteServer,
+    toggleServerEnabled,
   } = useMcpServers({ selectedProvider, currentProjects });
 
   const providerName = MCP_PROVIDER_NAMES[selectedProvider];
@@ -178,9 +182,11 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
         </div>
       </div>
 
-      {(loadError || deleteError) && (
+      {(loadError || deleteError || toggleError) && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-200">
-          {deleteError || loadError}
+          {toggleError
+            ? `${t('mcpServers.managed.saveFailed')} ${toggleError}`
+            : deleteError || loadError}
         </div>
       )}
 
@@ -191,9 +197,13 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
 
         {servers.map((server) => {
           const managed = isManagedServer(server);
+          const toggleableManagedServer = selectedProvider === 'opencode' && server.name === 'cloudcli-browser';
+          const serverKey = getServerKey(server);
+          const isTogglePending = pendingToggleIds.has(serverKey);
+          const isEnabled = server.enabled !== false;
 
           return (
-            <div key={getServerKey(server)} className="rounded-lg border border-border bg-card/50 p-4">
+            <div key={serverKey} className="rounded-lg border border-border bg-card/50 p-4">
               <div className="flex items-start justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -219,6 +229,13 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
                         <Lock className="h-3 w-3" />
                         {t('mcpServers.managed.badge', { defaultValue: 'Managed' })}
                       </Badge>
+                    )}
+                    {toggleableManagedServer && (
+                      <span className="text-xs text-muted-foreground">
+                        {isTogglePending
+                          ? t('mcpServers.managed.saving')
+                          : t(isEnabled ? 'mcpServers.managed.enabled' : 'mcpServers.managed.disabled')}
+                      </span>
                     )}
                   </div>
 
@@ -269,6 +286,16 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
+                  </div>
+                )}
+                {toggleableManagedServer && (
+                  <div className="ml-4 flex items-center">
+                    <SettingsToggle
+                      checked={isEnabled}
+                      disabled={isTogglePending}
+                      ariaLabel={t(isEnabled ? 'mcpServers.managed.disable' : 'mcpServers.managed.enable')}
+                      onChange={(enabled) => void toggleServerEnabled(server, enabled)}
+                    />
                   </div>
                 )}
               </div>

@@ -3,15 +3,16 @@ import type { MutableRefObject, RefObject } from 'react';
 import { ClipboardAddon, type IClipboardProvider } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 
 import type { Project } from '../../../types/app';
+import type { MobileModifierInputConfig } from '../types/types';
 import { copyTextToClipboard } from '../../../utils/clipboard';
 import {
   TERMINAL_INIT_DELAY_MS,
   TERMINAL_OPTIONS,
   TERMINAL_RESIZE_DELAY_MS,
+  getTerminalRendererPolicy,
 } from '../constants/constants';
 import {
   installMobileTerminalSelection,
@@ -19,6 +20,7 @@ import {
 } from '../utils/mobileTerminalSelection';
 import { sendSocketMessage } from '../utils/socket';
 import { ensureXtermFocusStyles } from '../utils/terminalStyles';
+import { transformTerminalInput } from '../utils/terminalShortcutKeys';
 
 // CLIs running inside the pty (e.g. `claude auth login`'s "press c to copy"
 // device-flow prompt) write to the clipboard via an OSC 52 escape sequence,
@@ -58,14 +60,16 @@ const ClipboardAddonCtor = ClipboardAddon as unknown as new (
 ) => ClipboardAddon;
 
 type UseShellTerminalOptions = {
-  terminalContainerRef: RefObject<HTMLDivElement>;
+  terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
   fitAddonRef: MutableRefObject<FitAddon | null>;
   wsRef: MutableRefObject<WebSocket | null>;
   selectedProject: Project | null | undefined;
   minimal: boolean;
+  isActive: boolean;
   isRestarting: boolean;
   closeSocket: () => void;
+  mobileModifierInput: MobileModifierInputConfig;
 };
 
 type UseShellTerminalResult = {
@@ -81,14 +85,30 @@ export function useShellTerminal({
   wsRef,
   selectedProject,
   minimal,
+  isActive,
   isRestarting,
   closeSocket,
+  mobileModifierInput,
 }: UseShellTerminalOptions): UseShellTerminalResult {
   const [isInitialized, setIsInitialized] = useState(false);
   const resizeTimeoutRef = useRef<number | null>(null);
   const mobileSelectionRef = useRef<MobileTerminalSelectionManager | null>(null);
+  const isActiveRef = useRef(isActive);
   const selectedProjectKey = selectedProject?.fullPath || selectedProject?.path || '';
   const hasSelectedProject = Boolean(selectedProject);
+  const mobileModifierInputRef = useRef(mobileModifierInput);
+
+  useEffect(() => {
+    mobileModifierInputRef.current = mobileModifierInput;
+  }, [mobileModifierInput]);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+    const terminal = terminalRef.current;
+    if (terminal) {
+      terminal.options.cursorBlink = getTerminalRendererPolicy(isActive).cursorBlink;
+    }
+  }, [isActive, terminalRef]);
 
   useEffect(() => {
     ensureXtermFocusStyles();
@@ -124,7 +144,11 @@ export function useShellTerminal({
       return;
     }
 
-    const nextTerminal = new Terminal(TERMINAL_OPTIONS);
+    const rendererPolicy = getTerminalRendererPolicy(isActiveRef.current);
+    const nextTerminal = new Terminal({
+      ...TERMINAL_OPTIONS,
+      cursorBlink: rendererPolicy.cursorBlink,
+    });
     terminalRef.current = nextTerminal;
 
     const nextFitAddon = new FitAddon();
@@ -136,12 +160,6 @@ export function useShellTerminal({
     // Avoid wrapped partial links in compact login flows.
     if (!minimal) {
       nextTerminal.loadAddon(new WebLinksAddon());
-    }
-
-    try {
-      nextTerminal.loadAddon(new WebglAddon());
-    } catch {
-      console.warn('[Shell] WebGL renderer unavailable, using Canvas fallback');
     }
 
     nextTerminal.open(terminalContainer);
@@ -256,10 +274,13 @@ export function useShellTerminal({
     setIsInitialized(true);
 
     const dataSubscription = nextTerminal.onData((data) => {
+      const modifierInput = mobileModifierInputRef.current;
+      const transformed = transformTerminalInput(data, modifierInput.mobileModifiers);
       sendSocketMessage(wsRef.current, {
         type: 'input',
-        data,
+        data: transformed.data,
       });
+      if (transformed.consumed) modifierInput.clearMobileModifiers();
     });
 
     const resizeObserver = new ResizeObserver(() => {

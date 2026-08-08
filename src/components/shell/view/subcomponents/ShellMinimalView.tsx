@@ -1,7 +1,7 @@
 import type { RefObject } from 'react';
 
 type ShellMinimalViewProps = {
-  terminalContainerRef: RefObject<HTMLDivElement>;
+  terminalContainerRef: RefObject<HTMLDivElement | null>;
 };
 
 export default function ShellMinimalView({

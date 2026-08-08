@@ -30,7 +30,13 @@ export class OpenCodeMcpProvider extends McpProvider {
     });
   }
 
-  protected buildServerConfig(input: UpsertProviderMcpServerInput): Record<string, unknown> {
+  protected buildServerConfig(
+    input: UpsertProviderMcpServerInput,
+    existingConfig?: unknown,
+  ): Record<string, unknown> {
+    const existing = readObjectRecord(existingConfig);
+    const enabled = input.enabled ?? (typeof existing?.enabled === 'boolean' ? existing.enabled : true);
+
     if (input.transport === 'stdio') {
       if (!input.command?.trim()) {
         throw new AppError('command is required for stdio MCP servers.', {
@@ -42,7 +48,7 @@ export class OpenCodeMcpProvider extends McpProvider {
       return {
         type: 'local',
         command: [input.command, ...(input.args ?? [])],
-        enabled: true,
+        enabled,
         environment: input.env ?? {},
       };
     }
@@ -57,7 +63,7 @@ export class OpenCodeMcpProvider extends McpProvider {
     return {
       type: 'remote',
       url: input.url,
-      enabled: true,
+      enabled,
       headers: input.headers ?? {},
     };
   }
@@ -86,6 +92,7 @@ export class OpenCodeMcpProvider extends McpProvider {
         name,
         scope,
         transport: 'stdio',
+        enabled: typeof config.enabled === 'boolean' ? config.enabled : true,
         command,
         args: commandParts.slice(1),
         env: readStringRecord(config.environment) ?? readStringRecord(config.env),
@@ -103,6 +110,7 @@ export class OpenCodeMcpProvider extends McpProvider {
         name,
         scope,
         transport: 'http',
+        enabled: typeof config.enabled === 'boolean' ? config.enabled : true,
         url,
         headers: readStringRecord(config.headers),
       };

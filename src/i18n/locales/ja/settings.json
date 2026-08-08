@@ -93,7 +93,35 @@
     "tasks": "タスク",
     "notifications": "通知",
     "plugins": "プラグイン",
+    "cache": "キャッシュ",
     "about": "概要"
+  },
+  "cache": {
+    "title": "キャッシュ",
+    "description": "このアカウントのローカルにキャッシュされたセッション履歴を管理します。",
+    "statsTitle": "キャッシュ済み履歴",
+    "statsDescription": "このアカウントのローカル履歴のみが集計されます。他のアカウントとサーバー上の履歴は保持されます。",
+    "sessionCountLabel": "キャッシュ済みセッション",
+    "messageCountLabel": "キャッシュ済みメッセージ",
+    "loading": "キャッシュ統計を読み込み中...",
+    "loadError": "キャッシュ統計を読み込めません。",
+    "syncSectionTitle": "履歴を同期",
+    "syncDescription": "このアカウントで利用可能なすべてのセッション履歴を取得します。履歴は後で自動的に再キャッシュされる場合があります。",
+    "syncButton": "すべての履歴を同期",
+    "syncPending": "履歴を同期中...",
+    "syncSuccess": "{{eligible}} 件中 {{succeeded}} 件の履歴を同期しました。",
+    "syncPartial": "{{failed}} 件の履歴に失敗しました（{{eligible}} 件中 {{succeeded}} 件成功）。",
+    "syncError": "すべての履歴を同期できません。",
+    "clearSectionTitle": "ローカル履歴を消去",
+    "clearDescription": "このアカウントのローカルにキャッシュされた履歴のみを削除します。他のアカウントとサーバー上の履歴は保持されます。",
+    "clearButton": "このアカウントのキャッシュを消去",
+    "clearPending": "キャッシュを消去中...",
+    "clearSuccess": "このアカウントのローカルキャッシュを消去しました。履歴は後で再びキャッシュされる場合があります。",
+    "clearError": "このアカウントのキャッシュを消去できません。",
+    "confirmationTitle": "このアカウントのローカル履歴を消去しますか？",
+    "confirmationDescription": "このアカウントのローカルにキャッシュされたセッション履歴のみを削除します。他のアカウントとサーバー上の履歴は保持され、履歴は後で再びキャッシュされる場合があります。",
+    "cancel": "キャンセル",
+    "confirm": "キャッシュを消去"
   },
   "notifications": {
     "title": "通知",
@@ -439,6 +467,16 @@
     "actions": {
       "edit": "サーバーを編集",
       "delete": "サーバーを削除"
+    },
+    "managed": {
+      "badge": "管理対象",
+      "hint": "CloudCLIによって管理されています。",
+      "enabled": "有効",
+      "disabled": "無効",
+      "saving": "保存中…",
+      "enable": "管理対象MCPサーバーを有効にする",
+      "disable": "管理対象MCPサーバーを無効にする",
+      "saveFailed": "管理対象MCPサーバーの状態を保存できませんでした。"
     },
     "help": {
       "title": "Codex MCPについて",

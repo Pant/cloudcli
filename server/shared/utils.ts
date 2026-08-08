@@ -101,7 +101,68 @@ export class AppError extends Error {
 }
 
 // ---------------------------
+//----------------- FILE TREE LISTING UTILITIES ------------
+/**
+ * Conservative upper bound for recursive File Tree listings.
+ *
+ * File Tree routes clamp transport values to this depth and the service applies
+ * the same bound defensively for typed callers. A depth of zero lists only the
+ * requested directory's direct children.
+ */
+export const FILE_TREE_MAX_DEPTH = 10;
+
+// ---------------------------
 //----------------- WORKSPACE PATH VALIDATION UTILITIES ------------
+/**
+ * Normalizes an optional workspace-relative repository selector.
+ *
+ * Git and Worktrees routes use `.` for the workspace root. Absolute paths,
+ * NUL bytes, empty explicit values, and traversal segments are rejected before
+ * any filesystem lookup. Omitted values remain `undefined` for legacy callers.
+ */
+export function normalizeWorkspaceRelativePath(selector: unknown): string | undefined {
+  if (selector === undefined || selector === null) return undefined;
+  if (typeof selector !== 'string' || !selector.trim() || selector.includes('\0')) {
+    throw new AppError('Invalid repository selector', { code: 'INVALID_REPOSITORY', statusCode: 400 });
+  }
+  const value = selector.trim().replace(/\\/g, '/');
+  if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) {
+    throw new AppError('Repository selector must be workspace-relative', { code: 'INVALID_REPOSITORY', statusCode: 400 });
+  }
+  const normalized = path.posix.normalize(value);
+  if (normalized === '..' || normalized.startsWith('../') || normalized.split('/').includes('..')) {
+    throw new AppError('Repository selector escapes the workspace', { code: 'INVALID_REPOSITORY', statusCode: 400 });
+  }
+  return normalized === '' ? '.' : normalized.replace(/^\.\//, '');
+}
+
+/**
+ * Resolves an existing workspace-relative path while enforcing canonical
+ * containment. Git and Worktrees use this after project lookup so symlinked
+ * selectors can never escape the selected workspace.
+ */
+export async function resolveWorkspaceRelativePath(
+  workspacePath: string,
+  selector: unknown,
+): Promise<{ path: string; selector: string | undefined }> {
+  const normalizedSelector = normalizeWorkspaceRelativePath(selector);
+  const workspaceRealPath = await realpath(path.resolve(workspacePath));
+  const candidatePath = path.resolve(workspaceRealPath, normalizedSelector ?? '.');
+  let candidateRealPath: string;
+  try {
+    candidateRealPath = await realpath(candidatePath);
+    const candidateStats = await stat(candidateRealPath);
+    if (!candidateStats.isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw new AppError('Repository path does not exist', { code: 'INVALID_REPOSITORY', statusCode: 400 });
+  }
+  if (candidateRealPath !== workspaceRealPath && !candidateRealPath.startsWith(`${workspaceRealPath}${path.sep}`)) {
+    throw new AppError('Repository selector escapes the workspace', { code: 'INVALID_REPOSITORY', statusCode: 400 });
+  }
+  return { path: candidateRealPath, selector: normalizedSelector };
+}
+
+// ---------------------------
 /**
  * Root directory that all workspace/project paths must stay under.
  *
@@ -142,6 +203,34 @@ export const FORBIDDEN_WORKSPACE_PATHS = [
   'C:\\System Volume Information',
   'C:\\$Recycle.Bin',
 ];
+
+function isPathWithin(candidatePath: string, rootPath: string): boolean {
+  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${path.sep}`);
+}
+
+async function resolveCanonicalProspectivePath(absolutePath: string): Promise<string> {
+  let existingAncestor = absolutePath;
+  const missingSegments: string[] = [];
+
+  while (true) {
+    try {
+      const canonicalAncestor = await realpath(existingAncestor);
+      return normalizeProjectPath(path.join(canonicalAncestor, ...missingSegments));
+    } catch (error) {
+      const fileError = error as NodeJS.ErrnoException;
+      if (fileError.code !== 'ENOENT') {
+        throw fileError;
+      }
+
+      const parentPath = path.dirname(existingAncestor);
+      if (parentPath === existingAncestor) {
+        throw fileError;
+      }
+      missingSegments.unshift(path.basename(existingAncestor));
+      existingAncestor = parentPath;
+    }
+  }
+}
 
 function stripWindowsLongPathPrefix(inputPath: string): string {
   if (inputPath.startsWith('\\\\?\\UNC\\')) {
@@ -206,7 +295,8 @@ export function normalizeProjectPath(inputPath: string): string {
  *
  * Call this before any filesystem mutation that creates or registers projects.
  * The function resolves symlinks, enforces `WORKSPACES_ROOT` containment, and
- * blocks known system directories.
+ * blocks known system directories. On POSIX, canonical `/tmp` and its canonical
+ * descendants are the sole additional allowed root.
  */
 export async function validateWorkspacePath(requestedPath: string): Promise<WorkspacePathValidationResult> {
   try {
@@ -221,7 +311,13 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
     const absolutePath = path.resolve(normalizedRequestedPath);
     const normalizedPath = normalizeProjectPath(absolutePath);
 
-    if (FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath) || normalizedPath === '/') {
+    const usesPosixTemporaryRoot = process.platform !== 'win32'
+      && isPathWithin(normalizedPath, '/tmp');
+
+    if (
+      (FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath) && !usesPosixTemporaryRoot)
+      || normalizedPath === '/'
+    ) {
       return {
         valid: false,
         error: 'Cannot use system-critical directories as workspace locations',
@@ -234,6 +330,10 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
         normalizedPath === normalizedForbiddenPath
         || normalizedPath.startsWith(`${normalizedForbiddenPath}${path.sep}`)
       ) {
+        if (normalizedForbiddenPath === '/tmp' && usesPosixTemporaryRoot) {
+          continue;
+        }
+
         // Allow specific user-writable folders under /var.
         if (
           normalizedForbiddenPath === '/var'
@@ -249,32 +349,38 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
       }
     }
 
-    let resolvedPath = normalizeProjectPath(absolutePath);
-    try {
-      await access(absolutePath);
-      resolvedPath = normalizeProjectPath(await realpath(absolutePath));
-    } catch (error) {
-      const fileError = error as NodeJS.ErrnoException;
-      if (fileError.code !== 'ENOENT') {
-        throw fileError;
-      }
-
-      const parentPath = path.dirname(absolutePath);
-      try {
-        const parentRealPath = await realpath(parentPath);
-        resolvedPath = normalizeProjectPath(path.join(parentRealPath, path.basename(absolutePath)));
-      } catch (parentError) {
-        const parentFileError = parentError as NodeJS.ErrnoException;
-        if (parentFileError.code !== 'ENOENT') {
-          throw parentFileError;
-        }
-      }
-    }
+    const resolvedPath = await resolveCanonicalProspectivePath(absolutePath);
 
     const resolvedWorkspaceRoot = normalizeProjectPath(await realpath(WORKSPACES_ROOT));
+    const resolvedTemporaryRoot = process.platform === 'win32'
+      ? null
+      : normalizeProjectPath(await realpath('/tmp'));
+    const isTemporaryWorkspacePath = resolvedTemporaryRoot !== null
+      && isPathWithin(resolvedPath, resolvedTemporaryRoot);
+
+    for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
+      const normalizedForbiddenPath = normalizeProjectPath(forbiddenPath);
+      if (!isPathWithin(resolvedPath, normalizedForbiddenPath)) {
+        continue;
+      }
+      if (normalizedForbiddenPath === '/tmp' && isTemporaryWorkspacePath) {
+        continue;
+      }
+      if (
+        normalizedForbiddenPath === '/var'
+        && (resolvedPath.startsWith('/var/tmp') || resolvedPath.startsWith('/var/folders'))
+      ) {
+        continue;
+      }
+      return {
+        valid: false,
+        error: `Cannot create workspace in system directory: ${forbiddenPath}`,
+      };
+    }
+
     if (
-      !resolvedPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
-      && resolvedPath !== resolvedWorkspaceRoot
+      !isPathWithin(resolvedPath, resolvedWorkspaceRoot)
+      && !isTemporaryWorkspacePath
     ) {
       return {
         valid: false,
@@ -289,10 +395,8 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
         const symlinkTarget = await readlink(absolutePath);
         const resolvedSymlinkPath = path.resolve(path.dirname(absolutePath), symlinkTarget);
         const realSymlinkPath = await realpath(resolvedSymlinkPath);
-        if (
-          !realSymlinkPath.startsWith(`${resolvedWorkspaceRoot}${path.sep}`)
-          && realSymlinkPath !== resolvedWorkspaceRoot
-        ) {
+        if (!isPathWithin(realSymlinkPath, resolvedWorkspaceRoot)
+          && (resolvedTemporaryRoot === null || !isPathWithin(realSymlinkPath, resolvedTemporaryRoot))) {
           return {
             valid: false,
             error: 'Symlink target is outside the allowed workspace root',
@@ -366,6 +470,7 @@ export function createCompleteMessage(opts: {
   actualSessionId?: string | null;
   exitCode?: number | null;
   aborted?: boolean;
+  signal?: NodeJS.Signals | null;
 }): NormalizedMessage {
   const exitCode = typeof opts.exitCode === 'number' ? opts.exitCode : 1;
   const aborted = Boolean(opts.aborted);
@@ -378,6 +483,7 @@ export function createCompleteMessage(opts: {
     exitCode,
     success: exitCode === 0 && !aborted,
     aborted,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
 }
 

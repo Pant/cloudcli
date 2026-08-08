@@ -1,0 +1,77 @@
+# Reduce Constant GPU Usage
+
+## CONTEXT
+
+- The requested scope is the frontend application in `/home/dev/code/cloudcli-src`: identify and fix a persistent desktop GPU load reported around 80–98%.
+- The project is a Vite/React 18 application packaged in Electron and also served as a web app. Client code lives under `src/`; the client build is `vite build` and frontend type checking is included in `npm run typecheck`.
+- Existing project validation commands are `npm run build:client`, `npm run typecheck`, `npm run lint`, and the repository's Node test command `npm test`. There are no existing shell component tests, but there are focused frontend tests under `src/**/*.test.*`.
+- `src/components/shell/hooks/useShellTerminal.ts` always loads `@xterm/addon-webgl` after creating every xterm terminal. The terminal options in `src/components/shell/constants/constants.ts` enable `cursorBlink: true`, use a 10,000-line scrollback, and create a GPU-backed renderer even when the shell is not visibly active. `Shell` is mounted by `StandaloneShell` from the shell tab and by other shell surfaces.
+- `src/components/main-content/view/MainContent.tsx` keeps the chat subtree mounted while other tabs are selected by hiding it with CSS. The shell subtree is conditionally mounted only for the shell tab, and it passes `isActive` to `StandaloneShell`/`Shell`, but the terminal hook currently does not use `isActive` to control rendering work.
+- `src/components/chat/view/subcomponents/ActivityIndicator.tsx` renders while a session is processing. It combines a one-second elapsed-time interval, a pulsing dot, a `Shimmer` component, and enter/exit animations. `Shimmer` uses Tailwind's `animate-shimmer`; its animation is a continuously moving gradient over text. `src/index.css` also uses blur filters and `will-change` for activity animations and has multiple backdrop-filter surfaces.
+- `src/index.css` contains global interactive/color transitions, several blur/backdrop-filter surfaces, continuous spinner/pulse utility animations, and activity animations that include `filter: blur(...)`. These are not all active simultaneously, but they are possible persistent compositor/GPU work when a loading or processing state remains visible.
+- `src/components/app/AppContent.tsx` polls running sessions every five seconds, and `src/components/sidebar/hooks/useSidebarController.ts` polls project sort order every second while the document has focus. These timers primarily cause CPU/network/React work rather than direct GPU load, but they can trigger repeated layout/paint and should be considered only where they are unnecessarily active.
+- WebSocket dispatch is synchronous to listeners and also updates `latestMessage` state for every incoming frame (`src/contexts/WebSocketContext.tsx`). This may increase React work during active streams, but it is not itself evidence of a constant GPU loop.
+- There is no existing task-specific plan file for this performance issue. Existing plans in `plans/` concern unrelated features and must not be altered.
+- The strongest code-level candidates for a constant desktop GPU load are the unconditional xterm WebGL renderer/cursor blink and continuously animated visual effects (especially shimmer/pulse/blur) that can remain mounted during processing. A correct fix should preserve terminal functionality and visual feedback while avoiding perpetual GPU work when the UI is idle or not visible.
+- No backend changes are currently indicated. If implementation remains frontend-only, backend module standards do not apply.
+
+## ANALYSIS
+
+The symptom is a sustained GPU percentage rather than a short interaction spike. The code contains two classes of mechanisms capable of keeping the compositor or GPU renderer busy indefinitely: an xterm WebGL canvas and CSS animations. The xterm path is the most direct explanation for high desktop GPU usage because `WebglAddon` is loaded unconditionally, while `cursorBlink` guarantees recurring terminal redraws whenever a terminal exists. An Electron/WebView GPU process can also report high usage for a WebGL surface even if the terminal is visually static, especially with driver-specific behavior. The current API has an `isActive` prop but does not propagate it into terminal lifecycle/rendering decisions, so the implementation has no explicit inactive-tab optimization.
+
+The activity indicator is a second likely contributor. Its shimmer is intentionally infinite, and the indicator may remain present for the entire duration of a long-running agent request. The animation combines gradient movement with text clipping and can trigger frequent compositing. The pulse dot and blur-based entry/exit effects add more animated/composited work. These effects should be treated as opt-in embellishments rather than continuously animated defaults: elapsed time can update once per second without animating the entire text surface, and reduced-motion/low-power behavior should be respected.
+
+The remediation should be evidence-driven and conservative:
+
+1. Confirm the terminal renderer and lifecycle behavior from the current code and package APIs, then make the renderer policy explicit. Prefer a low-power default (Canvas/DOM renderer) or load WebGL only for an explicitly active terminal when it provides a measurable benefit. Do not break terminal input, resizing, clipboard, links, selection, or cleanup. If WebGL is retained, it must be disposed when the terminal becomes inactive and restored only when active, with no duplicate addon lifecycle.
+2. Remove or gate perpetual decorative animations in the activity indicator. Preserve status text, elapsed time, and interrupt controls. Avoid changing functional loading spinners unless they are proven to be stuck or globally mounted.
+3. Add focused tests for the changed policy/utilities where feasible, and use build/typecheck/lint plus targeted tests to catch regressions. Since browser GPU utilization cannot be measured reliably in this headless environment, validation must include static/runtime lifecycle assertions and a clear manual verification procedure for desktop idle, chat-processing, and shell-tab scenarios.
+
+Trade-offs: disabling WebGL may reduce terminal rendering throughput for very large/high-frequency output, but it is safer for a general-purpose desktop application with a reported persistent GPU problem. A policy that enables WebGL only when active preserves performance for a user who is watching terminal output while avoiding a hidden terminal's cost. Removing shimmer slightly reduces visual polish but leaves the information architecture and accessibility intact. The plan should prefer an explicit low-power mode or inactive lifecycle over broad speculative changes to all CSS effects.
+
+Open assumption: the reported high GPU usage occurs while the application is idle or in ordinary use, not only during high-volume terminal output or an intentional browser-use video surface. The fix should target persistent background work and retain high-throughput behavior where it is clearly needed.
+
+## PLAN
+
+1. Make xterm rendering power-aware. Stop creating an always-on WebGL renderer for every terminal, or establish an explicit active-terminal policy that prevents hidden/inactive shells from consuming GPU resources. Preserve terminal behavior, resize handling, cleanup, and reconnect behavior. Add focused tests or testable helpers for the renderer/lifecycle decision where the existing test setup permits.
+2. Remove continuous decorative compositor work from the long-running activity indicator. Keep the status label, elapsed time, interrupt affordance, and accessible reduced-motion behavior, but replace infinite shimmer/pulse/blur work with low-cost static or bounded effects. Add focused tests for the changed rendering state/animation policy where practical.
+3. Apply the live Chrome DevTools findings to the remaining sidebar and queue indicators. Replace the confirmed infinite pulse/spin animations with static semantic status markers so an active foreground tab does not continuously submit compositor frames.
+
+## GUIDELINES
+
+- Work only within the assigned TODO item. Do not alter unrelated in-progress changes or existing plan files.
+- Read this plan before editing. Code agents may edit this plan only for their own item's status marker, Summary field, and one append-only CHANGELOG entry.
+- Prefer small, explicit frontend changes over broad redesigns. Do not modify backend code unless a concrete frontend dependency requires it.
+- Preserve terminal input, output, selection, clipboard/OSC 52 support, links, prompt detection, resizing, reconnect, and disposal semantics.
+- Preserve activity information and interrupt behavior. The goal is lower persistent rendering/compositor work, not removal of user-visible status.
+- Respect `prefers-reduced-motion`; avoid introducing new infinite animations or unbounded `will-change` hints.
+- Use the repository's existing TypeScript/React style and test conventions. Run the validation specified on the item, plus any directly relevant existing tests.
+- Do not commit, branch, stage, or otherwise manage version control state.
+
+## TODO
+
+- [x] **ID:** 1 | **Batch:** 1
+  **Task:** Refactor the xterm terminal renderer setup in `src/components/shell/hooks/useShellTerminal.ts` and related shell types/constants as needed so a terminal does not unconditionally keep a WebGL renderer active. Implement a conservative low-GPU policy (for example, Canvas/default rendering by default, or WebGL only while the terminal is explicitly active) without breaking terminal addons, output, resize, focus, reconnect, or cleanup. Add a focused testable helper or tests for the policy/lifecycle if feasible.
+  **Acceptance criteria:** Terminal initialization no longer unconditionally creates a persistent WebGL addon for every shell; inactive/hidden shell surfaces do not retain unnecessary GPU rendering; terminal input/output, resizing, selection, clipboard, links, prompt detection, and disposal remain intact; no duplicate renderer/addon is created during restart or React effect re-runs.
+  **Validation:** Run focused shell-related tests if added, `npm run typecheck`, `npm run build:client`, and `npm run lint` (or the narrowest equivalent if an unrelated pre-existing failure blocks the full command). Report any limitation.
+  **Summary:** Removed the unconditional `@xterm/addon-webgl` load from `useShellTerminal`, added the built-in-renderer policy helper with inactive-shell cursor blinking disabled, propagated `isActive` through `Shell` and `useShellRuntime`, and added focused policy tests. Existing fit, clipboard/OSC 52, links, selection, input/output, resize, prompt, reconnect, and disposal paths remain unchanged; typecheck, client build, focused tests, and lint passed (lint reports unrelated existing warnings only).
+
+- [x] **ID:** 2 | **Batch:** 1
+  **Task:** Refactor the long-running chat activity indicator and its associated CSS (`src/components/chat/view/subcomponents/ActivityIndicator.tsx`, `src/shared/view/ui/Shimmer.tsx` only if needed, and relevant rules in `src/index.css`) to eliminate continuous shimmer/pulse/blur compositor work while a request remains active. Keep the status text rotation, elapsed-time updates, stop action, entry/exit behavior, and reduced-motion accessibility semantics. Add focused tests or a small testable policy where practical.
+  **Acceptance criteria:** A continuously processing chat no longer runs the infinite gradient shimmer and pulse/blur effects by default; status and elapsed time still update correctly; the interrupt button remains available; enter/exit effects are bounded and do not leave `will-change` or animation loops active after completion; reduced-motion users receive no ongoing decorative animation.
+  **Validation:** Run focused activity-indicator tests if added, `npm run typecheck`, `npm run build:client`, and `npm run lint` (or the narrowest equivalent if an unrelated pre-existing failure blocks the full command). Report any limitation.
+  **Summary:** Removed the ActivityIndicator's infinite Shimmer and dot pulse, replaced them with static status text and a dot, and updated activity enter/exit CSS to use bounded opacity/transform animations without blur or will-change. Added reduced-motion overrides and pure helper tests covering status rotation, punctuation normalization, and elapsed-time formatting. Validation passed for focused tests, typecheck, client build, and full lint (existing warnings only).
+
+- [x] **ID:** 3 | **Batch:** 2
+  **Task:** Use the user's Chrome `document.getAnimations()` evidence to remove the remaining persistent foreground-tab animation loops from session and queue status UI. In `SidebarSessionItem`, replace the infinite amber/green attention/recent pulse and processing-session spinner in both responsive render paths with static, accessible status indicators. In the shared `Queue` component, replace the in-progress infinite blue pulse with a static status indicator. Check directly related sidebar status decorations for duplicate responsive animation work and remove the same unnecessary perpetual pulse where appropriate, without changing status meaning or interaction behavior.
+  **Acceptance criteria:** The seven reported live animations (`pulse` on amber/green session dots, two `spin` processing icons, and three blue queue-item pulses) are no longer generated; session attention, recent/active, processing, descendant activity, and queue in-progress states remain visually distinguishable and retain existing status labels/tooltips/ARIA semantics; responsive hidden variants do not run duplicate animations; no new infinite animation is introduced.
+  **Validation:** Add or update focused component/static-render tests where practical; run those focused tests, `npm run typecheck`, `npm run build:client`, and `npm run lint`. Also statically verify that the targeted class paths no longer include `animate-pulse`/`animate-spin`. Report unrelated existing warnings or test blockers.
+  **Summary:** Replaced SidebarSessionItem's attention/recent pulse and both responsive processing spinners with static ringed semantic dots, preserving tooltips, status labels, descendant counts, hover behavior, and responsive rendering. Replaced Queue in-progress pulses with static blue ringed markers, and removed duplicate static-status pulse decorations from SidebarCollapsed and SidebarFooter update/restart indicators. Added focused static-render tests for session hierarchy/status variants and Queue. Typecheck, client build, focused tests, and lint passed; lint reports the repository's existing warnings. A full typecheck initially exposed unrelated pre-existing errors in projectStateSidebar.integration.test.tsx, then passed after concurrent workspace changes settled.
+
+## CHANGELOG
+
+- ID 2: Reworked the chat activity indicator to use static status feedback and bounded, reduced-motion-safe entry/exit effects, with focused status and elapsed-time helper tests.
+
+- ID 1: Removed the unconditional xterm WebGL addon, added an explicit built-in-renderer policy that disables cursor blinking for inactive shells, propagated isActive into terminal setup, and added focused renderer-policy tests.
+
+- ID 3: Replaced persistent session and queue status pulse/spin indicators with static accessible markers, removed related sidebar duplicate pulses, and added focused static-render coverage.

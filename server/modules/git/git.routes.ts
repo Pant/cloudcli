@@ -8,6 +8,7 @@ import { AppError } from '@/shared/utils.js';
 
 // cross-spawn: drop-in spawn with Windows .cmd/PATHEXT resolution.
 import { parseGitLogWithStats, parseGitStatusOutput } from './git-parsing.service.js';
+import { GitRepositoryService } from './git-repository.service.js';
 
 type GitRouterDependencies = {
   fileSystem: typeof import('node:fs/promises');
@@ -15,6 +16,7 @@ type GitRouterDependencies = {
   resolveProjectPathById(projectId: string): string | null;
   queryClaude: ProviderRunFunction;
   queryCursor: ProviderRunFunction;
+  repositoryService?: GitRepositoryService;
 };
 
 /** Creates Git routes around explicit repository, filesystem, subprocess, and AI adapters. */
@@ -25,6 +27,7 @@ const projectsDb = { getProjectPathById: dependencies.resolveProjectPathById };
 const queryClaudeSDK = dependencies.queryClaude;
 const spawnCursor = dependencies.queryCursor;
 const router = express.Router();
+const repositoryService = dependencies.repositoryService ?? new GitRepositoryService(fs, spawnAsync);
 const COMMIT_DIFF_CHARACTER_LIMIT = 500_000;
 
 function spawnAsync(command, args, options = {}) {
@@ -128,13 +131,25 @@ function validateProjectPath(projectPath) {
  * path comes straight from the `projects` table and is then sanity-checked
  * by `validateProjectPath` before any `git` command runs against it.
  */
-async function getActualProjectPath(projectId) {
+async function getActualProjectPath(projectId, repository, options = {}) {
   const projectPath = await projectsDb.getProjectPathById(projectId);
   if (!projectPath) {
     throw new Error(`Unable to resolve project path for "${projectId}"`);
   }
-  return validateProjectPath(projectPath);
+  return repositoryService.resolve(validateProjectPath(projectPath), repository, options);
 }
+
+router.get('/repositories', async (req, res) => {
+  const { project } = req.query;
+  if (!project) return res.status(400).json({ error: 'Project id is required' });
+  try {
+    const workspacePath = await projectsDb.getProjectPathById(project);
+    if (!workspacePath) throw new Error(`Unable to resolve project path for "${project}"`);
+    res.json({ repositories: await repositoryService.discover(validateProjectPath(workspacePath)) });
+  } catch (error) {
+    res.status(error instanceof AppError ? error.statusCode : 500).json({ error: error.message });
+  }
+});
 
 // Helper function to strip git diff headers
 function stripDiffHeaders(diff) {
@@ -329,14 +344,14 @@ async function resolveRepositoryFilePath(projectPath, filePath) {
 
 // Get Git status for a project; parsing is isolated in git-parsing.service.ts.
 router.get('/status', async (req, res) => {
-  const { project } = req.query;
+  const { project, repository } = req.query;
 
   if (!project) {
     return res.status(400).json({ error: 'Project id is required' });
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, repository);
 
     // Validate git repository
     await validateGitRepository(projectPath);
@@ -374,14 +389,14 @@ router.get('/status', async (req, res) => {
 
 // Initialize a new git repository in the project directory
 router.post('/init', async (req, res) => {
-  const { project } = req.body;
+  const { project, repository } = req.body;
 
   if (!project) {
     return res.status(400).json({ error: 'Project id is required' });
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, repository, { allowUninitialized: true });
 
     let isAlreadyRepository = false;
     try {
@@ -415,7 +430,7 @@ router.get('/diff', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     
     // Validate git repository
     await validateGitRepository(projectPath);
@@ -498,7 +513,7 @@ router.get('/file-with-diff', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
 
     // Validate git repository
     await validateGitRepository(projectPath);
@@ -578,7 +593,7 @@ router.post('/initial-commit', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
 
     // Validate git repository
     await validateGitRepository(projectPath);
@@ -622,7 +637,7 @@ router.post('/commit', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     
     // Validate git repository
     await validateGitRepository(projectPath);
@@ -654,7 +669,7 @@ router.post('/stage', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
     const repositoryRootPath = await getRepositoryRootPath(projectPath);
 
@@ -679,7 +694,7 @@ router.post('/unstage', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
     const repositoryRootPath = await getRepositoryRootPath(projectPath);
     const hasCommits = await repositoryHasCommits(projectPath);
@@ -711,7 +726,7 @@ router.post('/revert-local-commit', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     try {
@@ -758,7 +773,7 @@ router.get('/branches', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     
     // Validate git repository
     await validateGitRepository(projectPath);
@@ -802,7 +817,7 @@ router.post('/checkout', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     
     // Checkout the branch
     validateBranchName(branch);
@@ -824,7 +839,7 @@ router.post('/create-branch', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     
     // Create and checkout new branch
     validateBranchName(branch);
@@ -846,7 +861,7 @@ router.post('/delete-branch', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     // Safety: cannot delete the currently checked-out branch
@@ -876,7 +891,7 @@ router.get('/commits', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
     const parsedLimit = Number.parseInt(String(limit), 10);
     const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
@@ -919,7 +934,7 @@ router.get('/commit-diff', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
 
     // Validate commit reference (defense-in-depth)
     validateCommitRef(commit);
@@ -956,7 +971,7 @@ router.post('/generate-commit-message', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
     const repositoryRootPath = await getRepositoryRootPath(projectPath);
 
@@ -1156,7 +1171,7 @@ router.get('/remote-status', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     const branch = await getCurrentBranchName(projectPath);
@@ -1234,7 +1249,7 @@ router.post('/fetch', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     // Get current branch and its upstream remote
@@ -1275,7 +1290,7 @@ router.post('/pull', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     // Get current branch and its upstream remote
@@ -1343,7 +1358,7 @@ router.post('/push', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     // Get current branch and its upstream remote
@@ -1414,7 +1429,7 @@ router.post('/publish', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
 
     // Validate branch name
@@ -1493,7 +1508,7 @@ router.post('/discard', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
     const {
       repositoryRootPath,
@@ -1547,7 +1562,7 @@ router.post('/delete-untracked', async (req, res) => {
   }
 
   try {
-    const projectPath = await getActualProjectPath(project);
+    const projectPath = await getActualProjectPath(project, req.method === 'GET' ? req.query.repository : req.body.repository);
     await validateGitRepository(projectPath);
     const {
       repositoryRootPath,

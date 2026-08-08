@@ -38,9 +38,13 @@ export default function ComposerAgentMenu({
     defaultValue: 'Select OpenCode agent',
   });
 
-  if (agentOptions.length === 0) {
+  if (agentOptions.length === 0 && !agentsLoading) {
     return null;
   }
+
+  const triggerLabel = selectedOption?.label
+    || agent
+    || t('composer.loadingAgents', { defaultValue: 'Loading agents…' });
 
   return (
     <>
@@ -60,7 +64,7 @@ export default function ComposerAgentMenu({
         aria-label={ariaLabel}
         title={ariaLabel}
       >
-        <span className="truncate">{selectedOption?.label || agent}</span>
+        <span className="truncate">{triggerLabel}</span>
       </button>
 
       {isOpen && anchor && createPortal(

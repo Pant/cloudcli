@@ -310,11 +310,13 @@ export function handleShellConnection(
         const hasSession = readBoolean(data.hasSession);
         const provider = readString(data.provider, 'claude');
         const initialCommand = readString(data.initialCommand);
+        const hasInitialCommand = initialCommand.trim().length > 0;
         const forceRestart = readBoolean(data.forceRestart);
         const isPlainShell =
           readBoolean(data.isPlainShell) ||
           (!!initialCommand && !hasSession) ||
           provider === 'plain-shell';
+        const isInteractivePlainShell = isPlainShell && !hasInitialCommand;
 
         urlDetectionBuffer = '';
         announcedAuthUrls.clear();
@@ -326,10 +328,14 @@ export function handleShellConnection(
             initialCommand.includes('auth login'));
 
         const commandSuffix =
-          isPlainShell && initialCommand
+          isPlainShell && hasInitialCommand
             ? `_cmd_${Buffer.from(initialCommand).toString('base64').slice(0, 16)}`
             : '';
-        ptySessionKey = `${projectPath}_${sessionId ?? 'default'}${commandSuffix}`;
+        // Interactive plain shells are project-scoped rather than session-scoped.
+        // The distinct suffix keeps them separate from an agent-backed default PTY.
+        ptySessionKey = isInteractivePlainShell
+          ? `${projectPath}_plain-shell`
+          : `${projectPath}_${sessionId ?? 'default'}${commandSuffix}`;
 
         if (isLoginCommand || forceRestart) {
           const oldSession = ptySessionsMap.get(ptySessionKey);
@@ -394,7 +400,11 @@ export function handleShellConnection(
         const resumeSessionId = resolveResumeSessionId(data, dependencies);
         const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
         const shellArgs =
-          os.platform() === 'win32' ? ['-Command', shellCommand] : ['-c', shellCommand];
+          isInteractivePlainShell
+            ? []
+            : os.platform() === 'win32'
+              ? ['-Command', shellCommand]
+              : ['-c', shellCommand];
         const termCols = readNumber(data.cols, 80);
         const termRows = readNumber(data.rows, 24);
         const prioritizedPath = prioritizeUserNpmGlobalBin(process.env);

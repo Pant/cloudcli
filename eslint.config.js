@@ -6,7 +6,6 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import { createNodeResolver, importX } from "eslint-plugin-import-x";
 import { createTypeScriptImportResolver } from "eslint-import-resolver-typescript";
 import boundaries from "eslint-plugin-boundaries";
-import tailwindcss from "eslint-plugin-tailwindcss";
 import unusedImports from "eslint-plugin-unused-imports";
 import globals from "globals";
 
@@ -22,7 +21,6 @@ export default tseslint.config(
       "react-hooks": reactHooks, // for following React rules such as dependencies in hooks, keys in lists, etc.
       "react-refresh": reactRefresh, // for Vite HMR compatibility
       "import-x": importX, // for import order/sorting. It also detercts circular dependencies and duplicate imports.
-      tailwindcss, // for detecting invalid Tailwind classnames and enforcing classname order
       "unused-imports": unusedImports, // for detecting unused imports
     },
     languageOptions: {
@@ -88,11 +86,6 @@ export default tseslint.config(
         },
       ],
 
-      // --- Tailwind CSS ---
-      "tailwindcss/classnames-order": "warn",
-      "tailwindcss/no-contradicting-classname": "warn",
-      "tailwindcss/no-unnecessary-arbitrary-value": "warn",
-
       // --- Disabled base rules ---
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-require-imports": "off",
@@ -148,33 +141,31 @@ export default tseslint.config(
       ],
       "boundaries/elements": [
         {
-          type: "backend-shared-type-contract", // shared backend type/interface contracts that modules may consume without creating runtime coupling
+          type: "backend-module", // logical element name used by boundaries rules below
+          pattern: "server/modules/*", // each direct folder in server/modules is treated as one module boundary
+          capture: ["moduleName"], // capture the module folder name for messages/debugging/template use
+        },
+      ],
+      "boundaries/files": [
+        {
+          category: "backend-shared-type-contract", // shared backend type/interface contracts that modules may consume without creating runtime coupling
           pattern: [
             "server/shared/types.{js,ts}",
             "server/shared/interfaces.{js,ts}",
           ], // keep backend modules on explicit shared contract files for erased imports only
-          mode: "file", // treat each shared contract file itself as the boundary element instead of the whole folder
         },
         {
-          type: "backend-shared-utils", // shared backend runtime helpers that modules may import directly
+          category: "backend-shared-utils", // shared backend runtime helpers that modules may import directly
           pattern: [
             "server/shared/utils.{js,ts}",
             "server/shared/frontmatter.ts",
             "server/shared/claude-cli-path.ts",
             "server/shared/image-attachments.ts",
           ], // classify shared utility files so modules can depend on them explicitly
-          mode: "file",
         },
         {
-          type: "backend-legacy-runtime", // legacy runtime persistence modules used while providers migrate into server/modules
+          category: "backend-legacy-runtime", // legacy runtime persistence modules used while providers migrate into server/modules
           pattern: ["server/projects.js"], // provider history loading still resolves session data through this legacy runtime file
-          mode: "file",
-        },
-        {
-          type: "backend-module", // logical element name used by boundaries rules below
-          pattern: "server/modules/*", // each direct folder in server/modules is treated as one module boundary
-          mode: "folder", // classify dependencies at folder-module level (not per individual file)
-          capture: ["moduleName"], // capture the module folder name for messages/debugging/template use
         },
       ],
     },
@@ -212,10 +203,10 @@ export default tseslint.config(
         {
           default: "allow", // allow normal imports unless a rule below explicitly disallows them
           checkInternals: false, // do not apply these cross-module rules to imports inside the same module
-          rules: [
+          policies: [
             {
-              from: { type: "backend-module" }, // modules may depend on shared type/interface contracts only as erased type-only imports
-              to: { type: "backend-shared-type-contract" },
+              from: { element: { type: "backend-module" } }, // modules may depend on shared type/interface contracts only as erased type-only imports
+              to: { file: { categories: "backend-shared-type-contract" } },
               disallow: {
                 dependency: { kind: ["value", "typeof"] },
               }, // block runtime imports so shared contracts stay compile-time only instead of becoming hidden shared modules
@@ -223,26 +214,28 @@ export default tseslint.config(
                 "Backend modules may only use `import type` when importing from server/shared/types.ts or server/shared/interfaces.ts.",
             },
             {
-              to: { type: "backend-module" }, // when importing anything that belongs to another backend module
-              disallow: { to: { internalPath: "**" } }, // block all direct/deep imports into module internals by default
+              to: { element: { type: "backend-module" } }, // when importing anything that belongs to another backend module
+              disallow: { to: { element: { fileInternalPath: "**" } } }, // block all direct/deep imports into module internals by default
               message:
                 "Cross-module imports must go through that module's barrel file (server/modules/<module>/index.ts or index.js).", // explicit error message for architecture violations
             },
             {
-              to: { type: "backend-module" }, // same target scope as the disallow rule above
+              to: { element: { type: "backend-module" } }, // same target scope as the disallow rule above
               allow: {
                 to: {
-                  internalPath: [
+                  element: {
+                    fileInternalPath: [
                     "index", // allow extensionless barrel imports resolved as module root index
                     "index.{js,mjs,cjs,ts,tsx}", // allow explicit index.* barrel file imports
-                  ],
+                    ],
+                  },
                 },
               }, // re-allow only public module entry points (barrel files)
             },
           ],
         },
       ],
-      "boundaries/no-unknown": "error", // fail fast if boundaries cannot classify a dependency, which prevents silent rule bypasses
+      "boundaries/no-unknown-dependencies": "error", // fail fast if boundaries cannot classify a dependency, which prevents silent rule bypasses
     },
   }
 );

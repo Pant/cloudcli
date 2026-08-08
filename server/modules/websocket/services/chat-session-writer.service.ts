@@ -1,4 +1,3 @@
-import { WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
 import type {
   LLMProvider,
   NormalizedMessage,
@@ -7,7 +6,6 @@ import type {
 import { createCompleteMessage, readObjectRecord } from '@/shared/utils.js';
 
 type ChatSessionWriterOptions = {
-  connection: RealtimeClientConnection;
   userId: string | number | null;
   provider: LLMProvider;
   /** Provider-native id when resuming an existing session, otherwise null. */
@@ -25,6 +23,7 @@ type ChatSessionWriterOptions = {
    * `complete` after an abort already completed the run).
    */
   decorateOutboundEvent: (message: NormalizedMessage) => NormalizedMessage | null;
+  forwardOutboundEvent: (message: NormalizedMessage) => void;
 };
 
 /**
@@ -44,7 +43,7 @@ type ChatSessionWriterOptions = {
  *   intercepted and recorded as the provider-id mapping as well.
  */
 export class ChatSessionWriter {
-  ws: RealtimeClientConnection;
+  ws: RealtimeClientConnection | null = null;
   userId: string | number | null;
   /**
    * Some runtimes feature-detect their writer with this flag; keep it so the
@@ -63,7 +62,6 @@ export class ChatSessionWriter {
 
   constructor(options: ChatSessionWriterOptions) {
     this.options = options;
-    this.ws = options.connection;
     this.userId = options.userId;
     this.providerSessionId = options.providerSessionId;
   }
@@ -95,7 +93,7 @@ export class ChatSessionWriter {
 
     const outbound = this.options.decorateOutboundEvent(message);
     if (outbound) {
-      this.forward(outbound);
+      this.options.forwardOutboundEvent(outbound);
     }
   }
 
@@ -103,16 +101,17 @@ export class ChatSessionWriter {
    * Emits the synthetic terminal `complete` for runs that ended without one
    * (runtime crash before completing, or user abort).
    */
-  sendComplete(opts: { exitCode: number; aborted?: boolean }): void {
+  sendComplete(opts: { exitCode: number; aborted?: boolean; signal?: NodeJS.Signals | null }): void {
     const message = createCompleteMessage({
       provider: this.options.provider,
       sessionId: this.providerSessionId,
       exitCode: opts.exitCode,
       aborted: opts.aborted,
+      signal: opts.signal,
     });
     const outbound = this.options.decorateOutboundEvent(message);
     if (outbound) {
-      this.forward(outbound);
+      this.options.forwardOutboundEvent(outbound);
     }
   }
 
@@ -137,9 +136,4 @@ export class ChatSessionWriter {
     this.options.onProviderSessionId(providerSessionId);
   }
 
-  private forward(message: NormalizedMessage): void {
-    if (this.ws.readyState === WS_OPEN_STATE) {
-      this.ws.send(JSON.stringify(message));
-    }
-  }
 }

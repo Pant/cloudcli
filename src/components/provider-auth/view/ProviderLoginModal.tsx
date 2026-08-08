@@ -1,7 +1,10 @@
+import { lazy, Suspense } from 'react';
 import { X } from 'lucide-react';
-import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
+
 import { DEFAULT_PROJECT_FOR_EMPTY_SHELL, IS_PLATFORM } from '../../../constants/config';
 import type { LLMProvider } from '../../../types/app';
+
+const StandaloneShell = lazy(() => import('../../standalone-shell/view/StandaloneShell'));
 
 type ProviderLoginModalProps = {
   isOpen: boolean;
@@ -87,7 +90,15 @@ export default function ProviderLoginModal({
         </div>
 
         <div className="flex-1 overflow-hidden">
-          <StandaloneShell project={DEFAULT_PROJECT_FOR_EMPTY_SHELL} command={command} onComplete={handleComplete} minimal={true} />
+          <Suspense
+            fallback={(
+              <div className="flex h-full items-center justify-center">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600 dark:border-gray-600 dark:border-t-gray-200" />
+              </div>
+            )}
+          >
+            <StandaloneShell project={DEFAULT_PROJECT_FOR_EMPTY_SHELL} command={command} onComplete={handleComplete} minimal={true} />
+          </Suspense>
         </div>
       </div>
     </div>

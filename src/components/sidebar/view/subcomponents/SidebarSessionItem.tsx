@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Edit2, Loader2, MoreHorizontal, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, CircleStop, Copy, Edit2, Loader2, MoreHorizontal, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { ActionMenu, Badge, Dialog, DialogContent, DialogTitle, Tooltip, buttonVariants } from '../../../../shared/view/ui';
 import { cn } from '../../../../lib/utils';
-import type { Project, ProjectSession, LLMProvider } from '../../../../types/app';
+import type { Project, ProjectSession, LLMProvider, SessionLifecycleSnapshot } from '../../../../types/app';
 import { api } from '../../../../utils/api';
 import { copyTextToClipboard } from '../../../../utils/clipboard';
 import type { SessionWithProvider } from '../../types/types';
 import { createSessionViewModel } from '../../utils/utils';
+import { getSessionRowIndent, getSessionRowInteractionPolicy } from '../../utils/sessionRowPolicy';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 
 type SidebarSessionItemProps = {
@@ -16,7 +17,18 @@ type SidebarSessionItemProps = {
   session: SessionWithProvider;
   selectedSession: ProjectSession | null;
   isProcessing: boolean;
+  lifecycle?: SessionLifecycleSnapshot;
+  onStartSession: (sessionId: string) => Promise<void>;
+  hasRunningDescendant: boolean;
+  runningDescendantCount: number;
   needsAttention: boolean;
+  hasAttentionDescendant: boolean;
+  depth: number;
+  childCount: number;
+  descendantCount: number;
+  reserveDisclosureSpace: boolean;
+  isBranchExpanded: boolean;
+  onToggleSessionBranch: (sessionId: string) => void;
   currentTime: Date;
   editingSession: string | null;
   editingSessionName: string;
@@ -77,7 +89,18 @@ export default function SidebarSessionItem({
   session,
   selectedSession,
   isProcessing,
+  lifecycle,
+  onStartSession,
+  hasRunningDescendant,
+  runningDescendantCount,
   needsAttention,
+  hasAttentionDescendant,
+  depth,
+  childCount,
+  descendantCount,
+  reserveDisclosureSpace,
+  isBranchExpanded,
+  onToggleSessionBranch,
   currentTime,
   editingSession,
   editingSessionName,
@@ -98,10 +121,64 @@ export default function SidebarSessionItem({
   const [isMobileOptionsOpen, setIsMobileOptionsOpen] = useState(false);
   const [copyState, setCopyState] = useState<CopyState>('idle');
   const [providerSessionId, setProviderSessionId] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState(false);
   const providerIdRequestRef = useRef(0);
   const showAttentionIndicator = needsAttention && !isSelected;
   const showRecentIndicator = !showAttentionIndicator && !isProcessing && sessionView.isActive;
+  const showDescendantAttentionIndicator = !showAttentionIndicator && !showRecentIndicator && hasAttentionDescendant;
+  const activeSessionLabel = t('tooltips.activeSessionIndicator', { defaultValue: 'Recently active session (last 10 minutes)' });
   const providerLabel = PROVIDER_LABELS[session.__provider];
+  const hasChildren = childCount > 0;
+  const rowInteractionPolicy = getSessionRowInteractionPolicy(hasChildren);
+  const rowIndent = getSessionRowIndent(depth);
+  const directChildrenLabel = t('sessions.childCount', {
+    count: childCount,
+    defaultValue: `${childCount} ${childCount === 1 ? 'child' : 'children'}`,
+  });
+  const descendantsLabel = t('sessions.descendantCount', {
+    count: descendantCount,
+    defaultValue: `${descendantCount} descendants`,
+  });
+  const runningDescendantsLabel = t('sessions.runningDescendantCount', {
+    count: runningDescendantCount,
+    defaultValue: `${runningDescendantCount} descendant${runningDescendantCount === 1 ? '' : 's'} processing`,
+  });
+  const disclosureLabel = t(isBranchExpanded ? 'sessions.collapseChildren' : 'sessions.expandChildren', {
+    name: sessionView.sessionName,
+    defaultValue: isBranchExpanded ? `Collapse children of ${sessionView.sessionName}` : `Expand children of ${sessionView.sessionName}`,
+  });
+  const lifecycleStatus = lifecycle?.status;
+  const statusLabel = lifecycleStatus ? t(`lifecycle.${lifecycleStatus}`, { defaultValue: lifecycleStatus.replace(/_/g, ' ') }) : null;
+  const canStart = session.__provider === 'opencode' && Boolean(lifecycle?.restartable) && !isProcessing;
+  const startLabel = lifecycleStatus === 'exited' || lifecycleStatus === 'manually_stopped'
+    ? t('lifecycle.start', { defaultValue: 'Start session' })
+    : t('lifecycle.restart', { defaultValue: 'Restart session' });
+  const LifecycleIcon = lifecycleStatus === 'recovering' ? Loader2 : lifecycleStatus === 'manually_stopped' ? CircleStop : lifecycleStatus === 'running' ? Activity : AlertTriangle;
+
+  const startLifecycleSession = async (event?: ReactMouseEvent) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (isStarting) return;
+    setIsStarting(true);
+    setStartError(false);
+    try {
+      await onStartSession(session.id);
+    } catch {
+      setStartError(true);
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  const lifecycleIndicator = lifecycleStatus && (
+    <Tooltip content={lifecycle?.statusText || statusLabel || ''} position="top">
+      <span className={cn('flex items-center gap-1 text-[10px]', lifecycleStatus === 'running' || lifecycleStatus === 'recovering' ? 'text-blue-600 dark:text-blue-400' : lifecycleStatus === 'failed' || lifecycleStatus === 'recovery_exhausted' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400')} role="status" aria-label={statusLabel || undefined}>
+        <LifecycleIcon className={cn('h-3 w-3', lifecycleStatus === 'recovering' && 'animate-spin')} aria-hidden="true" />
+        <span>{statusLabel}</span>
+      </span>
+    </Tooltip>
+  );
 
   // While editing, dismiss only when the user clicks outside the inline rename panel
   // (matches Escape / cancel-button behaviour).
@@ -123,9 +200,17 @@ export default function SidebarSessionItem({
 
   // Sessions are owned by a project identified by `projectId` (DB primary key)
   // after the projectName → projectId migration.
-  const selectMobileSession = () => {
+  const selectAndToggleSession = () => {
     onProjectSelect(project);
     onSessionSelect(session, project.projectId);
+    if (rowInteractionPolicy.togglesOnRowClick) {
+      onToggleSessionBranch(session.id);
+    }
+  };
+
+  const toggleSessionBranch = (event: ReactMouseEvent | ReactKeyboardEvent) => {
+    event.stopPropagation();
+    onToggleSessionBranch(session.id);
   };
 
   const saveEditedSession = () => {
@@ -209,23 +294,42 @@ export default function SidebarSessionItem({
         : `Copy ${providerLabel} session ID`;
 
   return (
-    <div className="group relative">
-      {(showAttentionIndicator || showRecentIndicator) && (
+    <div className="group relative" data-session-id={session.id} data-session-depth={depth}>
+      {depth > 0 && (
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute bottom-0 top-0 border-l border-border/50"
+            style={{ left: `${Math.max(0, rowIndent - 8)}px` }}
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 w-2 border-t border-border/50"
+            style={{ left: `${Math.max(0, rowIndent - 8)}px` }}
+          />
+        </>
+      )}
+      {(showAttentionIndicator || showRecentIndicator || showDescendantAttentionIndicator) && (
         <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
           <Tooltip
             content={showAttentionIndicator
               ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
-              : t('tooltips.activeSessionIndicator')}
+              : showDescendantAttentionIndicator
+                ? t('tooltips.descendantAttentionIndicator', { defaultValue: 'A child session needs attention' })
+                : activeSessionLabel}
             position="right"
           >
             <div
               role="status"
               aria-label={showAttentionIndicator
                 ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
-                : t('tooltips.activeSessionIndicator')}
+                : showDescendantAttentionIndicator
+                  ? t('tooltips.descendantAttentionIndicator', { defaultValue: 'A child session needs attention' })
+                  : activeSessionLabel}
               className={cn(
-                'h-2 w-2 animate-pulse rounded-full',
-                showAttentionIndicator ? 'bg-amber-500' : 'bg-green-500',
+                'h-2 w-2 rounded-full ring-2',
+                showAttentionIndicator || showDescendantAttentionIndicator ? 'bg-amber-500' : 'bg-green-500',
+                showAttentionIndicator || showDescendantAttentionIndicator ? 'ring-amber-500/20' : 'ring-green-500/20',
               )}
             />
           </Tooltip>
@@ -243,9 +347,25 @@ export default function SidebarSessionItem({
               ? 'border-green-500/30 bg-green-50/5 dark:bg-green-900/5'
               : 'border-border/30',
           )}
-          onClick={selectMobileSession}
+          onClick={selectAndToggleSession}
+          style={{ paddingLeft: `${rowIndent + (!hasChildren && reserveDisclosureSpace ? 24 : 0)}px` }}
         >
           <div className="flex items-center gap-2">
+            {hasChildren ? (
+              <button
+                type="button"
+                aria-expanded={isBranchExpanded}
+                aria-label={disclosureLabel}
+                title={disclosureLabel}
+                className="-ml-1 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={toggleSessionBranch}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                {isBranchExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+            ) : reserveDisclosureSpace ? (
+              <span aria-hidden="true" className="-ml-1 h-6 w-6 flex-shrink-0" />
+            ) : null}
             <div
               className={cn(
                 'w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0',
@@ -260,21 +380,43 @@ export default function SidebarSessionItem({
                 <div className="min-w-0 flex-1 truncate text-sm font-normal text-foreground">{sessionView.sessionName}</div>
                 {isProcessing ? (
                   <span className="ml-auto flex-shrink-0">
-                    <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                    <Tooltip content={t('tooltips.processingSessionIndicator', { defaultValue: 'Processing session' })} position="top">
+                      <span
+                        className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground"
+                        role="status"
+                        aria-label={t('tooltips.processingSessionIndicator', { defaultValue: 'Processing session' })}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="h-2 w-2 rounded-full bg-blue-500 ring-2 ring-blue-500/20 dark:bg-blue-400 dark:ring-blue-400/20"
+                        />
                       </span>
                     </Tooltip>
+                  </span>
+                ) : hasRunningDescendant ? (
+                  <span
+                    className="ml-auto flex flex-shrink-0 items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400"
+                    role="status"
+                    aria-label={runningDescendantsLabel}
+                  >
+                    <Activity className="h-3 w-3" />
+                    {runningDescendantCount}
                   </span>
                 ) : compactSessionAge && (
                   <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">{compactSessionAge}</span>
                 )}
               </div>
               <div className="mt-0.5 flex items-center">
+                {lifecycleIndicator}
                 {sessionView.messageCount > 0 && (
                   <Badge variant="secondary" className="px-1 py-0 text-xs">
                     {sessionView.messageCount}
                   </Badge>
+                )}
+                {hasChildren && (
+                  <span className="ml-1 truncate text-[10px] text-muted-foreground" title={descendantCount > childCount ? descendantsLabel : directChildrenLabel}>
+                    {directChildrenLabel}{descendantCount > childCount ? ` · ${descendantsLabel}` : ''}
+                  </span>
                 )}
               </div>
             </div>
@@ -292,6 +434,11 @@ export default function SidebarSessionItem({
             >
               <MoreHorizontal className="h-4 w-4" />
             </button>
+            {canStart && (
+              <button type="button" aria-label={startLabel} title={startLabel} disabled={isStarting} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted" onClick={(event) => void startLifecycleSession(event)}>
+                {isStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              </button>
+            )}
           </div>
         </div>
 
@@ -318,6 +465,12 @@ export default function SidebarSessionItem({
             </div>
 
             <div className="space-y-2">
+              {canStart && (
+                <button type="button" disabled={isStarting} onClick={(event) => void startLifecycleSession(event)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-border px-4 py-3 text-left text-foreground active:bg-muted" aria-label={startLabel}>
+                  {isStarting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Play className="h-5 w-5" />}
+                  <span><span className="block text-sm font-medium">{isStarting ? t('lifecycle.starting', { defaultValue: 'Starting…' }) : startLabel}</span>{startError && <span role="alert" className="block text-xs text-red-600">{t('lifecycle.startError', { defaultValue: 'Could not start session. Try again.' })}</span>}</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleCopyAction}
@@ -371,27 +524,43 @@ export default function SidebarSessionItem({
       </div>
 
       <div className="hidden md:block">
-        <a
-          href={`/session/${session.id}`}
-          className={cn(
-            buttonVariants({ variant: 'ghost' }),
-            'h-auto w-full justify-start rounded-md border bg-card p-2 pr-11 text-left font-normal transition-all duration-150',
-            isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
-            !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20 hover:bg-muted/25'
-              : !isSelected && sessionView.isActive
-                ? 'border-green-500/30 bg-green-50/5 hover:bg-green-50/10 dark:bg-green-900/5 dark:hover:bg-green-900/10'
-                : 'hover:bg-accent/50',
+        <div className="relative">
+          {hasChildren && (
+            <button
+              type="button"
+              aria-expanded={isBranchExpanded}
+              aria-label={disclosureLabel}
+              title={disclosureLabel}
+              className="absolute top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              style={{ left: `${Math.max(0, rowIndent - 4)}px` }}
+              onClick={toggleSessionBranch}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              {isBranchExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
           )}
-          // Left-click keeps in-app navigation; Ctrl/Cmd/middle-click and the
-          // native right-click menu use the href to open a new tab/window.
-          onClick={(event) => {
-            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-            event.preventDefault();
-            onSessionSelect(session, project.projectId);
-          }}
-        >
-          <div className="flex w-full min-w-0 items-center gap-2">
+          <a
+            href={`/session/${session.id}`}
+            style={{ paddingLeft: `${rowIndent + (reserveDisclosureSpace ? 24 : 0)}px` }}
+            className={cn(
+              buttonVariants({ variant: 'ghost' }),
+              'h-auto w-full justify-start rounded-md border bg-card p-2 pr-11 text-left font-normal transition-all duration-150',
+              isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
+              !isSelected && isProcessing
+                ? 'border-border/60 bg-muted/20 hover:bg-muted/25'
+                : !isSelected && sessionView.isActive
+                  ? 'border-green-500/30 bg-green-50/5 hover:bg-green-50/10 dark:bg-green-900/5 dark:hover:bg-green-900/10'
+                  : 'hover:bg-accent/50',
+            )}
+            // Left-click keeps in-app navigation; Ctrl/Cmd/middle-click and the
+            // native right-click menu use the href to open a new tab/window.
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              selectAndToggleSession();
+            }}
+          >
+            <div className="flex w-full min-w-0 items-center gap-2">
             <div
               className={cn(
                 'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md',
@@ -410,11 +579,27 @@ export default function SidebarSessionItem({
                       isEditing ? 'opacity-0' : 'group-hover:opacity-0',
                     )}
                   >
-                    <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                    <Tooltip content={t('tooltips.processingSessionIndicator', { defaultValue: 'Processing session' })} position="top">
+                      <span
+                        className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground"
+                        role="status"
+                        aria-label={t('tooltips.processingSessionIndicator', { defaultValue: 'Processing session' })}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="h-2 w-2 rounded-full bg-blue-500 ring-2 ring-blue-500/20 dark:bg-blue-400 dark:ring-blue-400/20"
+                        />
                       </span>
                     </Tooltip>
+                  </span>
+                ) : hasRunningDescendant ? (
+                  <span
+                    className="ml-auto flex flex-shrink-0 items-center gap-1 text-[11px] text-emerald-600 transition-opacity duration-200 dark:text-emerald-400"
+                    role="status"
+                    aria-label={runningDescendantsLabel}
+                  >
+                    <Activity className="h-3 w-3" />
+                    {runningDescendantCount}
                   </span>
                 ) : compactSessionAge && (
                   <span
@@ -428,16 +613,28 @@ export default function SidebarSessionItem({
                 )}
               </div>
               <div className="mt-0.5 flex items-center">
+                {lifecycleIndicator}
                 {sessionView.messageCount > 0 && <Badge variant="secondary" className="px-1 py-0 text-xs">{sessionView.messageCount}</Badge>}
+                {hasChildren && (
+                  <span className="ml-1 truncate text-[10px] text-muted-foreground" title={descendantCount > childCount ? descendantsLabel : directChildrenLabel}>
+                    {directChildrenLabel}{descendantCount > childCount ? ` · ${descendantsLabel}` : ''}
+                  </span>
+                )}
               </div>
             </div>
-          </div>
-        </a>
+            </div>
+          </a>
+        </div>
 
         <div
           ref={editingContainerRef}
           className="absolute right-2 top-1/2 flex -translate-y-1/2 transform items-center gap-1 opacity-100 transition-all duration-200"
         >
+            {canStart && !isEditing && (
+              <button type="button" aria-label={startLabel} title={startLabel} disabled={isStarting} className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted" onClick={(event) => void startLifecycleSession(event)}>
+                {isStarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              </button>
+            )}
             {isEditing ? (
               <>
                 <input
@@ -496,6 +693,15 @@ export default function SidebarSessionItem({
                   </div>
                 )}
                 items={[
+                  ...(canStart ? [{
+                    key: 'start',
+                    label: isStarting ? t('lifecycle.starting', { defaultValue: 'Starting…' }) : startLabel,
+                    description: startError ? t('lifecycle.startError', { defaultValue: 'Could not start session. Try again.' }) : undefined,
+                    icon: lifecycleStatus === 'exited' || lifecycleStatus === 'manually_stopped' ? Play : RotateCcw,
+                    loading: isStarting,
+                    closeOnSelect: false,
+                    onSelect: () => void startLifecycleSession(),
+                  }] : []),
                   {
                     key: 'copy',
                     label: copyLabel,

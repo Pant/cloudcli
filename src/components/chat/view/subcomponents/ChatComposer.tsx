@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon } from 'lucide-react';
+import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, Clock3 } from 'lucide-react';
 
 import { useVoiceInput } from '../../hooks/useVoiceInput';
 import { useVoiceAvailable } from '../../hooks/useVoiceAvailable';
@@ -83,6 +83,7 @@ interface ChatComposerProps {
   hasInput: boolean;
   onClearInput: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement> | TouchEvent<HTMLButtonElement>) => void;
+  onShowAppointments: () => void;
   isDragActive: boolean;
   queuedDraft: QueuedDraft | null;
   onEditQueuedDraft: () => void;
@@ -104,9 +105,9 @@ interface ChatComposerProps {
   getRootProps: (...args: unknown[]) => Record<string, unknown>;
   getInputProps: (...args: unknown[]) => Record<string, unknown>;
   openAttachmentPicker: () => void;
-  inputHighlightRef: RefObject<HTMLDivElement>;
+  inputHighlightRef: RefObject<HTMLDivElement | null>;
   renderInputWithMentions: (text: string) => ReactNode;
-  textareaRef: RefObject<HTMLTextAreaElement>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   input: string;
   onVoiceTranscript?: (text: string, send?: boolean) => void;
   onInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
@@ -119,6 +120,7 @@ interface ChatComposerProps {
   onInputFocusChange?: (focused: boolean) => void;
   placeholder: string;
   isTextareaExpanded: boolean;
+  preferenceFeedback: string | null;
 }
 
 export default function ChatComposer({
@@ -147,6 +149,7 @@ export default function ChatComposer({
   hasInput,
   onClearInput,
   onSubmit,
+  onShowAppointments,
   isDragActive,
   queuedDraft,
   onEditQueuedDraft,
@@ -183,6 +186,7 @@ export default function ChatComposer({
   onInputFocusChange,
   placeholder,
   isTextareaExpanded,
+  preferenceFeedback,
 }: ChatComposerProps) {
   const { t } = useTranslation('chat');
   const commandMenuPosition = useMemo(() => {
@@ -270,6 +274,15 @@ export default function ChatComposer({
           onDelete={onDeleteQueuedDraft}
         />
       )}
+
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="mx-auto min-h-5 max-w-[54.25rem] px-2 text-xs text-muted-foreground"
+      >
+        {preferenceFeedback}
+      </div>
 
       {!hasQuestionPanel && <div className="relative mx-auto max-w-[54.25rem]">
         {showFileDropdown && filteredFiles.length > 0 && (
@@ -444,6 +457,15 @@ export default function ChatComposer({
               onSelectModel={onSelectModel}
               modelsLoading={modelsLoading}
             />
+
+            <PromptInputButton
+              tooltip={{ content: t('appointments.open') }}
+              aria-label={t('appointments.open')}
+              onClick={onShowAppointments}
+              className="h-10 w-10"
+            >
+              <Clock3 className="h-4 w-4" />
+            </PromptInputButton>
 
             <PromptInputSubmit
               onClick={

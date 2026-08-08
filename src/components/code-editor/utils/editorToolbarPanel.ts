@@ -1,6 +1,8 @@
-import { getChunks } from '@codemirror/merge';
 import { EditorView, showPanel } from '@codemirror/view';
+
 import type { CodeEditorFile } from '../types/types';
+
+import type { GetMergeChunks } from './editorExtensions';
 
 type EditorToolbarLabels = {
   changes: string;
@@ -21,6 +23,7 @@ type CreateEditorToolbarPanelParams = {
   onPopOut: (() => void) | null;
   onToggleExpand: (() => void) | null;
   labels: EditorToolbarLabels;
+  getChunks?: GetMergeChunks;
 };
 
 const getDiffVisibilityIcon = (showDiff: boolean) => {
@@ -57,6 +60,7 @@ export const createEditorToolbarPanelExtension = ({
   onPopOut,
   onToggleExpand,
   labels,
+  getChunks,
 }: CreateEditorToolbarPanelParams) => {
   const hasToolbarButtons = Boolean(file.diffInfo || (isSidebar && onPopOut) || (isSidebar && onToggleExpand));
   if (!hasToolbarButtons) {
@@ -71,7 +75,7 @@ export const createEditorToolbarPanelExtension = ({
 
     const updatePanel = () => {
       const hasDiff = Boolean(file.diffInfo && showDiff);
-      const chunksData = hasDiff ? getChunks(view.state) : null;
+      const chunksData = hasDiff ? getChunks?.(view.state) : null;
       const chunks = chunksData?.chunks || [];
       const chunkCount = chunks.length;
       const maxChunkIndex = Math.max(0, chunkCount - 1);

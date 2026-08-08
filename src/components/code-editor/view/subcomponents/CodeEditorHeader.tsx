@@ -1,4 +1,4 @@
-import { Code2, Download, Eye, Maximize2, Minimize2, Save, Settings as SettingsIcon, X } from 'lucide-react';
+import { Code2, Download, Eye, Maximize2, Minimize2, RefreshCw, Save, Settings as SettingsIcon, X } from 'lucide-react';
 
 import type { CodeEditorFile } from '../../types/types';
 
@@ -10,12 +10,14 @@ type CodeEditorHeaderProps = {
   isHtmlPreviewFile: boolean;
   markdownPreview: boolean;
   saving: boolean;
+  reloading: boolean;
   saveSuccess: boolean;
   onToggleMarkdownPreview: () => void;
   onOpenHtmlPreview: () => void;
   onOpenSettings: () => void;
   onDownload: () => void;
   onSave: () => void;
+  onReload: () => void;
   onToggleFullscreen: () => void;
   onClose: () => void;
   labels: {
@@ -27,6 +29,8 @@ type CodeEditorHeaderProps = {
     download: string;
     save: string;
     saving: string;
+    reload: string;
+    reloading: string;
     saved: string;
     fullscreen: string;
     exitFullscreen: string;
@@ -42,12 +46,14 @@ export default function CodeEditorHeader({
   isHtmlPreviewFile,
   markdownPreview,
   saving,
+  reloading,
   saveSuccess,
   onToggleMarkdownPreview,
   onOpenHtmlPreview,
   onOpenSettings,
   onDownload,
   onSave,
+  onReload,
   onToggleFullscreen,
   onClose,
   labels,
@@ -120,7 +126,7 @@ export default function CodeEditorHeader({
         <button
           type="button"
           onClick={onSave}
-          disabled={saving}
+          disabled={saving || reloading}
           className={`flex items-center justify-center rounded-md p-1.5 transition-colors disabled:opacity-50 ${
             saveSuccess
               ? 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400'
@@ -135,6 +141,16 @@ export default function CodeEditorHeader({
           ) : (
             <Save className="h-4 w-4" />
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={onReload}
+          disabled={saving || reloading}
+          className="flex items-center justify-center rounded-md p-1.5 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+          title={reloading ? labels.reloading : labels.reload}
+        >
+          <RefreshCw className={`h-4 w-4 ${reloading ? 'animate-spin' : ''}`} />
         </button>
 
         {!isSidebar && (

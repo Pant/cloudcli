@@ -35,6 +35,30 @@ export type RealtimeClientConnection = {
   send(data: string): void;
 };
 
+/** Generation-aware cursor sent by a browser when subscribing to one chat run. */
+export type ChatSubscriptionCursor = {
+  sessionId: string;
+  generation?: number;
+  lastSeq?: number;
+};
+
+/**
+ * Replay metadata returned before requester-specific replay frames are delivered.
+ * `replayToSeq` is the captured boundary; later live events are queued until the
+ * replay finishes. `refreshRequired` directs the browser to canonical REST history.
+ */
+export type ChatSubscriptionSnapshot = {
+  sessionId: string;
+  generation: number | null;
+  isProcessing: boolean;
+  lastSeq: number;
+  replayFromSeq: number | null;
+  replayToSeq: number | null;
+  replayGap: boolean;
+  refreshRequired: boolean;
+  events: NormalizedMessage[];
+};
+
 /**
  * Authenticated user payload attached to websocket upgrade requests.
  *
@@ -68,6 +92,323 @@ export type AuthenticatedWebSocketRequest = IncomingMessage & {
  */
 export type LLMProvider = 'claude' | 'codex' | 'cursor' | 'opencode';
 
+// ---------------------------
+//----------------- PROVIDER RUNTIME TERMINATION DIAGNOSTICS ------------
+/**
+ * Safe relative reference to provider-owned diagnostic artifacts.
+ * The value is always a single run directory below the configured provider
+ * diagnostic root and must never contain an absolute path or traversal segment.
+ */
+export type ProviderDiagnosticReference = {
+  runId: string;
+  relativePath: string;
+};
+
+/**
+ * Best-effort Linux cgroup v2 measurements captured around a provider process.
+ * Values describe the containing cgroup, not the individual child process, and
+ * omitted fields were unavailable or malformed at collection time.
+ */
+export type ProviderCgroupSnapshot = {
+  scope: 'container-cgroup-v2';
+  capturedAt: number;
+  memoryCurrentBytes?: number;
+  memoryPeakBytes?: number;
+  memoryEvents?: Record<string, number>;
+  memoryStat?: Record<string, number>;
+};
+
+/**
+ * Provider-neutral structured result returned after a runtime terminates.
+ * OpenCode supplies detailed metadata; other providers may return no result.
+ * Artifact references are root-relative and stderr is bounded for safe durable use.
+ */
+export type ProviderRuntimeResult = {
+  startedAt: number;
+  endedAt: number;
+  lastOutputAt: number | null;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  diagnostic?: ProviderDiagnosticReference;
+  stderrTail: string;
+  resources?: {
+    start?: ProviderCgroupSnapshot;
+    end?: ProviderCgroupSnapshot;
+  };
+};
+
+/** Error carrying safe structured termination evidence for failed provider runs. */
+export type ProviderRuntimeError = Error & { runtimeResult?: ProviderRuntimeResult };
+
+// ---------------------------
+//----------------- DURABLE SESSION RUN LIFECYCLE ------------
+/** Durable intent for the current canonical session generation. */
+export type SessionRunDesiredState = 'running' | 'stopped';
+
+/**
+ * Persisted lifecycle classification for the current generation.
+ * Completed history may be omitted by status APIs, while every other terminal
+ * or recovery state retains enough metadata to explain or restart the run.
+ */
+export type SessionRunLifecycleState =
+  | 'running'
+  | 'stalled'
+  | 'recovering'
+  | 'completed'
+  | 'failed'
+  | 'exited'
+  | 'manually_stopped'
+  | 'recovery_exhausted';
+
+/** Stable terminal categories recorded by run orchestration and recovery. */
+export type SessionRunTerminalReason =
+  | 'completed'
+  | 'manual_stop'
+  | 'provider_error'
+  | 'process_exited'
+  | 'stalled'
+  | 'recovery_exhausted';
+
+/**
+ * Safe provider-neutral settings retained for continuing an existing session.
+ * The repository sanitizes untrusted inputs into this allow-list; attachments,
+ * provider-native ids, user message content, and unknown runtime values are never stored.
+ */
+export type SessionContinuationOptions = {
+  model?: string;
+  effort?: string;
+  agent?: string;
+  permissionMode?: string;
+  projectPath?: string;
+  cwd?: string;
+};
+
+/** Current durable lifecycle record exposed by the Database module barrel. */
+export type SessionRunStateRecord = {
+  sessionId: string;
+  provider: LLMProvider;
+  generation: number;
+  desiredState: SessionRunDesiredState;
+  lifecycleState: SessionRunLifecycleState;
+  terminalReason: SessionRunTerminalReason | null;
+  terminalMessage: string | null;
+  exitCode: number | null;
+  restartCount: number;
+  continuationOptions: SessionContinuationOptions;
+  startedAt: number;
+  lastProgressAt: number;
+  terminalAt: number | null;
+  nextRecoveryAt: number | null;
+  updatedAt: number;
+};
+
+/**
+ * Immutable diagnostic evidence retained for one accepted canonical session generation.
+ * Database consumers receive only sanitized, bounded metadata; artifact paths are relative
+ * to the provider diagnostic root and resource data contains only cgroup numeric fields.
+ */
+export type SessionRunHistoryRecord = {
+  sessionId: string;
+  generation: number;
+  provider: LLMProvider;
+  startedAt: number;
+  terminalAt: number;
+  lifecycleState: Extract<SessionRunLifecycleState, 'completed' | 'failed' | 'exited' | 'recovery_exhausted'>;
+  terminalReason: SessionRunTerminalReason;
+  terminalMessage: string | null;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  diagnostic: ProviderDiagnosticReference | null;
+  stderrTail: string;
+  resources: ProviderRuntimeResult['resources'] | null;
+};
+
+/**
+ * Untrusted terminal diagnostic input accepted by the Database lifecycle repository.
+ * The repository generation-fences insertion against current state, ignores duplicates,
+ * and defensively sanitizes every optional value before creating immutable history.
+ */
+export type AppendSessionRunHistoryInput = {
+  sessionId: string;
+  generation: number;
+  provider: LLMProvider;
+  startedAt: number;
+  terminalAt: number;
+  lifecycleState: SessionRunHistoryRecord['lifecycleState'];
+  terminalReason: SessionRunTerminalReason;
+  terminalMessage?: unknown;
+  exitCode?: unknown;
+  signal?: unknown;
+  diagnostic?: unknown;
+  stderrTail?: unknown;
+  resources?: unknown;
+};
+
+/** Browser-safe actionable lifecycle classifications for canonical sessions. */
+export type SessionLifecycleStatus = Exclude<SessionRunLifecycleState, 'completed'>;
+
+/**
+ * Canonical session/project context attached to lifecycle status responses.
+ * Provider-native identifiers are deliberately absent from this API contract.
+ */
+export type SessionLifecycleContext = {
+  sessionId: string;
+  provider: LLMProvider;
+  parentSessionId?: string | null;
+  session: {
+    id: string;
+    provider: LLMProvider;
+    model: string | null;
+    agent: string | null;
+    summary: string;
+    lastActivity: string;
+  };
+  project: {
+    projectId: string;
+    path: string;
+    fullPath: string;
+    displayName: string;
+    isStarred: boolean;
+  } | null;
+};
+
+/**
+ * One bounded actionable lifecycle row returned by the provider status API.
+ * All ids are canonical CloudCLI ids; ancestors are inactive rendering context.
+ */
+export type SessionLifecycleSnapshot = SessionLifecycleContext & {
+  status: SessionLifecycleStatus;
+  statusText: string | null;
+  lastActivityAt: number;
+  restartable: boolean;
+  canInterrupt: boolean;
+  terminalReason: SessionRunTerminalReason | null;
+  exitCode: number | null;
+  /** Browser-safe OS termination signal for the current generation, when known. */
+  signal?: NodeJS.Signals | null;
+  ancestors?: SessionLifecycleContext[];
+};
+
+/** Input accepted when a user send or explicit manual start creates a generation. */
+export type BeginSessionRunInput = {
+  sessionId: string;
+  provider: LLMProvider;
+  continuationOptions?: unknown;
+  now?: number;
+};
+
+// ---------------------------
+//----------------- PROJECT PROMPT APPOINTMENTS ------------
+/** Durable scheduler trigger categories supported by project prompt appointments. */
+export type AppointmentTriggerType = 'exact' | 'timer' | 'project_idle' | 'queue';
+
+/**
+ * Durable appointment lifecycle. Draft rows are inactive, scheduled rows may be
+ * claimed exactly once, and `needs_review` quarantines restart-sensitive idle triggers.
+ */
+export type AppointmentStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'needs_review'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/** Snapshot of one uploaded file retained with an appointment for later revalidation. */
+export type AppointmentAttachment = {
+  path: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+};
+
+/** Provider-neutral options snapshotted when an appointment is created. */
+export type AppointmentProviderOptions = {
+  model?: string;
+  effort?: string;
+  agent?: string;
+  permissionMode?: string;
+  tools?: Record<string, boolean>;
+};
+
+/** Complete normalized appointment row exposed through the Database module barrel. */
+export type AppointmentRecord = {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  userId: string;
+  provider: LLMProvider;
+  prompt: string;
+  options: AppointmentProviderOptions;
+  attachments: AppointmentAttachment[];
+  triggerType: AppointmentTriggerType;
+  dueAt: number | null;
+  timerDurationMs: number | null;
+  projectIdleSince: number | null;
+  /** Durable one-based order within the nonterminal queue for this project/user. */
+  queuePosition: number | null;
+  /** Durable generation returned when this appointment's detached run was launched. */
+  runGeneration: number | null;
+  isActive: boolean;
+  status: AppointmentStatus;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  claimedAt: number | null;
+  completedAt: number | null;
+};
+
+/** Input used by the Appointments service to persist a fully validated schedule. */
+export type CreateAppointmentInput = {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  userId: string | number;
+  provider: LLMProvider;
+  prompt: string;
+  options?: AppointmentProviderOptions;
+  attachments?: AppointmentAttachment[];
+  triggerType: AppointmentTriggerType;
+  dueAt?: number | null;
+  timerDurationMs?: number | null;
+  isActive: boolean;
+  now?: number;
+};
+
+/** Conditional mutable fields accepted by appointment management workflows. */
+export type UpdateAppointmentInput = {
+  isActive?: boolean;
+  triggerType?: AppointmentTriggerType;
+  dueAt?: number | null;
+  timerDurationMs?: number | null;
+  status?: AppointmentStatus;
+  projectIdleSince?: number | null;
+  /** Queue order override used only by persistence-controlled queue mutations. */
+  queuePosition?: number | null;
+  /** Launched generation assigned after an appointment is atomically claimed. */
+  runGeneration?: number | null;
+  errorMessage?: string | null;
+  now?: number;
+};
+
+/** Complete ordered mutable queue set used for one atomic project/user reorder. */
+export type ReorderAppointmentQueueInput = {
+  projectId: string;
+  userId: string | number;
+  appointmentIds: string[];
+  now?: number;
+};
+
+/** Metadata retained when a generation reaches an actionable terminal state. */
+export type SessionRunTerminalUpdate = {
+  lifecycleState: 'completed' | 'failed' | 'exited' | 'recovery_exhausted';
+  terminalReason: SessionRunTerminalReason;
+  terminalMessage?: string | null;
+  exitCode?: number | null;
+  now?: number;
+};
+
 /**
  * One selectable model row in a provider model catalog.
  */
@@ -75,6 +416,11 @@ export type ProviderModelOption = {
   value: string;
   label: string;
   description?: string;
+  /**
+   * Positive model context-window size in tokens when the provider advertises
+   * one. Providers without this metadata should omit the field.
+   */
+  contextWindow?: number;
   effort?: {
     default?: string;
     values: {
@@ -132,6 +478,8 @@ export type ProviderAvailableAgent = {
   description?: string;
   /** Provider-native model identifier configured on the agent, when present. */
   model?: string;
+  /** Resolved provider reasoning effort configured for this runtime agent. */
+  reasoningEffort?: string;
 };
 
 /**
@@ -193,6 +541,27 @@ export type ProviderAgentDefinition = {
  */
 export type UpsertProviderAgentInput = ProviderAgentDefinition & {
   originalName?: string;
+};
+
+/**
+ * Partial durable preference update for one existing configurable provider agent.
+ * At least one field must be supplied. `default` clears the configured reasoning
+ * effort rather than storing the sentinel as a provider option.
+ */
+export type ProviderAgentPreferencesPatch = {
+  model?: string;
+  reasoningEffort?: string;
+};
+
+/**
+ * Normalized preferences returned after updating one existing provider agent.
+ * An omitted reasoning effort means the provider will use its default behavior.
+ */
+export type ProviderAgentPreferencesResult = {
+  provider: LLMProvider;
+  name: string;
+  model?: string;
+  reasoningEffort?: string;
 };
 
 // ---------------------------
@@ -302,6 +671,8 @@ export type NormalizedMessage = {
    * the live events they missed across websocket reconnects.
    */
   seq?: number;
+  /** Durable run generation paired with `seq` on every live sequenced event. */
+  generation?: number;
   role?: 'user' | 'assistant';
   content?: string;
   /**
@@ -387,6 +758,12 @@ export type ProviderRuntimeContext = {
     sessionId: string | undefined,
     requestedModel?: string | null,
   ): Promise<string | undefined>;
+  /**
+   * Resolves an optional positive context-window maximum for the model selected
+   * by this run. Providers without discoverable metadata return `undefined`;
+   * runtime adapters must keep their existing usage shape in that case.
+   */
+  resolveContextWindow(modelId: string | null | undefined): Promise<number | undefined>;
   getProviderModels(): Promise<ProviderModelsDefinition>;
   normalizeMessage(raw: unknown, sessionId: string | null): NormalizedMessage[];
   isProviderInstalled(): Promise<boolean>;
@@ -396,7 +773,7 @@ export type ProviderRunFunction = (
   command: string,
   options: AnyRecord,
   writer: ProviderRuntimeWriter,
-) => Promise<unknown>;
+) => Promise<ProviderRuntimeResult | void | unknown>;
 
 /**
  * Shared options used to fetch historical provider messages.
@@ -572,13 +949,15 @@ export type McpTransport = 'stdio' | 'http' | 'sse';
  * Normalized MCP server model exposed to frontend and route handlers.
  *
  * Provider adapters should map provider-native config to this structure before
- * returning results.
+ * returning results. `enabled` is optional because only providers with a native
+ * MCP activation state should expose it.
  */
 export type ProviderMcpServer = {
   provider: LLMProvider;
   name: string;
   scope: McpScope;
   transport: McpTransport;
+  enabled?: boolean;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -594,12 +973,15 @@ export type ProviderMcpServer = {
  * Payload for create/update MCP server operations.
  *
  * Routes and services should accept this type, validate it, and then persist it
- * through provider-specific MCP repositories.
+ * through provider-specific MCP repositories. An omitted `enabled` value means
+ * the adapter should preserve provider-native state when supported; it is not
+ * equivalent to explicitly passing `false`.
  */
 export type UpsertProviderMcpServerInput = {
   name: string;
   scope?: McpScope;
   transport: McpTransport;
+  enabled?: boolean;
   workspacePath?: string;
   command?: string;
   args?: string[];
@@ -855,7 +1237,7 @@ export type WorktreeProjectView = {
   displayName: string;
   isStarred: boolean;
   sessions: [];
-  sessionMeta: { hasMore: false; total: 0 };
+  sessionMeta: { hasMore: false; total: 0; rootTotal?: number; rootOffset?: number; nextOffset?: number };
 };
 
 /**
@@ -954,7 +1336,7 @@ export type WorktreeProjectGateway = {
  * repositories, filesystem adapters, Git runners, or individual service files.
  */
 export type WorktreeServices = {
-  resolveProjectPath(projectId: string): string;
+  resolveProjectPath(projectId: string, repository?: string): Promise<string>;
   list(input: ListWorktreesInput): Promise<WorktreeListResult>;
   create(input: CreateWorktreeInput): Promise<CreateWorktreeResult>;
   createAndOpen(input: CreateWorktreeInput): Promise<CreateAndOpenWorktreeResult>;
@@ -968,10 +1350,11 @@ export type WorktreeServices = {
 /**
  * One filesystem item returned by the File Tree API.
  *
- * The service populates metadata without following symlinks and recursively
- * attaches `children` only while the requested depth permits traversal. The
- * frontend uses the absolute `path` as the stable identifier for editor and
- * file-operation requests.
+ * The service populates metadata without following symlinks when requested and
+ * recursively attaches `children` only while the requested depth permits
+ * traversal. Metadata-free listings retain stable zero/null/permission
+ * placeholders in the required metadata fields. The frontend uses the absolute
+ * `path` as the stable identifier for editor and file-operation requests.
  */
 export type FileTreeNode = {
   name: string;
@@ -983,6 +1366,23 @@ export type FileTreeNode = {
   permissionsRwx: string;
   isSymlink?: boolean;
   children?: FileTreeNode[];
+};
+
+/**
+ * Optional controls for a project File Tree listing.
+ *
+ * `targetPath` is relative to the project root (an absolute path is accepted
+ * only when it remains inside that root). `depth` controls recursive traversal
+ * and is bounded by the shared File Tree maximum; omitted values preserve the legacy
+ * project-root, depth-10 listing. Metadata is enabled by default so existing
+ * complete-tree consumers retain their response shape. Gitignore matching is
+ * always evaluated relative to the project root, including nested listings.
+ */
+export type FileTreeListOptions = {
+  respectGitignore?: boolean;
+  targetPath?: string;
+  depth?: number;
+  includeMetadata?: boolean;
 };
 
 /**
@@ -1117,7 +1517,7 @@ export type FileTreeServices = {
   }>;
   listProjectFiles(
     projectId: string,
-    options?: { respectGitignore: boolean },
+    options?: FileTreeListOptions,
   ): Promise<FileTreeNode[]>;
   createEntry(input: {
     projectId: string;

@@ -8,7 +8,7 @@ import {
   Clock,
   Download,
   ExternalLink,
-  Github,
+  GitFork,
   GitBranch,
   Loader2,
   ListTodo,
@@ -20,7 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import { usePlugins } from '../../../contexts/PluginsContext';
+import { usePlugins } from '../../../contexts/plugins';
 import type { Plugin } from '../../../contexts/PluginsContext';
 
 import PluginIcon from './PluginIcon';
@@ -118,7 +118,7 @@ const UNOFFICIAL_PLUGIN_RECOMMENDATIONS: PluginRecommendation[] = [
     translationKey: 'githubIssuesBoardPlugin',
     repoUrl: GITHUB_ISSUES_BOARD_PLUGIN_URL,
     installedNames: ['claude-github-issue'],
-    icon: Github,
+    icon: GitFork,
     source: 'unofficial',
   },
   {

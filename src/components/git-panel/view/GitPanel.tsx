@@ -1,14 +1,17 @@
 import { useCallback, useState } from 'react';
+
 import { useGitPanelController } from '../hooks/useGitPanelController';
 import { useRevertLocalCommit } from '../hooks/useRevertLocalCommit';
 import type { ConfirmationRequest, GitPanelProps, GitPanelView } from '../types/types';
 import { getChangedFileCount } from '../utils/gitPanelUtils';
+import { canInitializeRepository, repositoryCacheKey } from '../utils/repositoryUtils';
 import ChangesView from '../view/changes/ChangesView';
 import HistoryView from '../view/history/HistoryView';
 import BranchesView from '../view/branches/BranchesView';
 import WorktreesView from '../view/worktrees/WorktreesView';
 import GitPanelHeader from '../view/GitPanelHeader';
 import GitRepositoryErrorState from '../view/GitRepositoryErrorState';
+import GitRepositorySelector from '../view/GitRepositorySelector';
 import GitViewTabs from '../view/GitViewTabs';
 import ConfirmActionModal from '../view/modals/ConfirmActionModal';
 
@@ -25,6 +28,13 @@ export default function GitPanel({
   const [confirmAction, setConfirmAction] = useState<ConfirmationRequest | null>(null);
 
   const {
+    repositories,
+    activeRepository,
+    isDiscoveringRepositories,
+    repositoryDiscoveryState,
+    repositoryDiscoveryError,
+    selectRepository,
+    discoverRepositories,
     gitStatus,
     gitDiff,
     isLoading,
@@ -72,6 +82,7 @@ export default function GitPanel({
     // `projectId` (DB primary key) is forwarded to the revert API which uses it
     // as the `project` body param.
     projectId: selectedProject?.projectId ?? null,
+    repository: activeRepository,
     onSuccess: refreshAll,
   });
 
@@ -89,7 +100,11 @@ export default function GitPanel({
   const changeCount = getChangedFileCount(gitStatus);
   // Without a repository the branch/fetch/refresh header controls are all
   // meaningless — hide the whole header and let the init state own the panel.
-  const isMissingRepository = Boolean(gitStatus?.notGitRepository);
+  const isMissingRepository = canInitializeRepository(
+    repositoryDiscoveryState,
+    repositories,
+    Boolean(gitStatus?.notGitRepository),
+  );
 
   if (!selectedProject) {
     return (
@@ -101,7 +116,17 @@ export default function GitPanel({
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {!isMissingRepository && (
+      <GitRepositorySelector
+        isMobile={isMobile}
+        repositories={repositories}
+        activeRepository={activeRepository}
+        discoveryState={repositoryDiscoveryState}
+        discoveryError={repositoryDiscoveryError}
+        isDiscovering={isDiscoveringRepositories}
+        onRepositoryChange={selectRepository}
+        onRediscover={() => { void discoverRepositories(); }}
+      />
+      {activeRepository && (
         <GitPanelHeader
           isMobile={isMobile}
           currentBranch={currentBranch}
@@ -128,7 +153,14 @@ export default function GitPanel({
         />
       )}
 
-      {gitStatus?.error ? (
+      {repositoryDiscoveryState === 'error' ? (
+        <GitRepositoryErrorState
+          error="Unable to discover repositories"
+          details={repositoryDiscoveryError ?? undefined}
+          retryLabel="Retry repository discovery"
+          onRetry={() => { void discoverRepositories(); }}
+        />
+      ) : gitStatus?.error ? (
         <GitRepositoryErrorState
           error={gitStatus.error}
           details={gitStatus.details}
@@ -151,9 +183,9 @@ export default function GitPanel({
 
           {activeView === 'changes' && (
             <ChangesView
-              key={selectedProject.fullPath}
+              key={repositoryCacheKey(selectedProject.fullPath, activeRepository)}
               isMobile={isMobile}
-              projectPath={selectedProject.fullPath}
+              projectPath={repositoryCacheKey(selectedProject.fullPath, activeRepository)}
               gitStatus={gitStatus}
               gitDiff={gitDiff}
               isLoading={isLoading}
@@ -188,9 +220,10 @@ export default function GitPanel({
 
           {activeView === 'worktrees' && (
             <WorktreesView
-              key={selectedProject.fullPath}
+              key={repositoryCacheKey(selectedProject.fullPath, activeRepository)}
               isMobile={isMobile}
               selectedProject={selectedProject}
+              repository={activeRepository ?? '.'}
               localBranches={localBranches}
               onProjectSelect={onProjectSelect}
               onProjectsRefresh={onProjectsRefresh}

@@ -4,6 +4,7 @@ import * as React from 'react';
 import { SendHorizonalIcon, SquareIcon } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
+
 import { Button } from './Button';
 import Tooltip from './Tooltip';
 
@@ -16,14 +17,6 @@ interface PromptInputContextValue {
 }
 
 const PromptInputContext = React.createContext<PromptInputContextValue | null>(null);
-
-const usePromptInput = () => {
-  const context = React.useContext(PromptInputContext);
-  if (!context) {
-    throw new Error('PromptInput components must be used within PromptInput');
-  }
-  return context;
-};
 
 /* ─── PromptInput (root form) ────────────────────────────────────── */
 
@@ -215,5 +208,3 @@ export const PromptInputSubmit = React.forwardRef<HTMLButtonElement, PromptInput
   }
 );
 PromptInputSubmit.displayName = 'PromptInputSubmit';
-
-export { usePromptInput };

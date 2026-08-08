@@ -6,8 +6,8 @@ import { useVersionCheck } from '../../../hooks/useVersionCheck';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useSidebarController } from '../hooks/useSidebarController';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
-import { usePaletteOps } from '../../../contexts/PaletteOpsContext';
-import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
+import { usePaletteOps } from '../../../contexts/paletteOps';
+import { useTasksSettings } from '../../../contexts/useTasksSettings';
 import type { Project, LLMProvider } from '../../../types/app';
 import type { MCPServerStatus, SidebarProps } from '../types/types';
 
@@ -26,6 +26,8 @@ function Sidebar({
   selectedProject,
   selectedSession,
   activeSessions,
+  sessionLifecycle,
+  onStartSession,
   attentionSessionIds,
   onProjectSelect,
   onSessionSelect,
@@ -57,6 +59,8 @@ function Sidebar({
   const {
     isSidebarCollapsed,
     expandedProjects,
+    expandedSessionIdsByProject,
+    forcedExpandedSessionIdsByProject,
     editingProject,
     showNewProject,
     editingName,
@@ -83,6 +87,7 @@ function Sidebar({
     archivedSessionsCount,
     isArchivedSessionsLoading,
     toggleProject,
+    toggleSessionBranch,
     handleSessionClick,
     toggleStarProject,
     isProjectStarred,
@@ -117,6 +122,8 @@ function Sidebar({
     selectedProject,
     selectedSession,
     activeSessions,
+    sessionLifecycle,
+    onStartSession,
     isLoading,
     isMobile,
     t,
@@ -164,7 +171,12 @@ function Sidebar({
     getProjectSessions,
     loadingMoreProjects,
     activeSessions,
+    sessionLifecycle,
+    onStartSession,
     attentionSessionIds,
+    expandedSessionIdsByProject,
+    forcedExpandedSessionIdsByProject,
+    onToggleSessionBranch: toggleSessionBranch,
     forceExpanded: searchMode === 'running',
     isProjectStarred,
     onEditingNameChange: setEditingName,

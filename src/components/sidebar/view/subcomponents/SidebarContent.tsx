@@ -481,7 +481,7 @@ export default function SidebarContent({
                                     : String(session.id)),
                               createdAt: typeof session.created_at === 'string' ? session.created_at : null,
                               updatedAt: typeof session.updated_at === 'string' ? session.updated_at : null,
-                              lastActivity:
+                               lastActivity:
                                 typeof session.lastActivity === 'string'
                                   ? session.lastActivity
                                   : typeof session.updated_at === 'string'
@@ -489,7 +489,10 @@ export default function SidebarContent({
                                     : typeof session.created_at === 'string'
                                       ? session.created_at
                                       : null,
-                              isProjectArchived: true,
+                               parentSessionId: typeof session.parentSessionId === 'string'
+                                 ? session.parentSessionId
+                                 : null,
+                               isProjectArchived: true,
                             })}
                           >
                             <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-background/70">

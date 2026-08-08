@@ -1,10 +1,12 @@
+import { useMemo } from 'react';
 import { Plus } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
-import type { SessionActivityMap } from '../../../../hooks/useSessionProtection';
+import type { SessionActivityMap, SessionLifecycleMap } from '../../../../hooks/useSessionProtection';
 import type { Project, ProjectSession, LLMProvider } from '../../../../types/app';
 import type { SessionWithProvider } from '../../types/types';
+import { annotateSessionForest, buildSessionForest, flattenExpandedBranches } from '../../utils/hierarchy';
 
 import SidebarSessionItem from './SidebarSessionItem';
 
@@ -17,7 +19,12 @@ type SidebarProjectSessionsProps = {
   hasMoreSessions: boolean;
   isLoadingMoreSessions: boolean;
   activeSessions: SessionActivityMap;
+  sessionLifecycle?: SessionLifecycleMap;
+  onStartSession?: (sessionId: string) => Promise<void>;
   attentionSessionIds: ReadonlySet<string>;
+  expandedSessionIds: ReadonlySet<string>;
+  forcedExpandedSessionIds: ReadonlySet<string>;
+  onToggleSessionBranch: (sessionId: string) => void;
   currentTime: Date;
   editingSession: string | null;
   editingSessionName: string;
@@ -65,7 +72,12 @@ export default function SidebarProjectSessions({
   hasMoreSessions,
   isLoadingMoreSessions,
   activeSessions,
+  sessionLifecycle,
+  onStartSession,
   attentionSessionIds,
+  expandedSessionIds,
+  forcedExpandedSessionIds,
+  onToggleSessionBranch,
   currentTime,
   editingSession,
   editingSessionName,
@@ -80,11 +92,21 @@ export default function SidebarProjectSessions({
   onNewSession,
   t,
 }: SidebarProjectSessionsProps) {
+  const hasSessions = sessions.length > 0;
+  const flatRows = useMemo(() => {
+    const forest = annotateSessionForest(
+      buildSessionForest(sessions, project.projectId),
+      new Set(activeSessions.keys()),
+      attentionSessionIds,
+    );
+
+    return flattenExpandedBranches(forest, expandedSessionIds, forcedExpandedSessionIds);
+  }, [activeSessions, attentionSessionIds, expandedSessionIds, forcedExpandedSessionIds, project.projectId, sessions]);
+  const hasSessionHierarchy = flatRows.some((row) => row.childCount > 0);
+
   if (!isExpanded) {
     return null;
   }
-
-  const hasSessions = sessions.length > 0;
 
   return (
     <div className="ml-3 space-y-1 border-l border-border pl-3">
@@ -119,14 +141,28 @@ export default function SidebarProjectSessions({
         </div>
       ) : (
         <>
-          {sessions.map((session) => (
+          {flatRows.map((row) => (
             <SidebarSessionItem
-              key={session.id}
+              key={row.id}
               project={project}
-              session={session}
+              session={{
+                ...row.session,
+                __provider: row.session.__provider ?? row.session.provider ?? 'claude',
+              }}
               selectedSession={selectedSession}
-              isProcessing={activeSessions.has(session.id)}
-              needsAttention={attentionSessionIds.has(session.id)}
+              isProcessing={row.isRunning}
+              lifecycle={sessionLifecycle?.get(row.id)}
+              onStartSession={onStartSession ?? (async () => undefined)}
+              hasRunningDescendant={row.hasRunningDescendant}
+              runningDescendantCount={row.runningDescendantCount}
+              needsAttention={row.needsAttention}
+              hasAttentionDescendant={row.hasAttentionDescendant}
+              depth={row.depth}
+              childCount={row.childCount}
+              descendantCount={row.descendantCount}
+              reserveDisclosureSpace={hasSessionHierarchy}
+              isBranchExpanded={expandedSessionIds.has(row.id) || forcedExpandedSessionIds.has(row.id)}
+              onToggleSessionBranch={onToggleSessionBranch}
               currentTime={currentTime}
               editingSession={editingSession}
               editingSessionName={editingSessionName}

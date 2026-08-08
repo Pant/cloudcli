@@ -39,6 +39,13 @@ export interface SubagentChildTool {
 }
 
 export interface ChatMessage {
+  /** Stable normalized row identity retained across cache/REST/realtime sources. */
+  id?: string;
+  sessionId?: string;
+  generation?: number;
+  seq?: number;
+  sourceKind?: string;
+  renderKeySuffix?: string;
   type: string;
   content?: string;
   displayText?: string;
@@ -112,6 +119,53 @@ export interface Question {
   multiSelect?: boolean;
 }
 
+/**
+ * Normalized controls supported by inline `<question-form>` artifacts.
+ *
+ * These are intentionally separate from the legacy AskUserQuestion types
+ * above: inline forms use stable question ids and option values, while the
+ * tool payload uses the question text as its answer key.
+ */
+export type QuestionFormQuestionType = 'radio' | 'checkbox' | 'select' | 'text' | 'textarea';
+
+export interface QuestionFormOption {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+export type QuestionFormAnswer = string | string[];
+
+export type QuestionFormAnswers = Record<string, QuestionFormAnswer>;
+
+export type QuestionFormAnswerMap = QuestionFormAnswers;
+
+export interface QuestionFormQuestion {
+  id: string;
+  label: string;
+  type: QuestionFormQuestionType;
+  options?: QuestionFormOption[];
+  description?: string;
+  help?: string;
+  placeholder?: string;
+  required?: boolean;
+  defaultValue?: QuestionFormAnswer;
+}
+
+export interface QuestionForm {
+  id: string;
+  title: string;
+  description?: string;
+  questions: QuestionFormQuestion[];
+  submitLabel?: string;
+  lang?: string;
+}
+
+export type QuestionFormSegment =
+  | { kind: 'text'; text: string }
+  | { kind: 'form'; form: QuestionForm; raw: string }
+  | { kind: 'fallback'; text: string };
+
 export type SessionNavigationOptions = {
   replace?: boolean;
 };
@@ -126,7 +180,7 @@ export interface ChatInterfaceProps {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   ws: WebSocket | null;
-  sendMessage: (message: unknown) => void;
+  sendMessage: (message: unknown) => boolean;
   onFileOpen?: (filePath: string, diffInfo?: any) => void;
   onInputFocusChange?: (focused: boolean) => void;
   onSessionProcessing?: MarkSessionProcessing;

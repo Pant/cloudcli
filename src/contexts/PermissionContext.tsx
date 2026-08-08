@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext } from 'react';
 
 import type { PendingPermissionRequest } from '../components/chat/types/types';
 
@@ -11,9 +11,5 @@ export interface PermissionContextValue {
 }
 
 const PermissionContext = createContext<PermissionContextValue | null>(null);
-
-export function usePermission(): PermissionContextValue | null {
-  return useContext(PermissionContext);
-}
 
 export default PermissionContext;

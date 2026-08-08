@@ -113,6 +113,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- session and on every send, so reopening a session restores the model it
     -- was last used with instead of falling back to the catalog default.
     model TEXT,
+    -- OpenCode agent this session runs with. Other providers leave this NULL.
+    -- Persisting it per session keeps subagent sessions independent from the
+    -- last agent selected in the UI for their parent session.
+    agent TEXT,
+    -- Provider-native parent id (currently used by OpenCode). This remains
+    -- nullable because provider session ids are scoped to their provider and
+    -- the parent row may be discovered after its child.
+    provider_parent_session_id TEXT,
     isArchived BOOLEAN DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -136,6 +144,98 @@ CREATE TABLE IF NOT EXISTS app_config (
     value TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+`;
+
+export const SESSION_RUN_STATE_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS session_run_state (
+    session_id TEXT PRIMARY KEY NOT NULL,
+    provider TEXT NOT NULL,
+    generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
+    desired_state TEXT NOT NULL CHECK (desired_state IN ('running', 'stopped')),
+    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('running', 'stalled', 'recovering', 'completed', 'failed', 'exited', 'manually_stopped', 'recovery_exhausted')),
+    terminal_reason TEXT,
+    terminal_message TEXT,
+    exit_code INTEGER,
+    restart_count INTEGER NOT NULL DEFAULT 0 CHECK (restart_count >= 0),
+    continuation_options_json TEXT NOT NULL DEFAULT '{}',
+    started_at INTEGER NOT NULL,
+    last_progress_at INTEGER NOT NULL,
+    terminal_at INTEGER,
+    next_recovery_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+`;
+
+export const SESSION_RUN_STATE_INDEXES_SQL = `
+CREATE INDEX IF NOT EXISTS idx_session_run_state_recovery
+ON session_run_state(desired_state, lifecycle_state, next_recovery_at);
+CREATE INDEX IF NOT EXISTS idx_session_run_state_actionable
+ON session_run_state(lifecycle_state, updated_at DESC);
+`;
+
+export const SESSION_RUN_HISTORY_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS session_run_history (
+    session_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    provider TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    terminal_at INTEGER NOT NULL,
+    lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('completed', 'failed', 'exited', 'recovery_exhausted')),
+    terminal_reason TEXT NOT NULL,
+    terminal_message TEXT,
+    exit_code INTEGER,
+    signal TEXT,
+    artifact_run_id TEXT,
+    artifact_relative_path TEXT,
+    stderr_tail TEXT NOT NULL DEFAULT '',
+    resources_json TEXT,
+    PRIMARY KEY (session_id, generation),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+`;
+
+export const SESSION_RUN_HISTORY_INDEXES_SQL = `
+CREATE INDEX IF NOT EXISTS idx_session_run_history_recent
+ON session_run_history(terminal_at DESC, session_id, generation DESC);
+CREATE INDEX IF NOT EXISTS idx_session_run_history_session_recent
+ON session_run_history(session_id, terminal_at DESC, generation DESC);
+`;
+
+export const APPOINTMENTS_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS appointments (
+    id TEXT PRIMARY KEY NOT NULL,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    options_json TEXT NOT NULL DEFAULT '{}',
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    trigger_type TEXT NOT NULL CHECK (trigger_type IN ('exact', 'timer', 'project_idle', 'queue')),
+    due_at INTEGER,
+    timer_duration_ms INTEGER,
+    project_idle_since INTEGER,
+    queue_position INTEGER,
+    run_generation INTEGER,
+    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'scheduled', 'needs_review', 'running', 'completed', 'failed', 'cancelled')),
+    error_message TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    claimed_at INTEGER,
+    completed_at INTEGER,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+`;
+
+export const APPOINTMENTS_INDEXES_SQL = `
+CREATE INDEX IF NOT EXISTS idx_appointments_project_user ON appointments(project_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_appointments_due ON appointments(is_active, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_appointments_project_idle ON appointments(is_active, status, trigger_type, project_id);
+CREATE INDEX IF NOT EXISTS idx_appointments_queue_order ON appointments(project_id, user_id, trigger_type, status, queue_position, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_appointments_running ON appointments(status, run_generation, project_id);
 `;
 
 export const INIT_SCHEMA_SQL = `
@@ -177,6 +277,15 @@ ${SESSIONS_TABLE_SCHEMA_SQL}
 CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id);
 -- NOTE: This index is created in migrations after sessions is rebuilt to include project_path.
 -- Creating it here can fail on upgraded installs where the legacy sessions table has no project_path.
+
+${SESSION_RUN_STATE_TABLE_SCHEMA_SQL}
+${SESSION_RUN_STATE_INDEXES_SQL}
+${SESSION_RUN_HISTORY_TABLE_SCHEMA_SQL}
+${SESSION_RUN_HISTORY_INDEXES_SQL}
+
+${APPOINTMENTS_TABLE_SCHEMA_SQL}
+-- NOTE: These indexes are created in migrations after legacy appointment
+-- tables gain the queue_position and run_generation columns.
 
 ${LAST_SCANNED_AT_SQL}
 

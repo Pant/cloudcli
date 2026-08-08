@@ -15,6 +15,26 @@ export interface FileTreeNode {
   [key: string]: unknown;
 }
 
+/**
+ * Optional controls for a File Tree listing request.  `targetPath` is relative
+ * to the project root; an omitted path requests the project root itself.
+ * `path` is accepted as a convenience alias for callers that already use the
+ * API's query-parameter name.
+ */
+export interface FileTreeRequestOptions {
+  targetPath?: string;
+  path?: string;
+  depth?: number;
+  includeMetadata?: boolean;
+  metadata?: boolean;
+  respectGitignore?: boolean;
+}
+
+export type FileTreeGeneration = {
+  projectId: string;
+  generation: number;
+};
+
 export interface FileTreeImageSelection {
   name: string;
   path: string;

@@ -99,77 +99,6 @@ export function createTaskmasterRouter(dependencies: TaskmasterRouterDependencie
      * Check if TaskMaster CLI is installed globally
      * @returns {Promise<Object>} Installation status result
      */
-    async function checkTaskMasterInstallation() {
-        return new Promise((resolve) => {
-            // Check if task-master command is available
-            const child = spawn('which', ['task-master'], {
-                stdio: ['ignore', 'pipe', 'pipe'],
-                shell: true
-            });
-
-            let output = '';
-            let errorOutput = '';
-
-            child.stdout.on('data', (data) => {
-                output += data.toString();
-            });
-
-            child.stderr.on('data', (data) => {
-                errorOutput += data.toString();
-            });
-
-            child.on('close', (code) => {
-                if (code === 0 && output.trim()) {
-                    // TaskMaster is installed, get version
-                    const versionChild = spawn('task-master', ['--version'], {
-                        stdio: ['ignore', 'pipe', 'pipe'],
-                        shell: true
-                    });
-
-                    let versionOutput = '';
-
-                    versionChild.stdout.on('data', (data) => {
-                        versionOutput += data.toString();
-                    });
-
-                    versionChild.on('close', (versionCode) => {
-                        resolve({
-                            isInstalled: true,
-                            installPath: output.trim(),
-                            version: versionCode === 0 ? versionOutput.trim() : 'unknown',
-                            reason: null
-                        });
-                    });
-
-                    versionChild.on('error', () => {
-                        resolve({
-                            isInstalled: true,
-                            installPath: output.trim(),
-                            version: 'unknown',
-                            reason: null
-                        });
-                    });
-                } else {
-                    resolve({
-                        isInstalled: false,
-                        installPath: null,
-                        version: null,
-                        reason: 'TaskMaster CLI not found in PATH'
-                    });
-                }
-            });
-
-            child.on('error', (error) => {
-                resolve({
-                    isInstalled: false,
-                    installPath: null,
-                    version: null,
-                    reason: `Error checking installation: ${error.message}`
-                });
-            });
-        });
-    }
-
     // API Routes
 
     /**
@@ -178,7 +107,7 @@ export function createTaskmasterRouter(dependencies: TaskmasterRouterDependencie
      */
     router.get('/installation-status', async (req, res) => {
         try {
-            const installationStatus = await checkTaskMasterInstallation();
+            const installationStatus = await taskmasterService.checkInstallation();
 
             // Also check for MCP server configuration
             const mcpStatus = await taskmasterService.detectMcpServer();

@@ -1,11 +1,14 @@
 import type { ReactNode, RefObject } from 'react';
+
 import type { FileTreeNode as FileTreeNodeType, FileTreeViewMode } from '../types/types';
+
 import FileTreeNode from './FileTreeNode';
 
 type FileTreeListProps = {
   items: FileTreeNodeType[];
   viewMode: FileTreeViewMode;
   expandedDirs: Set<string>;
+  directoryLoading: Set<string>;
   onItemClick: (item: FileTreeNodeType) => void;
   renderFileIcon: (filename: string) => ReactNode;
   formatFileSize: (bytes?: number) => string;
@@ -23,7 +26,7 @@ type FileTreeListProps = {
   setRenameValue?: (value: string) => void;
   handleConfirmRename?: () => void;
   handleCancelRename?: () => void;
-  renameInputRef?: RefObject<HTMLInputElement>;
+  renameInputRef?: RefObject<HTMLInputElement | null>;
   operationLoading?: boolean;
 };
 
@@ -31,6 +34,7 @@ export default function FileTreeList({
   items,
   viewMode,
   expandedDirs,
+  directoryLoading,
   onItemClick,
   renderFileIcon,
   formatFileSize,
@@ -58,7 +62,8 @@ export default function FileTreeList({
           item={item}
           level={0}
           viewMode={viewMode}
-          expandedDirs={expandedDirs}
+           expandedDirs={expandedDirs}
+           directoryLoading={directoryLoading}
           onItemClick={onItemClick}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}

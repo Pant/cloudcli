@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 
 import { api } from '../utils/api';
-import type { ServerEvent } from '../contexts/WebSocketContext';
+import type { ServerEvent } from '../contexts/webSocketTypes';
 import type {
   AppTab,
   LLMProvider,
@@ -11,7 +11,14 @@ import type {
   ProjectSession,
 } from '../types/app';
 
-import type { SessionActivityMap } from './useSessionProtection';
+import type { SessionActivityMap, SessionLifecycleMap } from './useSessionProtection';
+import {
+  getProjectSessions,
+  mergeExpandedSessionPages,
+  mergeProjectSessionPage,
+  mergeRunningSnapshotsIntoProjects,
+  upsertSessionIntoProject,
+} from './projectStateUtils';
 
 type UseProjectsStateArgs = {
   sessionId?: string;
@@ -20,6 +27,7 @@ type UseProjectsStateArgs = {
   subscribe: (listener: (event: ServerEvent) => void) => () => void;
   isMobile: boolean;
   activeSessions: SessionActivityMap;
+  lifecycleSessions?: SessionLifecycleMap;
 };
 
 /**
@@ -29,7 +37,6 @@ type UseProjectsStateArgs = {
  */
 type SessionUpsertedEvent = ServerEvent & {
   sessionId: string;
-  providerSessionId?: string | null;
   provider: LLMProvider;
   session: ProjectSession;
   project: {
@@ -52,6 +59,24 @@ type RegisterOptimisticSessionArgs = {
   summary?: string | null;
 };
 
+type NewSessionIntentActions = {
+  selectProject: (project: Project) => void;
+  clearSession: () => void;
+  showChat: () => void;
+  triggerReset: () => void;
+  navigateHome: () => void;
+  closeSidebar?: () => void;
+};
+
+export const applyNewSessionIntent = (project: Project, actions: NewSessionIntentActions) => {
+  actions.selectProject(project);
+  actions.clearSession();
+  actions.showChat();
+  actions.triggerReset();
+  actions.navigateHome();
+  actions.closeSidebar?.();
+};
+
 /**
  * Shape of `GET /api/providers/sessions/:sessionId` — the authoritative
  * session → owning-project resolution used when a `/session/<id>` URL points
@@ -61,9 +86,12 @@ type SessionDetailsApiPayload = {
   data?: {
     sessionId?: string;
     provider?: string;
+    model?: string | null;
+    agent?: string | null;
     summary?: string;
     createdAt?: string | null;
     lastActivity?: string | null;
+    parentSessionId?: string | null;
     project?: {
       projectId?: string;
       path?: string;
@@ -153,173 +181,6 @@ const mergeTaskMasterCache = (nextProjects: Project[], previousProjects: Project
   });
 };
 
-const getProjectSessions = (project: Project): ProjectSession[] => {
-  return project.sessions ?? [];
-};
-
-const countLoadedProjectSessions = (project: Project): number => getProjectSessions(project).length;
-
-const mergeSessionProviderLists = (baseSessions: ProjectSession[], additionalSessions: ProjectSession[]): ProjectSession[] => {
-  const merged = [...baseSessions];
-  const seenSessionIds = new Set(baseSessions.map((session) => String(session.id)));
-
-  for (const session of additionalSessions) {
-    const sessionId = String(session.id);
-    if (seenSessionIds.has(sessionId)) {
-      continue;
-    }
-
-    merged.push(session);
-    seenSessionIds.add(sessionId);
-  }
-
-  return merged;
-};
-
-const mergeExpandedSessionPages = (previousProjects: Project[], incomingProjects: Project[]): Project[] => {
-  if (previousProjects.length === 0) {
-    return incomingProjects;
-  }
-
-  const previousByProjectId = new Map(previousProjects.map((project) => [project.projectId, project]));
-
-  return incomingProjects.map((incomingProject) => {
-    const previousProject = previousByProjectId.get(incomingProject.projectId);
-    if (!previousProject) {
-      return incomingProject;
-    }
-
-    const previousLoadedCount = countLoadedProjectSessions(previousProject);
-    const incomingLoadedCount = countLoadedProjectSessions(incomingProject);
-    if (previousLoadedCount <= incomingLoadedCount) {
-      return incomingProject;
-    }
-
-    const mergedProject: Project = {
-      ...incomingProject,
-      sessions: mergeSessionProviderLists(incomingProject.sessions ?? [], previousProject.sessions ?? []),
-    };
-
-    const totalSessions = Number(incomingProject.sessionMeta?.total ?? previousLoadedCount);
-    mergedProject.sessionMeta = {
-      ...incomingProject.sessionMeta,
-      total: totalSessions,
-      hasMore: countLoadedProjectSessions(mergedProject) < totalSessions,
-    };
-
-    return mergedProject;
-  });
-};
-
-const mergeProjectSessionPage = (
-  existingProject: Project,
-  sessionsPage: ProjectSessionPage,
-): Project => {
-  const mergedProject: Project = {
-    ...existingProject,
-    sessions: mergeSessionProviderLists(existingProject.sessions ?? [], sessionsPage.sessions ?? []),
-  };
-
-  const totalSessions = Number(sessionsPage.sessionMeta?.total ?? existingProject.sessionMeta?.total ?? 0);
-  mergedProject.sessionMeta = {
-    ...existingProject.sessionMeta,
-    ...sessionsPage.sessionMeta,
-    total: totalSessions,
-    hasMore: countLoadedProjectSessions(mergedProject) < totalSessions,
-  };
-
-  return mergedProject;
-};
-
-const getSessionAliasIds = (event: SessionUpsertedEvent): Set<string> => {
-  const ids = new Set<string>();
-  const add = (value: unknown) => {
-    if (typeof value !== 'string') {
-      return;
-    }
-
-    const trimmed = value.trim();
-    if (trimmed) {
-      ids.add(trimmed);
-    }
-  };
-
-  add(event.sessionId);
-  add(event.providerSessionId);
-  add(event.session?.id);
-
-  return ids;
-};
-
-/**
- * Upserts one session into a project's normalized session list.
- *
- * Existing rows are updated in place (summary/lastActivity changes from the
- * watcher); new rows are prepended since the watcher only fires for sessions
- * with fresh activity. `sessionMeta.total` grows only on insert.
- */
-const upsertSessionIntoProject = (project: Project, event: SessionUpsertedEvent): Project => {
-  const sessions = project.sessions ?? [];
-  const aliasIds = getSessionAliasIds(event);
-  const normalizedSession: ProjectSession = {
-    ...event.session,
-    id: event.sessionId,
-    __provider: event.provider,
-  };
-  const existingIndex = sessions.findIndex((session) => aliasIds.has(String(session.id)));
-
-  let nextSessions: ProjectSession[];
-  let inserted = false;
-  if (existingIndex >= 0) {
-    let changed = false;
-    nextSessions = [];
-
-    for (const [index, session] of sessions.entries()) {
-      if (index === existingIndex) {
-        const updated = { ...session, ...normalizedSession };
-        // Never let a later upsert that carries an empty summary blank out a
-        // title we already have. Fresh sessions momentarily broadcast an empty
-        // custom_name before the disk indexer fills it in, which would
-        // otherwise flash the row back to the "New session" placeholder.
-        if (!normalizedSession.summary?.trim() && session.summary?.trim()) {
-          updated.summary = session.summary;
-        }
-        if (serialize(session) !== serialize(updated)) {
-          changed = true;
-        }
-        nextSessions.push(updated);
-        continue;
-      }
-
-      if (aliasIds.has(String(session.id))) {
-        changed = true;
-        continue;
-      }
-
-      nextSessions.push(session);
-    }
-
-    if (!changed) {
-      return project;
-    }
-  } else {
-    nextSessions = [normalizedSession, ...sessions];
-    inserted = true;
-  }
-
-  const next: Project = { ...project, sessions: nextSessions };
-  if (inserted) {
-    const total = Number(project.sessionMeta?.total ?? 0) + 1;
-    next.sessionMeta = {
-      ...project.sessionMeta,
-      total,
-      hasMore: countLoadedProjectSessions(next) < total,
-    };
-  }
-
-  return next;
-};
-
 const projectFromRegistration = (project: Project): Project => ({
   projectId: project.projectId,
   path: project.path || project.fullPath,
@@ -327,7 +188,7 @@ const projectFromRegistration = (project: Project): Project => ({
   displayName: project.displayName,
   isStarred: project.isStarred,
   sessions: project.sessions ?? [],
-  sessionMeta: project.sessionMeta ?? { hasMore: false, total: countLoadedProjectSessions(project) },
+  sessionMeta: project.sessionMeta ?? { hasMore: false, total: getProjectSessions(project).length },
   taskmaster: project.taskmaster,
 });
 
@@ -347,7 +208,7 @@ const removeSessionFromProject = (project: Project, sessionIdToDelete: string): 
   updatedProject.sessionMeta = {
     ...project.sessionMeta,
     total: totalSessions,
-    hasMore: countLoadedProjectSessions(updatedProject) < totalSessions,
+    hasMore: getProjectSessions(updatedProject).length < totalSessions,
   };
 
   return updatedProject;
@@ -377,6 +238,7 @@ export function useProjectsState({
   subscribe,
   isMobile,
   activeSessions,
+  lifecycleSessions = new Map(),
 }: UseProjectsStateArgs) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -638,6 +500,34 @@ export function useProjectsState({
     void fetchProjects();
   }, [fetchProjects]);
 
+  // The running endpoint carries canonical session/project summaries for rows
+  // that may not belong to the currently loaded root page. Hydrate those rows
+  // into the same project state used by the sidebar, but keep all pagination
+  // metadata untouched so an off-page child cannot advance the root cursor.
+  useEffect(() => {
+    if (activeSessions.size === 0 && lifecycleSessions.size === 0) {
+      return;
+    }
+
+    const hydrationSnapshots = new Map<string, import('./useSessionProtection').SessionActivity | import('../types/app').RunningSessionSnapshot>(activeSessions);
+    for (const [id, snapshot] of lifecycleSessions) {
+      if (!hydrationSnapshots.has(id)) hydrationSnapshots.set(id, snapshot);
+    }
+
+    setProjects((previousProjects) => {
+      const merged = mergeRunningSnapshotsIntoProjects(previousProjects, hydrationSnapshots);
+      return projectsHaveChanges(previousProjects, merged) ? merged : previousProjects;
+    });
+
+    setSelectedProject((previousProject) => {
+      if (!previousProject) {
+        return previousProject;
+      }
+      const merged = mergeRunningSnapshotsIntoProjects([previousProject], hydrationSnapshots)[0];
+      return merged && serialize(merged) !== serialize(previousProject) ? merged : previousProject;
+    });
+  }, [activeSessions, lifecycleSessions]);
+
   useEffect(() => {
     if (!selectedProject?.projectId) {
       return;
@@ -739,7 +629,7 @@ export function useProjectsState({
             displayName: upsert.project.displayName,
             isStarred: upsert.project.isStarred,
             sessions: [],
-            sessionMeta: { hasMore: false, total: 0 },
+            sessionMeta: { hasMore: false, total: 0, rootTotal: 0, rootOffset: 0, nextOffset: 0 },
           } as Project;
 
           return [...previousProjects, upsertSessionIntoProject(newProject, upsert)];
@@ -770,35 +660,8 @@ export function useProjectsState({
         return updated === previousProject ? previousProject : updated;
       });
 
-      const aliasedSelectedSessionId =
-        typeof upsert.providerSessionId === 'string' && upsert.providerSessionId !== upsert.sessionId
-          ? upsert.providerSessionId
-          : null;
-      if (!aliasedSelectedSessionId) {
-        return;
-      }
-
-      const normalizedSelectedSession: ProjectSession = {
-        ...upsert.session,
-        id: upsert.sessionId,
-        __provider: upsert.provider,
-        __projectId: upsert.project?.projectId ?? currentSelectedSession?.__projectId,
-      };
-
-      setSelectedSession((previousSession) => {
-        if (previousSession?.id !== aliasedSelectedSessionId) {
-          return previousSession;
-        }
-
-        return {
-          ...previousSession,
-          ...normalizedSelectedSession,
-        };
-      });
-
-      if (sessionId === aliasedSelectedSessionId) {
-        navigate(`/session/${upsert.sessionId}`);
-      }
+      // Realtime payloads carry only canonical app ids, so there is no native
+      // provider-id alias to hand off to the selected session.
     };
 
     return subscribe(handleEvent);
@@ -819,6 +682,11 @@ export function useProjectsState({
 
   useEffect(() => {
     if (!sessionId) {
+      // Route state is authoritative here. A New Session click clears the
+      // selection and navigates home in the same React batch; the previous
+      // session-route effect can briefly restore that selection before the
+      // router commits `/`. Clear it again once the root route is observed.
+      setSelectedSession((previousSession) => previousSession === null ? previousSession : null);
       return;
     }
 
@@ -922,13 +790,16 @@ export function useProjectsState({
             displayName: details.project?.displayName ?? '',
             isStarred: Boolean(details.project?.isStarred),
             sessions: [],
-            sessionMeta: { hasMore: false, total: 0 },
+            sessionMeta: { hasMore: false, total: 0, rootTotal: 0, rootOffset: 0, nextOffset: 0 },
           };
         });
       }
 
       const resolvedSession: ProjectSession = {
         id: sessionId,
+        parentSessionId: details.parentSessionId ?? null,
+        model: details.model ?? null,
+        agent: details.agent ?? null,
         summary: details.summary ?? '',
         createdAt: details.createdAt ?? undefined,
         lastActivity: details.lastActivity ?? undefined,
@@ -989,15 +860,14 @@ export function useProjectsState({
 
   const handleNewSession = useCallback(
     (project: Project) => {
-      setSelectedProject(project);
-      setSelectedSession(null);
-      setActiveTab('chat');
-      setNewSessionTrigger((previous) => previous + 1);
-      navigate('/');
-
-      if (isMobile) {
-        setSidebarOpen(false);
-      }
+      applyNewSessionIntent(project, {
+        selectProject: setSelectedProject,
+        clearSession: () => setSelectedSession(null),
+        showChat: () => setActiveTab('chat'),
+        triggerReset: () => setNewSessionTrigger((previous) => previous + 1),
+        navigateHome: () => navigate('/'),
+        closeSidebar: isMobile ? () => setSidebarOpen(false) : undefined,
+      });
     },
     [isMobile, navigate],
   );
@@ -1072,15 +942,16 @@ export function useProjectsState({
       return;
     }
 
-    const loadedCount = countLoadedProjectSessions(project);
     const totalCount = Number(project.sessionMeta?.total ?? 0);
-    if (totalCount > 0 && loadedCount >= totalCount) {
+    if (project.sessionMeta?.hasMore === false || (totalCount === 0 && project.sessionMeta?.nextOffset === 0)) {
       return;
     }
 
+    const rootOffset = Number(project.sessionMeta?.nextOffset ?? project.sessionMeta?.rootOffset ?? 0);
+
     const response = await api.projectSessions(projectId, {
       limit: 20,
-      offset: loadedCount,
+      offset: rootOffset,
     });
 
     if (!response.ok) {

@@ -94,7 +94,35 @@
     "computer": "電腦使用",
     "notifications": "通知",
     "plugins": "外掛",
+    "cache": "快取",
     "about": "關於"
+  },
+  "cache": {
+    "title": "快取",
+    "description": "管理此帳戶在本機快取的工作階段歷史記錄。",
+    "statsTitle": "快取的歷史記錄",
+    "statsDescription": "只會統計此帳戶的本機歷史記錄。其他帳戶和伺服器歷史記錄會保留。",
+    "sessionCountLabel": "快取的工作階段",
+    "messageCountLabel": "快取的訊息",
+    "loading": "正在載入快取統計...",
+    "loadError": "無法載入快取統計。",
+    "syncSectionTitle": "同步歷史記錄",
+    "syncDescription": "取得此帳戶所有可用的工作階段歷史記錄。歷史記錄之後可能會再次自動快取。",
+    "syncButton": "同步所有歷史記錄",
+    "syncPending": "正在同步歷史記錄...",
+    "syncSuccess": "已同步 {{succeeded}} / {{eligible}} 筆歷史記錄。",
+    "syncPartial": "同步完成，但有 {{failed}} 筆歷史記錄失敗（{{eligible}} 筆中成功 {{succeeded}} 筆）。",
+    "syncError": "無法同步所有歷史記錄。",
+    "clearSectionTitle": "清除本機歷史記錄",
+    "clearDescription": "只刪除此帳戶本機快取的歷史記錄。其他帳戶和伺服器歷史記錄會保留。",
+    "clearButton": "清除此帳戶的快取",
+    "clearPending": "正在清除快取...",
+    "clearSuccess": "此帳戶的本機快取已清除。歷史記錄之後可能會再次快取。",
+    "clearError": "無法清除此帳戶的快取。",
+    "confirmationTitle": "清除此帳戶的本機歷史記錄？",
+    "confirmationDescription": "這只會刪除此帳戶本機快取的工作階段歷史記錄。其他帳戶和伺服器歷史記錄會保留，歷史記錄之後可能會再次快取。",
+    "cancel": "取消",
+    "confirm": "清除快取"
   },
   "notifications": {
     "title": "通知",
@@ -440,6 +468,16 @@
     "actions": {
       "edit": "編輯伺服器",
       "delete": "刪除伺服器"
+    },
+    "managed": {
+      "badge": "受管理",
+      "hint": "由 CloudCLI 管理。",
+      "enabled": "已啟用",
+      "disabled": "已停用",
+      "saving": "正在儲存…",
+      "enable": "啟用受管理的 MCP 伺服器",
+      "disable": "停用受管理的 MCP 伺服器",
+      "saveFailed": "無法儲存受管理 MCP 伺服器的狀態。"
     },
     "help": {
       "title": "關於 Codex MCP",

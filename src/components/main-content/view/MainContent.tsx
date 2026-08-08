@@ -1,26 +1,42 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import ChatInterface from '../../chat/view/ChatInterface';
-import FileTree from '../../file-tree/view/FileTree';
-import StandaloneShell from '../../standalone-shell/view/StandaloneShell';
-import GitPanel from '../../git-panel/view/GitPanel';
-import PluginTabContent from '../../plugins/view/PluginTabContent';
-import { BrowserUsePanel } from '../../browser-use';
 import type { MainContentProps } from '../types/types';
 import { useTaskMaster } from '../../../contexts/TaskMasterContext';
-import { usePaletteOpsRegister } from '../../../contexts/PaletteOpsContext';
-import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
+import { usePaletteOpsRegister } from '../../../contexts/paletteOps';
+import { useTasksSettings } from '../../../contexts/useTasksSettings';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useFileOpenResolver } from '../../../hooks/useFileOpenResolver';
 import { authenticatedFetch } from '../../../utils/api';
 import { useEditorSidebar } from '../../code-editor/hooks/useEditorSidebar';
-import EditorSidebar from '../../code-editor/view/EditorSidebar';
 import type { Project } from '../../../types/app';
-import { TaskMasterPanel } from '../../task-master';
+import { loadFeatureNamespaces } from '../../../i18n/config.js';
 
 import MainContentHeader from './subcomponents/MainContentHeader';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
+
+const FileTree = lazy(() => import('../../file-tree/view/FileTree'));
+const StandaloneShell = lazy(() => import('../../standalone-shell/view/StandaloneShell'));
+const GitPanel = lazy(() => import('../../git-panel/view/GitPanel'));
+const PluginTabContent = lazy(() => import('../../plugins/view/PluginTabContent'));
+const BrowserUsePanel = lazy(() => import('../../browser-use/view/BrowserUsePanel'));
+const TaskMasterPanel = lazy(() => import('../../task-master/view/TaskMasterPanel'));
+const EditorSidebar = lazy(() => import('../../code-editor/view/EditorSidebar'));
+
+function ConditionalPanelLoadingState() {
+  return (
+    <div className="flex h-full w-full items-center justify-center" role="status" aria-label="Loading">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
+    </div>
+  );
+}
+
+function FeatureNamespaceBoundary({ namespace, children }: { namespace: string; children: React.ReactNode }) {
+  useTranslation(namespace);
+  return children;
+}
 
 type TaskMasterContextValue = {
   currentProject?: Project | null;
@@ -79,6 +95,13 @@ function MainContent({
     selectedProject,
     isMobile,
   });
+
+  useEffect(() => {
+    const namespaces = ['chat'];
+    if (activeTab === 'tasks') namespaces.push('tasks');
+    if (editingFile) namespaces.push('codeEditor');
+    void loadFeatureNamespaces(namespaces);
+  }, [activeTab, editingFile]);
 
   // Resolves bare/partial file references (e.g. links inside chat messages) to
   // real project files before opening them in the in-app editor.
@@ -158,8 +181,10 @@ function MainContent({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className={`flex min-h-0 min-w-[200px] flex-col overflow-hidden ${editorExpanded ? 'hidden' : ''} flex-1`}>
           <div className={`h-full ${activeTab === 'chat' ? 'block' : 'hidden'}`}>
-            <ErrorBoundary showDetails>
-              <ChatInterface
+            <Suspense fallback={<ConditionalPanelLoadingState />}>
+              <FeatureNamespaceBoundary namespace="chat">
+                <ErrorBoundary showDetails>
+                  <ChatInterface
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
                 ws={ws}
@@ -178,71 +203,95 @@ function MainContent({
                 externalMessageUpdate={externalMessageUpdate}
                 newSessionTrigger={newSessionTrigger}
                 onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
-              />
-            </ErrorBoundary>
+                  />
+                </ErrorBoundary>
+              </FeatureNamespaceBoundary>
+            </Suspense>
           </div>
 
           {activeTab === 'files' && (
             <div className="h-full overflow-hidden">
-              <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} />
+              <Suspense fallback={<ConditionalPanelLoadingState />}>
+                <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} />
+              </Suspense>
             </div>
           )}
 
           {activeTab === 'shell' && (
             <div className="h-full w-full overflow-hidden">
-              <StandaloneShell
-                project={selectedProject}
-                session={selectedSession}
-                showHeader={false}
-                isActive={activeTab === 'shell'}
-              />
+              <Suspense fallback={<ConditionalPanelLoadingState />}>
+                <StandaloneShell
+                  project={selectedProject}
+                  isPlainShell
+                  showHeader={false}
+                  isActive={activeTab === 'shell'}
+                />
+              </Suspense>
             </div>
           )}
 
           {activeTab === 'git' && (
             <div className="h-full overflow-hidden">
-              <GitPanel
-                selectedProject={selectedProject}
-                isMobile={isMobile}
-                onFileOpen={handleFileOpen}
-                onProjectSelect={onProjectSelect}
-                onProjectsRefresh={onProjectsRefresh}
-              />
+              <Suspense fallback={<ConditionalPanelLoadingState />}>
+                <GitPanel
+                  selectedProject={selectedProject}
+                  isMobile={isMobile}
+                  onFileOpen={handleFileOpen}
+                  onProjectSelect={onProjectSelect}
+                  onProjectsRefresh={onProjectsRefresh}
+                />
+              </Suspense>
             </div>
           )}
 
-          {shouldShowTasksTab && <TaskMasterPanel isVisible={activeTab === 'tasks'} />}
+          {shouldShowTasksTab && (
+            <Suspense fallback={<ConditionalPanelLoadingState />}>
+              <FeatureNamespaceBoundary namespace="tasks">
+                <TaskMasterPanel isVisible={activeTab === 'tasks'} />
+              </FeatureNamespaceBoundary>
+            </Suspense>
+          )}
 
           {shouldShowBrowserTab && activeTab === 'browser' && (
             <div className="h-full overflow-hidden">
-              <BrowserUsePanel isVisible={activeTab === 'browser'} onShowSettings={onShowSettings} />
+              <Suspense fallback={<ConditionalPanelLoadingState />}>
+                <BrowserUsePanel isVisible={activeTab === 'browser'} onShowSettings={onShowSettings} />
+              </Suspense>
             </div>
           )}
 
           {activeTab.startsWith('plugin:') && (
             <div className="h-full overflow-hidden">
-              <PluginTabContent
-                pluginName={activeTab.replace('plugin:', '')}
-                selectedProject={selectedProject}
-                selectedSession={selectedSession}
-              />
+              <Suspense fallback={<ConditionalPanelLoadingState />}>
+                <PluginTabContent
+                  pluginName={activeTab.replace('plugin:', '')}
+                  selectedProject={selectedProject}
+                  selectedSession={selectedSession}
+                />
+              </Suspense>
             </div>
           )}
         </div>
 
-        <EditorSidebar
-          editingFile={editingFile}
-          isMobile={isMobile}
-          editorExpanded={editorExpanded}
-          editorWidth={editorWidth}
-          hasManualWidth={hasManualWidth}
-          resizeHandleRef={resizeHandleRef}
-          onResizeStart={handleResizeStart}
-          onCloseEditor={handleCloseEditor}
-          onToggleEditorExpand={handleToggleEditorExpand}
-          projectPath={selectedProject.path}
-          fillSpace={activeTab === 'files'}
-        />
+        {editingFile && (
+          <Suspense fallback={<ConditionalPanelLoadingState />}>
+            <FeatureNamespaceBoundary namespace="codeEditor">
+              <EditorSidebar
+              editingFile={editingFile}
+              isMobile={isMobile}
+              editorExpanded={editorExpanded}
+              editorWidth={editorWidth}
+              hasManualWidth={hasManualWidth}
+              resizeHandleRef={resizeHandleRef}
+              onResizeStart={handleResizeStart}
+              onCloseEditor={handleCloseEditor}
+              onToggleEditorExpand={handleToggleEditorExpand}
+              projectPath={selectedProject.path}
+              fillSpace={activeTab === 'files'}
+              />
+            </FeatureNamespaceBoundary>
+          </Suspense>
+        )}
       </div>
     </div>
   );

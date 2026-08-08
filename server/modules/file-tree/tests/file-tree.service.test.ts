@@ -57,6 +57,7 @@ function createFakeFileSystem(
 function createDependencies(
   fileSystem: FileTreeFileSystem,
   projectRoot: string,
+  errorLogger: FileTreeServiceDependencies['logger']['error'] = () => undefined,
 ): FileTreeServiceDependencies {
   return {
     fileSystem,
@@ -69,8 +70,91 @@ function createDependencies(
     },
     resolveMimeType: () => 'text/plain',
     fileSystemConcurrency: 4,
-    logger: { error: () => undefined },
+    logger: { error: errorLogger },
   };
+}
+
+for (const errorCode of ['ENOENT', 'EACCES', 'EPERM']) {
+  test(`listProjectFiles silently returns an empty tree for root ${errorCode}`, async () => {
+    const projectRoot = path.resolve('file-tree-test-project');
+    const loggedErrors: unknown[][] = [];
+    const fileSystem = createFakeFileSystem({
+      access: async () => undefined,
+      readdir: async () => {
+        throw Object.assign(new Error(`root ${errorCode}`), { code: errorCode });
+      },
+    });
+    const service = createFileTreeService(createDependencies(
+      fileSystem,
+      projectRoot,
+      (...arguments_) => loggedErrors.push(arguments_),
+    ));
+
+    const tree = await service.listProjectFiles('project-1');
+
+    assert.deepEqual(tree, []);
+    assert.deepEqual(loggedErrors, []);
+  });
+
+  test(`listProjectFiles silently returns empty children for child ${errorCode}`, async () => {
+    const projectRoot = path.resolve('file-tree-test-project');
+    const childDirectory = path.join(projectRoot, 'child');
+    const loggedErrors: unknown[][] = [];
+    const fileSystem = createFakeFileSystem({
+      access: async () => undefined,
+      readdir: async (directoryPath) => {
+        if (directoryPath === projectRoot) return [createDirectoryEntry('child', true)];
+        throw Object.assign(new Error(`child ${errorCode}`), { code: errorCode });
+      },
+      lstat: async () => createStats(true, 0o755),
+    });
+    const service = createFileTreeService(createDependencies(
+      fileSystem,
+      projectRoot,
+      (...arguments_) => loggedErrors.push(arguments_),
+    ));
+
+    const tree = await service.listProjectFiles('project-1');
+
+    assert.deepEqual(tree[0]?.children, []);
+    assert.deepEqual(loggedErrors, []);
+  });
+}
+
+for (const failureLocation of ['root', 'child'] as const) {
+  test(`listProjectFiles logs ${failureLocation} EIO once and returns an empty subtree`, async () => {
+    const projectRoot = path.resolve('file-tree-test-project');
+    const childDirectory = path.join(projectRoot, 'child');
+    const loggedErrors: unknown[][] = [];
+    const readError = Object.assign(new Error(`${failureLocation} I/O failure`), { code: 'EIO' });
+    const fileSystem = createFakeFileSystem({
+      access: async () => undefined,
+      readdir: async (directoryPath) => {
+        if (failureLocation === 'child' && directoryPath === projectRoot) {
+          return [createDirectoryEntry('child', true)];
+        }
+        throw readError;
+      },
+      lstat: async () => createStats(true, 0o755),
+    });
+    const service = createFileTreeService(createDependencies(
+      fileSystem,
+      projectRoot,
+      (...arguments_) => loggedErrors.push(arguments_),
+    ));
+
+    const tree = await service.listProjectFiles('project-1');
+
+    if (failureLocation === 'root') {
+      assert.deepEqual(tree, []);
+    } else {
+      assert.deepEqual(tree[0]?.children, []);
+    }
+    assert.deepEqual(loggedErrors, [[
+      `Error reading directory "${failureLocation === 'root' ? projectRoot : childDirectory}"`,
+      readError,
+    ]]);
+  });
 }
 
 test('listProjectFiles builds a sorted tree and skips generated directories', async () => {
@@ -170,6 +254,136 @@ test('listProjectFiles returns the normal tree when no gitignore exists', async 
   const tree = await service.listProjectFiles('project-1', { respectGitignore: true });
 
   assert.deepEqual(tree.map((entry) => entry.name), ['debug.log']);
+});
+
+test('listProjectFiles depth zero reads only direct children and skips metadata when disabled', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  const readDirectories: string[] = [];
+  let lstatCalls = 0;
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    readdir: async (directoryPath) => {
+      readDirectories.push(directoryPath);
+      if (directoryPath === projectRoot) {
+        return [
+          createDirectoryEntry('src', true),
+          createDirectoryEntry('README.md', false),
+        ];
+      }
+      throw new Error(`Descendant read should not happen: ${directoryPath}`);
+    },
+    lstat: async () => {
+      lstatCalls += 1;
+      return createStats(false, 0o644);
+    },
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+
+  const tree = await service.listProjectFiles('project-1', {
+    depth: 0,
+    includeMetadata: false,
+  });
+
+  assert.deepEqual(readDirectories, [projectRoot]);
+  assert.equal(lstatCalls, 0);
+  assert.deepEqual(tree.map((entry) => entry.name), ['src', 'README.md']);
+  assert.equal(tree[0]?.children, undefined);
+  assert.deepEqual({
+    size: tree[0]?.size,
+    modified: tree[0]?.modified,
+    permissions: tree[0]?.permissions,
+    permissionsRwx: tree[0]?.permissionsRwx,
+  }, {
+    size: 0,
+    modified: null,
+    permissions: '000',
+    permissionsRwx: '---------',
+  });
+});
+
+test('listProjectFiles resolves nested targets and keeps gitignore matching project-relative', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  const sourceDirectory = path.join(projectRoot, 'src');
+  const nestedFile = path.join(sourceDirectory, 'generated.ts');
+  const readDirectories: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    readTextFile: async (filePath) => {
+      assert.equal(filePath, path.join(projectRoot, '.gitignore'));
+      return 'src/generated.ts';
+    },
+    readdir: async (directoryPath) => {
+      readDirectories.push(directoryPath);
+      return directoryPath === sourceDirectory
+        ? [
+            createDirectoryEntry('generated.ts', false),
+            createDirectoryEntry('index.ts', false),
+          ]
+        : [];
+    },
+    lstat: async () => createStats(false, 0o644),
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+
+  const tree = await service.listProjectFiles('project-1', {
+    targetPath: 'src',
+    depth: 0,
+    respectGitignore: true,
+  });
+
+  assert.deepEqual(readDirectories, [sourceDirectory]);
+  assert.deepEqual(tree.map((entry) => entry.name), ['index.ts']);
+  assert.equal(nestedFile, path.join(sourceDirectory, 'generated.ts'));
+});
+
+test('listProjectFiles rejects nested traversal before filesystem reads', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  const readPaths: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    access: async (candidatePath) => {
+      readPaths.push(candidatePath);
+    },
+    readdir: async (directoryPath) => {
+      readPaths.push(directoryPath);
+      return [];
+    },
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+
+  await assert.rejects(
+    service.listProjectFiles('project-1', { targetPath: '../outside' }),
+    (error: unknown) => error instanceof AppError
+      && error.code === 'PATH_OUTSIDE_PROJECT'
+      && error.statusCode === 403,
+  );
+  assert.deepEqual(readPaths, []);
+});
+
+test('listProjectFiles clamps excessive service depth while preserving recursive defaults', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  const childDirectory = path.join(projectRoot, 'child');
+  const grandchildDirectory = path.join(childDirectory, 'grandchild');
+  const readDirectories: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    readdir: async (directoryPath) => {
+      readDirectories.push(directoryPath);
+      if (directoryPath === projectRoot) return [createDirectoryEntry('child', true)];
+      if (directoryPath === childDirectory) return [createDirectoryEntry('grandchild', true)];
+      if (directoryPath === grandchildDirectory) return [createDirectoryEntry('leaf.txt', false)];
+      return [];
+    },
+    lstat: async (candidatePath) => createStats(
+      candidatePath === childDirectory || candidatePath === grandchildDirectory,
+      0o644,
+    ),
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+
+  const tree = await service.listProjectFiles('project-1', { depth: 999 });
+
+  assert.deepEqual(readDirectories, [projectRoot, childDirectory, grandchildDirectory]);
+  assert.deepEqual(tree[0]?.children?.[0]?.children?.map((entry) => entry.name), ['leaf.txt']);
 });
 
 test('readTextFile rejects traversal before invoking the filesystem adapter', async () => {

@@ -1,14 +1,30 @@
-import { css } from '@codemirror/lang-css';
-import { html } from '@codemirror/lang-html';
-import { javascript } from '@codemirror/lang-javascript';
-import { json } from '@codemirror/lang-json';
 import { StreamLanguage } from '@codemirror/language';
-import { markdown } from '@codemirror/lang-markdown';
-import { python } from '@codemirror/lang-python';
-import { getChunks } from '@codemirror/merge';
+import type { Extension, EditorState } from '@codemirror/state';
 import { EditorView, ViewPlugin } from '@codemirror/view';
-import { showMinimap } from '@replit/codemirror-minimap';
+
 import type { CodeEditorFile } from '../types/types';
+
+type MergeChunk = { fromB: number; toB: number };
+export type GetMergeChunks = (state: EditorState) => { chunks?: readonly MergeChunk[] } | null;
+
+export type MergeCapability = {
+  createExtension: (original: string) => Extension;
+  getChunks: GetMergeChunks;
+};
+
+export type CapabilityRequest = {
+  isCurrent: () => boolean;
+};
+
+export const createCapabilityRequest = (sequence: { current: number }): CapabilityRequest => {
+  const request = ++sequence.current;
+  return {
+    isCurrent: () => request === sequence.current,
+  };
+};
+
+let mergeCapabilityPromise: Promise<MergeCapability> | null = null;
+let minimapModulePromise: Promise<typeof import('@replit/codemirror-minimap')> | null = null;
 
 // Lightweight lexer for `.env` files (including `.env.*` variants).
 const envLanguage = StreamLanguage.define({
@@ -27,7 +43,7 @@ const envLanguage = StreamLanguage.define({
   },
 });
 
-export const getLanguageExtensions = (filename: string) => {
+export const loadLanguageExtensions = async (filename: string): Promise<Extension[]> => {
   const lowerName = filename.toLowerCase();
   if (lowerName === '.env' || lowerName.startsWith('.env.')) {
     return [envLanguage];
@@ -39,21 +55,21 @@ export const getLanguageExtensions = (filename: string) => {
     case 'jsx':
     case 'ts':
     case 'tsx':
-      return [javascript({ jsx: true, typescript: ext.includes('ts') })];
+      return [(await import('@codemirror/lang-javascript')).javascript({ jsx: true, typescript: ext.includes('ts') })];
     case 'py':
-      return [python()];
+      return [(await import('@codemirror/lang-python')).python()];
     case 'html':
     case 'htm':
-      return [html()];
+      return [(await import('@codemirror/lang-html')).html()];
     case 'css':
     case 'scss':
     case 'less':
-      return [css()];
+      return [(await import('@codemirror/lang-css')).css()];
     case 'json':
-      return [json()];
+      return [(await import('@codemirror/lang-json')).json()];
     case 'md':
     case 'markdown':
-      return [markdown()];
+      return [(await import('@codemirror/lang-markdown')).markdown()];
     case 'env':
       return [envLanguage];
     default:
@@ -61,7 +77,21 @@ export const getLanguageExtensions = (filename: string) => {
   }
 };
 
-export const createMinimapExtension = ({
+export const loadMergeCapability = async (): Promise<MergeCapability> => {
+  mergeCapabilityPromise ??= import('@codemirror/merge').then(({ getChunks, unifiedMergeView }) => ({
+    getChunks,
+    createExtension: (original) => unifiedMergeView({
+      original,
+      mergeControls: false,
+      highlightChanges: true,
+      syntaxHighlightDeletions: false,
+      gutter: true,
+    }),
+  }));
+  return mergeCapabilityPromise;
+};
+
+export const loadMinimapExtension = async ({
   file,
   showDiff,
   minimapEnabled,
@@ -71,11 +101,13 @@ export const createMinimapExtension = ({
   showDiff: boolean;
   minimapEnabled: boolean;
   isDarkMode: boolean;
-}) => {
+}, getChunks: GetMergeChunks): Promise<Extension[]> => {
   if (!file.diffInfo || !showDiff || !minimapEnabled) {
     return [];
   }
 
+  minimapModulePromise ??= import('@replit/codemirror-minimap');
+  const { showMinimap } = await minimapModulePromise;
   const gutters: Record<number, string> = {};
 
   return [
@@ -112,16 +144,19 @@ export const createScrollToFirstChunkExtension = ({
 }: {
   file: CodeEditorFile;
   showDiff: boolean;
-}) => {
+}, getChunks: GetMergeChunks) => {
   if (!file.diffInfo || !showDiff) {
     return [];
   }
 
   return [
     ViewPlugin.fromClass(class {
+      private destroyed = false;
+
       constructor(view: EditorView) {
         // Wait for merge decorations so the first chunk location is stable.
         setTimeout(() => {
+          if (this.destroyed) return;
           const chunksData = getChunks(view.state);
           const firstChunk = chunksData?.chunks?.[0];
 
@@ -135,7 +170,9 @@ export const createScrollToFirstChunkExtension = ({
 
       update() {}
 
-      destroy() {}
+      destroy() {
+        this.destroyed = true;
+      }
     }),
   ];
 };

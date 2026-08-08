@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createProject } from '@/modules/projects/services/project-management.service.js';
-import { AppError } from '@/shared/utils.js';
+import { AppError, validateWorkspacePath } from '@/shared/utils.js';
 
 const projectRow = {
   project_id: 'project-1',
@@ -114,4 +114,29 @@ test('createProject returns archived reuse outcome when archived row is reused',
 
   assert.equal(result.outcome, 'reactivated_archived');
   assert.equal(result.project.isArchived, true);
+});
+
+test('createProject registers a /tmp path through the shared validator', async () => {
+  if (process.platform === 'win32') return;
+
+  const temporaryProjectPath = '/tmp/cloudcli-project-service-test';
+  let persistedPath = '';
+  const result = await createProject(
+    { projectPath: temporaryProjectPath },
+    {
+      validatePath: validateWorkspacePath,
+      ensureWorkspaceDirectory: async () => undefined,
+      persistProjectPath: (projectPath, customName) => {
+        persistedPath = projectPath;
+        return {
+          outcome: 'created',
+          project: { ...projectRow, project_path: projectPath, custom_project_name: customName },
+        };
+      },
+      getProjectByPath: () => null,
+    },
+  );
+
+  assert.equal(persistedPath, temporaryProjectPath);
+  assert.equal(result.project.fullPath, temporaryProjectPath);
 });

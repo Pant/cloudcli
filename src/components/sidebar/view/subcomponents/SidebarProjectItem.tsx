@@ -5,7 +5,7 @@ import type { TFunction } from 'i18next';
 import { Button } from '../../../../shared/view/ui';
 import { cn } from '../../../../lib/utils';
 import type { Project, ProjectSession, LLMProvider } from '../../../../types/app';
-import type { SessionActivityMap } from '../../../../hooks/useSessionProtection';
+import type { SessionActivityMap, SessionLifecycleMap } from '../../../../hooks/useSessionProtection';
 import type { MCPServerStatus, SessionWithProvider } from '../../types/types';
 import { getTaskIndicatorStatus } from '../../utils/utils';
 
@@ -46,7 +46,12 @@ type SidebarProjectItemProps = {
   ) => void;
   onLoadMoreSessions: (projectId: string) => void;
   activeSessions: SessionActivityMap;
+  sessionLifecycle: SessionLifecycleMap;
+  onStartSession: (sessionId: string) => Promise<void>;
   attentionSessionIds: ReadonlySet<string>;
+  expandedSessionIds: ReadonlySet<string>;
+  forcedExpandedSessionIds: ReadonlySet<string>;
+  onToggleSessionBranch: (sessionId: string) => void;
   onNewSession: (project: Project) => void;
   onEditingSessionNameChange: (value: string) => void;
   onStartEditingSession: (sessionId: string, initialName: string) => void;
@@ -89,7 +94,12 @@ export default function SidebarProjectItem({
   onDeleteSession,
   onLoadMoreSessions,
   activeSessions,
+  sessionLifecycle,
+  onStartSession,
   attentionSessionIds,
+  expandedSessionIds,
+  forcedExpandedSessionIds,
+  onToggleSessionBranch,
   onNewSession,
   onEditingSessionNameChange,
   onStartEditingSession,
@@ -426,7 +436,12 @@ export default function SidebarProjectItem({
         hasMoreSessions={Boolean(project.sessionMeta?.hasMore)}
         isLoadingMoreSessions={isLoadingMoreSessions}
         activeSessions={activeSessions}
+        sessionLifecycle={sessionLifecycle}
+        onStartSession={onStartSession}
         attentionSessionIds={attentionSessionIds}
+        expandedSessionIds={expandedSessionIds}
+        forcedExpandedSessionIds={forcedExpandedSessionIds}
+        onToggleSessionBranch={onToggleSessionBranch}
         currentTime={currentTime}
         editingSession={editingSession}
         editingSessionName={editingSessionName}

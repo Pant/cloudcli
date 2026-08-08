@@ -11,6 +11,7 @@ import type {
 
 type UseWorktreesControllerOptions = {
   selectedProject: Project | null;
+  repository: string;
   onProjectSelect?: (project: Project) => void;
   onProjectsRefresh?: () => void;
 };
@@ -36,6 +37,7 @@ function readEnvelopeError<TData>(payload: WorktreeApiEnvelope<TData>, fallback:
 
 export function useWorktreesController({
   selectedProject,
+  repository,
   onProjectSelect,
   onProjectsRefresh,
 }: UseWorktreesControllerOptions) {
@@ -52,9 +54,11 @@ export function useWorktreesController({
 
   // Detects stale responses after the user switches projects mid-request.
   const selectedProjectIdRef = useRef<string | null>(selectedProject?.projectId ?? null);
+  const scopeKeyRef = useRef(`${selectedProject?.projectId ?? ''}::${repository}`);
   useEffect(() => {
     selectedProjectIdRef.current = selectedProject?.projectId ?? null;
-  }, [selectedProject]);
+    scopeKeyRef.current = `${selectedProject?.projectId ?? ''}::${repository}`;
+  }, [repository, selectedProject]);
 
   const fetchWorktrees = useCallback(async () => {
     if (!selectedProject) {
@@ -65,11 +69,11 @@ export function useWorktreesController({
     setIsLoading(true);
     try {
       const response = await authenticatedFetch(
-        `/api/worktrees?project=${encodeURIComponent(projectId)}`,
+        `/api/worktrees?project=${encodeURIComponent(projectId)}&repository=${encodeURIComponent(repository)}`,
       );
       const payload = (await response.json()) as WorktreeApiEnvelope<WorktreeListData>;
 
-      if (selectedProjectIdRef.current !== projectId) {
+      if (scopeKeyRef.current !== `${projectId}::${repository}`) {
         return;
       }
 
@@ -92,7 +96,7 @@ export function useWorktreesController({
         setHasLoaded(true);
       }
     }
-  }, [selectedProject]);
+  }, [repository, selectedProject]);
 
   useEffect(() => {
     setWorktreeData(null);
@@ -117,6 +121,7 @@ export function useWorktreesController({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             project: projectId,
+            repository,
             branch: trimmedBranch,
             baseBranch,
           }),
@@ -148,7 +153,7 @@ export function useWorktreesController({
         setIsCreatingWorktree(false);
       }
     },
-    [fetchWorktrees, onProjectSelect, onProjectsRefresh, selectedProject],
+    [fetchWorktrees, onProjectSelect, onProjectsRefresh, repository, selectedProject],
   );
 
   const openWorktree = useCallback(
@@ -168,6 +173,7 @@ export function useWorktreesController({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             project: projectId,
+            repository,
             worktreePath,
           }),
         });
@@ -197,7 +203,7 @@ export function useWorktreesController({
         }
       }
     },
-    [onProjectSelect, onProjectsRefresh, selectedProject],
+    [onProjectSelect, onProjectsRefresh, repository, selectedProject],
   );
 
   const mergeWorktree = useCallback(
@@ -216,6 +222,7 @@ export function useWorktreesController({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             project: selectedProject.projectId,
+            repository,
             worktreePath,
             squash: options.squash,
             message: options.message,
@@ -242,7 +249,7 @@ export function useWorktreesController({
         }
       }
     },
-    [fetchWorktrees, onProjectsRefresh, selectedProject],
+    [fetchWorktrees, onProjectsRefresh, repository, selectedProject],
   );
 
   const removeWorktree = useCallback(
@@ -261,6 +268,7 @@ export function useWorktreesController({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             project: selectedProject.projectId,
+            repository,
             worktreePath,
             force: options.force,
             deleteBranch: options.deleteBranch,
@@ -286,7 +294,7 @@ export function useWorktreesController({
         }
       }
     },
-    [fetchWorktrees, onProjectsRefresh, selectedProject],
+    [fetchWorktrees, onProjectsRefresh, repository, selectedProject],
   );
 
   return {

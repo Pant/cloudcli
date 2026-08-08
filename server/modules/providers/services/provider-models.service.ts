@@ -35,6 +35,14 @@ type ProviderModelsOptions = {
   bypassCache?: boolean;
 };
 
+const readPositiveContextWindow = (value: unknown): number | undefined => (
+  typeof value === 'number'
+  && Number.isSafeInteger(value)
+  && value > 0
+    ? value
+    : undefined
+);
+
 type ProviderModelsCacheEntry = {
   updatedAt: number;
   expiresAt: number;
@@ -424,6 +432,31 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
   };
 
   /**
+   * Resolves OpenCode's discovered context-window metadata for an already
+   * resolved active/resumed model id. This provider-facing boundary keeps
+   * model discovery injectable and makes metadata failure non-fatal for every
+   * future token-usage caller.
+   */
+  const resolveOpenCodeContextWindow = async (
+    modelId: string | null | undefined,
+  ): Promise<number | undefined> => {
+    const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+    if (!normalizedModelId) {
+      return undefined;
+    }
+
+    try {
+      const models = resolveProvider('opencode').models;
+      const contextWindow = await models.getContextWindowForModel?.(normalizedModelId);
+      return readPositiveContextWindow(contextWindow);
+    } catch {
+      // Context metadata is optional; discovery failures must not affect the
+      // existing usage counters or any provider operation.
+      return undefined;
+    }
+  };
+
+  /**
    * Picks the model one run should use, for provider runtime adapters.
    *
    * Deliberately narrower than `resolveSessionModel`: the provider's own
@@ -459,6 +492,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     setSessionModel,
     resolveSessionModel,
     resolveResumeModel,
+    resolveOpenCodeContextWindow,
     clearCache,
   };
 };

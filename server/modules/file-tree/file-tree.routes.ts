@@ -2,11 +2,12 @@ import express from 'express';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import type {
+  FileTreeListOptions,
   FileTreeLogger,
   FileTreeServices,
   FileTreeUploadedFile,
 } from '@/shared/types.js';
-import { AppError } from '@/shared/utils.js';
+import { AppError, FILE_TREE_MAX_DEPTH } from '@/shared/utils.js';
 
 type FileTreeUploadLimits = {
   maximumFileSizeMegabytes: number;
@@ -35,6 +36,57 @@ function readRequiredString(value: unknown, fieldName: string, message?: string)
 
 function readOptionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function readOptionalBoolean(value: unknown, fieldName: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
+  throw new AppError(`${fieldName} must be "true" or "false"`, {
+    code: 'INVALID_FILE_TREE_REQUEST',
+    statusCode: 400,
+  });
+}
+
+function readFileTreeDepth(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    throw new AppError('depth must be a non-negative integer', {
+      code: 'INVALID_FILE_TREE_DEPTH',
+      statusCode: 400,
+    });
+  }
+
+  const parsedDepth = Number(value);
+  if (!Number.isSafeInteger(parsedDepth)) {
+    throw new AppError('depth must be a safe non-negative integer', {
+      code: 'INVALID_FILE_TREE_DEPTH',
+      statusCode: 400,
+    });
+  }
+  return Math.min(parsedDepth, FILE_TREE_MAX_DEPTH);
+}
+
+function readFileTreeOptions(request: Request): FileTreeListOptions {
+  const respectGitignore = readOptionalBoolean(request.query.respectGitignore, 'respectGitignore') ?? false;
+  const includeMetadata = readOptionalBoolean(request.query.includeMetadata, 'includeMetadata');
+  const targetPath = readOptionalString(request.query.targetPath);
+  const depth = readFileTreeDepth(request.query.depth);
+
+  return {
+    respectGitignore,
+    ...(targetPath !== null ? { targetPath } : {}),
+    ...(depth !== undefined ? { depth } : {}),
+    ...(includeMetadata !== undefined ? { includeMetadata } : {}),
+  };
 }
 
 function readProjectId(request: Request): string {
@@ -162,9 +214,7 @@ export function createFileTreeRouter(
   }, logger));
 
   router.get('/projects/:projectId/files', createRouteHandler(async (request, response) => {
-    response.json(await services.listProjectFiles(readProjectId(request), {
-      respectGitignore: request.query.respectGitignore === 'true',
-    }));
+    response.json(await services.listProjectFiles(readProjectId(request), readFileTreeOptions(request)));
   }, logger));
 
   router.post('/projects/:projectId/files/create', createRouteHandler(async (request, response) => {

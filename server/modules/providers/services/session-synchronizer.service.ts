@@ -62,13 +62,24 @@ export const sessionSynchronizerService = {
   async synchronizeProviderFile(
     provider: LLMProvider,
     filePath: string
-  ): Promise<{ provider: LLMProvider; indexed: boolean; sessionId: string | null }> {
+  ): Promise<{
+    provider: LLMProvider;
+    indexed: boolean;
+    sessionId: string | null;
+    sessionIds: string[];
+  }> {
     const resolvedProvider = providerRegistry.resolveProvider(provider);
-    const sessionId = await resolvedProvider.sessionSynchronizer.synchronizeFile(filePath);
+    const synchronized = await resolvedProvider.sessionSynchronizer.synchronizeFile(filePath);
+    const sessionIds = synchronized === null
+      ? []
+      : Array.isArray(synchronized)
+        ? Array.from(new Set(synchronized))
+        : [synchronized];
     return {
       provider,
-      indexed: Boolean(sessionId),
-      sessionId,
+      indexed: sessionIds.length > 0,
+      sessionId: sessionIds[0] ?? null,
+      sessionIds,
     };
   },
 };

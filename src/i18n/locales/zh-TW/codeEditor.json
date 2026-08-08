@@ -17,6 +17,8 @@
     "download": "下載檔案",
     "save": "儲存",
     "saving": "儲存中...",
+    "reload": "從磁碟重新載入",
+    "reloading": "正在重新載入...",
     "saved": "已儲存！",
     "exitFullscreen": "離開全螢幕",
     "fullscreen": "全螢幕",

@@ -1,23 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import ProviderLoginModal from '../../provider-auth/view/ProviderLoginModal';
 import { Button } from '../../../shared/view/ui';
 import SettingsSidebar from '../view/SettingsSidebar';
-import AgentsSettingsTab from '../view/tabs/agents-settings/AgentsSettingsTab';
-import AppearanceSettingsTab from '../view/tabs/AppearanceSettingsTab';
-import CredentialsSettingsTab from '../view/tabs/api-settings/CredentialsSettingsTab';
-import VoiceSettingsTab from '../view/tabs/VoiceSettingsTab';
-import GitSettingsTab from '../view/tabs/git-settings/GitSettingsTab';
-import BrowserUseSettingsTab from '../view/tabs/browser-use-settings/BrowserUseSettingsTab';
-import NotificationsSettingsTab from '../view/tabs/NotificationsSettingsTab';
-import TasksSettingsTab from '../view/tabs/tasks-settings/TasksSettingsTab';
-import PluginSettingsTab from '../../plugins/view/PluginSettingsTab';
-import AboutTab from '../view/tabs/AboutTab';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { useWebPush } from '../../../hooks/useWebPush';
 import type { SettingsProps } from '../types/types';
+
+const AgentsSettingsTab = lazy(() => import('../view/tabs/agents-settings/AgentsSettingsTab'));
+const AppearanceSettingsTab = lazy(() => import('../view/tabs/AppearanceSettingsTab'));
+const CredentialsSettingsTab = lazy(() => import('../view/tabs/api-settings/CredentialsSettingsTab'));
+const VoiceSettingsTab = lazy(() => import('../view/tabs/VoiceSettingsTab'));
+const GitSettingsTab = lazy(() => import('../view/tabs/git-settings/GitSettingsTab'));
+const BrowserUseSettingsTab = lazy(() => import('../view/tabs/browser-use-settings/BrowserUseSettingsTab'));
+const NotificationsSettingsTab = lazy(() => import('../view/tabs/NotificationsSettingsTab'));
+const TasksSettingsTab = lazy(() => import('../view/tabs/tasks-settings/TasksSettingsTab'));
+const PluginSettingsTab = lazy(() => import('../../plugins/view/PluginSettingsTab'));
+const AboutTab = lazy(() => import('../view/tabs/AboutTab'));
+const CacheSettingsTab = lazy(() => import('../view/tabs/CacheSettingsTab'));
 
 type DesktopNotificationsState = {
   enabled: boolean;
@@ -27,7 +29,7 @@ type DesktopNotificationsState = {
   lastError?: string | null;
 };
 
-function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: SettingsProps) {
+function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents' }: SettingsProps) {
   const { t } = useTranslation('settings');
   const desktopNotificationsBridge = useMemo(() => (
     typeof window === 'undefined'
@@ -160,6 +162,7 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
 
           {/* Content */}
           <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <Suspense fallback={<div className="flex min-h-40 items-center justify-center" role="status"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" /></div>}>
             <div key={activeTab} className="settings-content-enter min-w-0 space-y-6 overflow-x-hidden p-4 pb-safe-area-inset-bottom md:space-y-8 md:p-6">
               {activeTab === 'appearance' && (
                 <AppearanceSettingsTab
@@ -215,8 +218,11 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
 
               {activeTab === 'plugins' && <PluginSettingsTab />}
 
+              {activeTab === 'cache' && <CacheSettingsTab />}
+
               {activeTab === 'about' && <AboutTab />}
             </div>
+            </Suspense>
           </main>
         </div>
       </div>
@@ -231,6 +237,16 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
       />
 
     </div>
+  );
+}
+
+function Settings(props: SettingsProps) {
+  if (!props.isOpen) return null;
+
+  return (
+    <Suspense fallback={<div className="modal-backdrop fixed inset-0 z-[9999] flex items-center justify-center bg-background/80" role="status"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" /></div>}>
+      <SettingsContent {...props} />
+    </Suspense>
   );
 }
 

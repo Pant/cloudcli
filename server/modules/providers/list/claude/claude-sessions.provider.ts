@@ -36,6 +36,66 @@ type ClaudeHistoryMessagesResult =
     limit?: number | null;
   };
 
+const readUsageNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const extractClaudeTokenUsage = (messages: AnyRecord[]): AnyRecord | undefined => {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+  let latestInputTokens = 0;
+  let latestOutputTokens = 0;
+  let foundUsage = false;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type !== 'assistant' || !message.message?.usage) {
+      continue;
+    }
+
+    const usage = message.message.usage as AnyRecord;
+    const directInputTokens = readUsageNumber(usage.input_tokens ?? usage.inputTokens);
+    const messageCacheReadTokens = readUsageNumber(
+      usage.cache_read_input_tokens ?? usage.cacheReadInputTokens ?? usage.cacheReadTokens,
+    );
+    const messageCacheCreationTokens = readUsageNumber(
+      usage.cache_creation_input_tokens
+        ?? usage.cacheCreationInputTokens
+        ?? usage.cacheCreationTokens,
+    );
+    const messageOutputTokens = readUsageNumber(usage.output_tokens ?? usage.outputTokens);
+    inputTokens += directInputTokens + messageCacheReadTokens + messageCacheCreationTokens;
+    outputTokens += messageOutputTokens;
+    cacheReadTokens += messageCacheReadTokens;
+    cacheCreationTokens += messageCacheCreationTokens;
+
+    if (!foundUsage) {
+      latestInputTokens = directInputTokens + messageCacheReadTokens + messageCacheCreationTokens;
+      latestOutputTokens = messageOutputTokens;
+      foundUsage = true;
+    }
+  }
+
+  if (!foundUsage) {
+    return undefined;
+  }
+
+  return {
+    used: inputTokens + outputTokens,
+    total: Number.parseInt(process.env.CONTEXT_WINDOW ?? '', 10) || 160_000,
+    windowTokens: latestInputTokens + latestOutputTokens,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    cacheTokens: cacheReadTokens + cacheCreationTokens,
+    breakdown: { input: inputTokens, output: outputTokens },
+  };
+};
+
 async function parseAgentTools(filePath: string): Promise<AnyRecord[]> {
   const tools: AnyRecord[] = [];
 
@@ -623,6 +683,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
     }
 
     const rawMessages = Array.isArray(result) ? result : (result.messages || []);
+    const tokenUsage = extractClaudeTokenUsage(rawMessages);
 
     const toolResultMap = new Map<string, ClaudeToolResult>();
     for (const raw of rawMessages) {
@@ -679,6 +740,7 @@ export class ClaudeSessionsProvider implements IProviderSessions {
       hasMore,
       offset: normalizedOffset,
       limit: normalizedLimit,
+      tokenUsage,
     };
   }
 }

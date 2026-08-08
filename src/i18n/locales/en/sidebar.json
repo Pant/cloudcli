@@ -32,7 +32,14 @@
     "loadingSessions": "Loading sessions...",
     "unnamed": "Unnamed",
     "loading": "Loading...",
-    "showMore": "Show more sessions"
+    "showMore": "Show more sessions",
+    "childCount_one": "{{count}} child",
+    "childCount_other": "{{count}} children",
+    "descendantCount": "{{count}} descendants",
+    "runningDescendantCount_one": "{{count}} descendant processing",
+    "runningDescendantCount_other": "{{count}} descendants processing",
+    "expandChildren": "Expand children of {{name}}",
+    "collapseChildren": "Collapse children of {{name}}"
   },
   "tooltips": {
     "viewEnvironments": "View Environments",
@@ -45,12 +52,14 @@
     "removeFromFavorites": "Remove from favorites",
     "editSessionName": "Manually edit session name",
     "deleteSession": "Delete this session permanently",
-    "activeSessionIndicator": "Recently active session (last 10 minutes)",
     "save": "Save",
     "cancel": "Cancel",
     "clearSearch": "Clear search",
     "openCommandPalette": "Open command palette",
-    "attentionRequiredIndicator": "Session needs attention"
+    "attentionRequiredIndicator": "Session needs attention",
+    "activeSessionIndicator": "Recently active session (last 10 minutes)",
+    "processingSessionIndicator": "Processing session",
+    "descendantAttentionIndicator": "A child session needs attention"
   },
   "navigation": {
     "chat": "Chat",
@@ -82,6 +91,19 @@
     "error": "Error",
     "aborted": "Aborted",
     "unknown": "Unknown"
+  },
+  "lifecycle": {
+    "running": "Running",
+    "recovering": "Recovering",
+    "stalled": "Stalled",
+    "exited": "Not running",
+    "failed": "Failed",
+    "manually_stopped": "Manually stopped",
+    "recovery_exhausted": "Recovery failed",
+    "start": "Start session",
+    "restart": "Restart session",
+    "starting": "Starting…",
+    "startError": "Could not start session. Try again."
   },
   "time": {
     "justNow": "Just now",

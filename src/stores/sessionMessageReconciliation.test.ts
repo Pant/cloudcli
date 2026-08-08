@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { NormalizedMessage } from './useSessionStore';
+import type { NormalizedMessage } from './normalizedMessage';
 import { removeOptimisticUserEchoes } from './sessionMessageReconciliation';
 
 const createUserMessage = (

@@ -85,7 +85,7 @@ export function createCliApplication(): CliApplication {
     startServer: async () => {
       // The server executable is an entrypoint rather than a feature module,
       // so it has no barrel contract to import through.
-      // eslint-disable-next-line boundaries/no-unknown
+      // eslint-disable-next-line boundaries/no-unknown-dependencies
       await import('../../index.js');
     },
     startBrowserUseMcp: async () => {

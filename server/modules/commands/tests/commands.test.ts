@@ -117,3 +117,43 @@ test('cost and status commands report the same resolved model as /models', async
   assert.equal((cost.data as { model: string }).model, 'haiku');
   assert.equal((status.data as { model: string }).model, 'haiku');
 });
+
+test('/cost preserves cumulative usage while carrying current context-window usage', async () => {
+  const result = await executeCommand('/cost', {
+    provider: 'codex',
+    model: 'gpt-5-codex',
+    tokenUsage: {
+      used: 12_345,
+      inputTokens: 9_000,
+      outputTokens: 3_345,
+      windowTokens: 2_500,
+      total: 10_000,
+    },
+  });
+
+  const data = result.data as {
+    provider: string;
+    model: string;
+    tokenUsage: { used: number; windowTokens: number; total: number };
+    tokenBreakdown: { input: number; output: number };
+  };
+
+  assert.equal(data.provider, 'codex');
+  assert.equal(data.model, 'gpt-5-codex');
+  assert.deepEqual(data.tokenUsage, { used: 12_345, total: 10_000, windowTokens: 2_500 });
+  assert.deepEqual(data.tokenBreakdown, { input: 9_000, output: 3_345 });
+});
+
+test('/cost omits unavailable or invalid current context-window usage', async () => {
+  for (const windowTokens of [undefined, null, -1, 'not-a-number']) {
+    const result = await executeCommand('/cost', {
+      provider: 'claude',
+      tokenUsage: { used: 9_000, windowTokens, total: 10_000 },
+    });
+    const tokenUsage = (result.data as { tokenUsage: Record<string, unknown> }).tokenUsage;
+
+    assert.equal(Object.hasOwn(tokenUsage, 'windowTokens'), false);
+    assert.equal(tokenUsage.used, 9_000);
+    assert.equal(tokenUsage.total, 10_000);
+  }
+});

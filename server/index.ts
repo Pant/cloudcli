@@ -15,7 +15,7 @@ import {
     initializeSessionsWatcher,
     providerRuntimeService,
 } from '@/modules/providers/index.js';
-import { createWebSocketServer } from '@/modules/websocket/index.js';
+import { createWebSocketServer, reconcileInterruptedOpenCodeRuns } from '@/modules/websocket/index.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
 
@@ -50,6 +50,7 @@ import {
 import { assetsRoutes } from './modules/assets/index.js';
 import { fileTreeRoutes } from './modules/file-tree/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
+import { appointmentScheduler, appointmentsRouter } from './modules/appointments/index.js';
 import { initializeDatabase, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './modules/notifications/index.js';
 import { IS_PLATFORM } from './constants/config.js';
@@ -165,6 +166,7 @@ app.use('/api/git', authenticateToken, gitRoutes);
 
 // Git worktree management (protected)
 app.use('/api/worktrees', authenticateToken, worktreesRoutes);
+app.use('/api/appointments', authenticateToken, appointmentsRouter);
 
 // TaskMaster API Routes (protected)
 app.use('/api/taskmaster', authenticateToken, taskmasterRoutes);
@@ -239,7 +241,7 @@ app.use(express.static(path.join(APP_ROOT, 'dist'), {
 // images and general files in the global ~/.cloudcli/assets folder.
 
 // Serve React app for all other routes (excluding static files)
-app.get('*', (req, res) => {
+app.get('/{*routePath}', (req, res) => {
     // Skip requests for static assets (files with extensions)
     if (path.extname(req.path)) {
         return res.status(404).send('Not found');
@@ -382,6 +384,8 @@ async function startServer() {
 
             // Start watching the projects folder for changes
             await initializeSessionsWatcher();
+            reconcileInterruptedOpenCodeRuns();
+            appointmentScheduler.start();
 
             // Start server-side plugin processes for enabled plugins
             startEnabledPluginServers().catch(err => {
@@ -392,6 +396,7 @@ async function startServer() {
         await closeSessionsWatcher();
         // Clean up plugin processes on shutdown
         const shutdownRuntimeServices = async () => {
+            appointmentScheduler.stop();
             try {
                 await browserUseService.stopAllSessions();
             } catch (err) {

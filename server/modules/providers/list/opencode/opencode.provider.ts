@@ -25,7 +25,7 @@ export class OpenCodeProvider extends AbstractProvider {
   readonly agents: IProviderAgents;
   readonly auth: IProviderAuth = new OpenCodeProviderAuth();
   readonly skills: IProviderSkills = new OpenCodeSkillsProvider();
-  readonly sessions: IProviderSessions = new OpenCodeSessionsProvider();
+  readonly sessions: IProviderSessions = new OpenCodeSessionsProvider(this.models);
   readonly sessionSynchronizer: IProviderSessionSynchronizer = new OpenCodeSessionSynchronizer();
 
   constructor() {

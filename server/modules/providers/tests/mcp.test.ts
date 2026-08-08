@@ -213,16 +213,50 @@ test('providerMcpService handles opencode MCP config and capability validation',
     assert.equal(userStdio.type, 'local');
     assert.deepEqual(userStdio.command, ['node', 'server.js']);
     assert.deepEqual(userStdio.environment, { API_KEY: 'x' });
+    assert.equal(userStdio.enabled, true);
 
     const projectConfig = await readJson(path.join(workspacePath, 'opencode.json'));
     const projectServers = projectConfig.mcp as Record<string, unknown>;
     const projectHttp = projectServers['opencode-project-http'] as Record<string, unknown>;
     assert.equal(projectHttp.type, 'remote');
     assert.equal(projectHttp.url, 'https://opencode.example.com/mcp');
+    assert.equal(projectHttp.enabled, true);
+
+    await providerMcpService.upsertProviderMcpServer('opencode', {
+      name: 'opencode-project-http',
+      scope: 'project',
+      transport: 'http',
+      url: 'https://opencode.example.com/disabled',
+      enabled: false,
+      workspacePath,
+    });
+    await providerMcpService.upsertProviderMcpServer('opencode', {
+      name: 'opencode-project-http',
+      scope: 'project',
+      transport: 'http',
+      url: 'https://opencode.example.com/preserved',
+      workspacePath,
+    });
+
+    const disabledConfig = await readJson(path.join(workspacePath, 'opencode.json'));
+    const disabledServer = (disabledConfig.mcp as Record<string, unknown>)['opencode-project-http'] as Record<string, unknown>;
+    assert.equal(disabledServer.enabled, false);
 
     const grouped = await providerMcpService.listProviderMcpServers('opencode', { workspacePath });
-    assert.ok(grouped.user.some((server) => server.name === 'opencode-user-stdio' && server.transport === 'stdio'));
-    assert.ok(grouped.project.some((server) => server.name === 'opencode-project-http' && server.transport === 'http'));
+    assert.ok(grouped.user.some((server) => server.name === 'opencode-user-stdio' && server.transport === 'stdio' && server.enabled === true));
+    assert.ok(grouped.project.some((server) => server.name === 'opencode-project-http' && server.transport === 'http' && server.enabled === false));
+
+    await providerMcpService.upsertProviderMcpServer('opencode', {
+      name: 'opencode-project-http',
+      scope: 'project',
+      transport: 'http',
+      url: 'https://opencode.example.com/enabled',
+      enabled: true,
+      workspacePath,
+    });
+    const reenabledConfig = await readJson(path.join(workspacePath, 'opencode.json'));
+    const reenabledServer = (reenabledConfig.mcp as Record<string, unknown>)['opencode-project-http'] as Record<string, unknown>;
+    assert.equal(reenabledServer.enabled, true);
 
     await assert.rejects(
       providerMcpService.upsertProviderMcpServer('opencode', {
@@ -346,4 +380,3 @@ test('providerMcpService global adder writes to all providers and rejects unsupp
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
-

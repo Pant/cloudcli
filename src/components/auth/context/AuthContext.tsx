@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
 import { IS_PLATFORM } from '../../../constants/config';
 import {
   api,
@@ -20,7 +21,7 @@ import type {
 } from '../types';
 import { parseJsonSafely, resolveApiErrorMessage } from '../utils';
 
-const AuthContext = createContext<AuthContextValue | null>(null);
+import { AuthContext } from './authContextContract';
 
 const readStoredToken = (): string | null => localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
 
@@ -31,15 +32,6 @@ const persistToken = (token: string) => {
 const clearStoredToken = () => {
   localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
 };
-
-export function useAuth(): AuthContextValue {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-
-  return context;
-}
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<AuthUser | null>(null);

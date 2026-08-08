@@ -7,6 +7,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { createGitRouter } from '@/modules/git/git.routes.js';
+import { GitRepositoryService } from '@/modules/git/git-repository.service.js';
 
 test('git init does not run when repository validation fails for an execution error', async () => {
   const commands: string[][] = [];
@@ -27,6 +28,7 @@ test('git init does not run when repository validation fails for an execution er
     resolveProjectPathById: () => '/workspace/repo',
     queryClaude: unexpectedProvider,
     queryCursor: unexpectedProvider,
+    repositoryService: { resolve: async () => '/workspace/repo' } as unknown as GitRepositoryService,
   });
   const app = express();
   app.use(express.json());

@@ -1,6 +1,8 @@
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+import { getOpenCodeRuntimeDiagnostic } from '@/modules/providers/list/opencode/opencode-runtime.provider.js';
+import { listOpenCodeChildActivitySnapshots } from '@/modules/providers/list/opencode/opencode-activity-inspector.provider.js';
 import type { IProvider } from '@/shared/interfaces.js';
 import type {
   AnyRecord,
@@ -8,6 +10,7 @@ import type {
   ProviderPermissionDecision,
   ProviderRunFunction,
   ProviderRuntimeContext,
+  ProviderRuntimeResult,
   ProviderRuntimeWriter,
 } from '@/shared/types.js';
 
@@ -20,6 +23,9 @@ type ProviderRuntimeServiceDependencies = {
     sessionId: string | undefined,
     requestedModel?: string | null,
   ): Promise<string | undefined>;
+  resolveOpenCodeContextWindow(
+    modelId: string | null | undefined,
+  ): Promise<number | undefined>;
   getProviderModels: typeof providerModelsService.getProviderModels;
 };
 
@@ -29,6 +35,8 @@ const defaultDependencies: ProviderRuntimeServiceDependencies = {
   resolveProviderSessionId: (sessionId) => sessionsService.resolveProviderSessionId(sessionId),
   resolveResumeModel: (provider, sessionId, requestedModel) =>
     providerModelsService.resolveResumeModel(provider, sessionId, requestedModel),
+  resolveOpenCodeContextWindow: (modelId) =>
+    providerModelsService.resolveOpenCodeContextWindow(modelId),
   getProviderModels: (provider, options) => providerModelsService.getProviderModels(provider, options),
 };
 
@@ -50,6 +58,9 @@ export function createProviderRuntimeService(
     resolveProviderSessionId: dependencies.resolveProviderSessionId,
     resolveResumeModel: (sessionId, requestedModel) =>
       dependencies.resolveResumeModel(provider.id, sessionId, requestedModel),
+    resolveContextWindow: (modelId) => provider.id === 'opencode'
+      ? dependencies.resolveOpenCodeContextWindow(modelId)
+      : Promise.resolve(undefined),
     getProviderModels: async () =>
       (await dependencies.getProviderModels(provider.id)).models,
     normalizeMessage: (raw, sessionId) => provider.sessions.normalizeMessage(raw, sessionId),
@@ -68,7 +79,7 @@ export function createProviderRuntimeService(
     command: string,
     options: AnyRecord,
     writer: ProviderRuntimeWriter,
-  ): Promise<unknown> => {
+  ): Promise<ProviderRuntimeResult | void | unknown> => {
     const provider = dependencies.resolveProvider(providerName);
     return provider.runtime.run(command, options, writer, createRuntimeContext(provider));
   };
@@ -102,6 +113,16 @@ export function createProviderRuntimeService(
       return dependencies.listProviders().flatMap(
         (provider) => provider.runtime.permissions?.listPending(sessionId) ?? [],
       );
+    },
+
+    /** WebSocket recovery consumes provider-neutral OpenCode health through the Providers barrel. */
+    getHealth(providerName: LLMProvider, sessionId: string) {
+      return providerName === 'opencode' ? getOpenCodeRuntimeDiagnostic(sessionId) : null;
+    },
+
+    /** WebSocket recovery consumes native child evidence without importing provider internals. */
+    listChildActivity(providerName: LLMProvider) {
+      return providerName === 'opencode' ? listOpenCodeChildActivitySnapshots() : [];
     },
   };
 }

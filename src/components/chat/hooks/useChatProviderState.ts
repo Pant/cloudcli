@@ -15,6 +15,10 @@ import {
   FALLBACK_PROVIDER_EFFORT_VALUES,
   toProviderEffortOptions,
 } from '../constants/providerEffort';
+import {
+  loadProviderModelCatalogEntries,
+  type ProviderModelCatalogEntry,
+} from '../utils/providerModelCatalog';
 
 const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
   claude: 'default',
@@ -24,12 +28,43 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
 };
 
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
+const PROVIDER_MODEL_CATALOG_STORAGE_KEY = 'provider-model-catalog';
 
 const readStoredProvider = (): LLMProvider => {
   const storedProvider = localStorage.getItem('selected-provider');
   return PROVIDERS.includes(storedProvider as LLMProvider)
     ? storedProvider as LLMProvider
     : 'claude';
+};
+
+const readSessionProvider = (session: ProjectSession | null): LLMProvider | null => {
+  const sessionProvider = session?.__provider ?? session?.provider;
+  return PROVIDERS.includes(sessionProvider as LLMProvider)
+    ? sessionProvider as LLMProvider
+    : null;
+};
+
+const readSessionModel = (session: ProjectSession | null): string | null => (
+  typeof session?.model === 'string' && session.model.trim() ? session.model.trim() : null
+);
+
+const readStoredProviderModelCatalog = (): Partial<Record<LLMProvider, ProviderModelsDefinition>> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PROVIDER_MODEL_CATALOG_STORAGE_KEY) || '{}') as Record<string, unknown>;
+    const catalog: Partial<Record<LLMProvider, ProviderModelsDefinition>> = {};
+
+    for (const targetProvider of PROVIDERS) {
+      const definition = parsed[targetProvider] as Partial<ProviderModelsDefinition> | undefined;
+      if (typeof definition?.DEFAULT !== 'string' || !Array.isArray(definition.OPTIONS)) {
+        continue;
+      }
+      catalog[targetProvider] = definition as ProviderModelsDefinition;
+    }
+
+    return catalog;
+  } catch {
+    return {};
+  }
 };
 
 /**
@@ -95,7 +130,15 @@ type SessionModelApiResponse = {
 export function useChatProviderState({ selectedSession, selectedProject: _selectedProject }: UseChatProviderStateArgs) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
-  const [provider, setProvider] = useState<LLMProvider>(readStoredProvider);
+  const [storedProvider, setStoredProvider] = useState<LLMProvider>(readStoredProvider);
+  // Session metadata is available before effects run. Let it own the visible
+  // provider immediately so an OpenCode session never paints Claude controls
+  // for one frame while the local preference catches up.
+  const sessionProvider = readSessionProvider(selectedSession);
+  const provider = sessionProvider ?? storedProvider;
+  const setProvider = useCallback((nextProvider: LLMProvider) => {
+    setStoredProvider(nextProvider);
+  }, []);
   const [cursorModel, setCursorModel] = useState<string>(() => {
     return localStorage.getItem('cursor-model') || FALLBACK_DEFAULT_MODEL.cursor;
   });
@@ -128,7 +171,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
   const [providerModelCatalog, setProviderModelCatalog] = useState<
     Partial<Record<LLMProvider, ProviderModelsDefinition>>
-  >({});
+  >(readStoredProviderModelCatalog);
   const [providerModelCacheCatalog, setProviderModelCacheCatalog] = useState<
     Partial<Record<LLMProvider, ProviderModelsCacheInfo>>
   >({});
@@ -181,43 +224,55 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     }
 
     try {
-      const results = await Promise.all(
-        PROVIDERS.map(async (p) => {
-          const params = new URLSearchParams();
-          if (options.bypassCache) {
-            params.set('bypassCache', 'true');
-          }
+      const providersByPriority = [
+        provider,
+        ...PROVIDERS.filter((candidate) => candidate !== provider),
+      ];
+      await loadProviderModelCatalogEntries(
+        providersByPriority,
+        async (p): Promise<ProviderModelCatalogEntry | null> => {
+          try {
+            const params = new URLSearchParams();
+            if (options.bypassCache) {
+              params.set('bypassCache', 'true');
+            }
 
-          const queryString = params.toString();
-          const response = await authenticatedFetch(`/api/providers/${p}/models${queryString ? `?${queryString}` : ''}`);
-          const body = (await response.json()) as ProviderModelsApiResponse;
-          if (!body.success || !body.data?.models || !body.data?.cache) {
+            const queryString = params.toString();
+            const response = await authenticatedFetch(`/api/providers/${p}/models${queryString ? `?${queryString}` : ''}`);
+            const body = (await response.json()) as ProviderModelsApiResponse;
+            if (!body.success || !body.data?.models || !body.data?.cache) {
+              return null;
+            }
+
+            return {
+              models: body.data.models,
+              cache: body.data.cache,
+            };
+          } catch (error) {
+            console.error(`Error loading ${p} models:`, error);
             return null;
           }
+        },
+        (p, entry) => {
+          if (providerModelsRequestIdRef.current !== requestId) {
+            return;
+          }
 
-          return body.data;
-        }),
+          setProviderModelCatalog((previousCatalog) => {
+            const mergedCatalog = { ...previousCatalog, [p]: entry.models };
+            try {
+              localStorage.setItem(PROVIDER_MODEL_CATALOG_STORAGE_KEY, JSON.stringify(mergedCatalog));
+            } catch (error) {
+              console.error('Error caching provider models:', error);
+            }
+            return mergedCatalog;
+          });
+          setProviderModelCacheCatalog((previousCatalog) => ({
+            ...previousCatalog,
+            [p]: entry.cache,
+          }));
+        },
       );
-
-      if (providerModelsRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      const nextCatalog: Partial<Record<LLMProvider, ProviderModelsDefinition>> = {};
-      const nextCacheCatalog: Partial<Record<LLMProvider, ProviderModelsCacheInfo>> = {};
-
-      PROVIDERS.forEach((p, i) => {
-        const entry = results[i];
-        if (!entry) {
-          return;
-        }
-
-        nextCatalog[p] = entry.models;
-        nextCacheCatalog[p] = entry.cache;
-      });
-
-      setProviderModelCatalog(nextCatalog);
-      setProviderModelCacheCatalog(nextCacheCatalog);
     } catch (error) {
       console.error('Error loading provider models:', error);
     } finally {
@@ -226,7 +281,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         setProviderModelsRefreshing(false);
       }
     }
-  }, []);
+  }, [provider]);
 
   useEffect(() => {
     // Refresh the dynamic provider catalogs as soon as the chat page mounts.
@@ -461,13 +516,13 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   }, [selectedSession?.id, provider, getDefaultPermissionModeForProvider, getPermissionModesForProvider]);
 
   useEffect(() => {
-    if (!selectedSession?.__provider || selectedSession.__provider === provider) {
+    if (!sessionProvider) {
       return;
     }
 
-    setProvider(selectedSession.__provider);
-    localStorage.setItem('selected-provider', selectedSession.__provider);
-  }, [provider, selectedSession]);
+    setStoredProvider(sessionProvider);
+    localStorage.setItem('selected-provider', sessionProvider);
+  }, [sessionProvider]);
 
   // Permission prompts belong to a session, not to the transient provider
   // selection that is synchronized after navigation.
@@ -517,17 +572,44 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
    * session is open, or when the backend has nothing recorded for it and only
    * offered the catalog default — the per-provider selection covers that case.
    */
-  const [sessionModel, setSessionModel] = useState<string | null>(null);
+  const selectedSessionModel = readSessionModel(selectedSession);
+  const sessionModelKey = selectedSession?.id ? `${provider}:${selectedSession.id}` : '';
+  const [resolvedSessionModel, setResolvedSessionModel] = useState<{
+    key: string;
+    model: string | null;
+    resolved: boolean;
+  }>(() => ({
+    key: sessionModelKey,
+    model: selectedSessionModel,
+    resolved: Boolean(selectedSessionModel) || !selectedSession?.id,
+  }));
+
+  // Ignore a model left in state by the previously viewed session. A model
+  // embedded in the session summary is authoritative and available on the
+  // navigation render; otherwise the keyed API result takes over when ready.
+  const sessionModel = resolvedSessionModel.key === sessionModelKey
+    ? resolvedSessionModel.model
+    : selectedSessionModel;
+  const sessionModelLoading = Boolean(
+    selectedSession?.id
+    && !selectedSessionModel
+    && (resolvedSessionModel.key !== sessionModelKey || !resolvedSessionModel.resolved),
+  );
 
   useEffect(() => {
     const sessionId = selectedSession?.id;
     if (!sessionId) {
-      setSessionModel(null);
+      setResolvedSessionModel({ key: '', model: null, resolved: true });
+      return;
+    }
+
+    if (selectedSessionModel) {
+      setResolvedSessionModel({ key: sessionModelKey, model: selectedSessionModel, resolved: true });
       return;
     }
 
     let cancelled = false;
-    const targetProvider = selectedSession?.__provider ?? provider;
+    const targetProvider = provider;
 
     const loadSessionModel = async () => {
       try {
@@ -540,13 +622,15 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         }
 
         const resolvedModel = body.data?.model?.trim();
-        setSessionModel(
-          body.success && resolvedModel && body.data?.source !== 'default' ? resolvedModel : null,
-        );
+        setResolvedSessionModel({
+          key: sessionModelKey,
+          model: body.success && resolvedModel && body.data?.source !== 'default' ? resolvedModel : null,
+          resolved: true,
+        });
       } catch (error) {
         if (!cancelled) {
           console.error('Error loading the session model:', error);
-          setSessionModel(null);
+          setResolvedSessionModel({ key: sessionModelKey, model: null, resolved: true });
         }
       }
     };
@@ -555,7 +639,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     return () => {
       cancelled = true;
     };
-  }, [provider, selectedSession?.__provider, selectedSession?.id]);
+  }, [provider, selectedSession?.id, selectedSessionModel, sessionModelKey]);
 
   /**
    * Applies a model choice.
@@ -590,7 +674,11 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     }
 
     const storedModel = body.data?.model?.trim() || model;
-    setSessionModel(storedModel);
+    setResolvedSessionModel({
+      key: `${targetProvider}:${normalizedSessionId}`,
+      model: storedModel,
+      resolved: true,
+    });
     return { scope: 'session' as const, model: storedModel };
   }, [setStoredProviderModel]);
 
@@ -638,6 +726,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     providerModelCacheCatalog,
     providerModelsLoading,
     providerModelsRefreshing,
+    sessionModelLoading,
     hardRefreshProviderModels: () => loadProviderModels({ bypassCache: true }),
     selectProviderModel,
     setStoredProviderEffort,

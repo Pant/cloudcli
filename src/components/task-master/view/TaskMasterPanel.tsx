@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import PRDEditor from '../../prd-editor';
-import { useTaskMaster } from '../context/TaskMasterContext';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+
+import { useTaskMaster } from '../context/taskMasterContextContract';
 import { useProjectPrdFiles } from '../hooks/useProjectPrdFiles';
 import type { PrdFile, TaskMasterTask, TaskSelection } from '../types';
+
 import TaskBoard from './TaskBoard';
 import TaskDetailModal from './TaskDetailModal';
 
@@ -11,6 +12,7 @@ type TaskMasterPanelProps = {
 };
 
 const PRD_SAVE_MESSAGE = 'PRD saved successfully!';
+const PRDEditor = lazy(() => import('../../prd-editor'));
 
 export default function TaskMasterPanel({ isVisible }: TaskMasterPanelProps) {
   const { tasks, currentProject, refreshTasks } = useTaskMaster();
@@ -113,7 +115,8 @@ export default function TaskMasterPanel({ isVisible }: TaskMasterPanelProps) {
       />
 
       {isPrdEditorOpen && (
-        <PRDEditor
+        <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="status"><div className="h-8 w-8 animate-spin rounded-full border-2 border-white/40 border-t-white" /></div>}>
+          <PRDEditor
           project={currentProject}
           projectPath={currentProject?.fullPath || currentProject?.path}
           onClose={() => {
@@ -132,7 +135,8 @@ export default function TaskMasterPanel({ isVisible }: TaskMasterPanelProps) {
             await refreshPrdData(true);
             await refreshTasks();
           }}
-        />
+          />
+        </Suspense>
       )}
 
       {prdNotification && (

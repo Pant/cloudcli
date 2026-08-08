@@ -3,6 +3,8 @@
  * Defines display behavior for all tool types 
  */
 
+import { normalizeSearchToolResult } from '../searchResultNormalizer';
+
 export interface ToolDisplayConfig {
   input: {
     type: 'one-line' | 'collapsible' | 'plan' | 'hidden';
@@ -40,6 +42,20 @@ export interface ToolDisplayConfig {
     getContentProps?: (result: any) => any;
   };
 }
+
+const searchResultConfig: NonNullable<ToolDisplayConfig['result']> = {
+  type: 'collapsible',
+  defaultOpen: false,
+  title: (result) => {
+    const { count } = normalizeSearchToolResult(result);
+    return `Found ${count} ${count === 1 ? 'file' : 'files'}`;
+  },
+  contentType: 'file-list',
+  getContentProps: (result) => {
+    const { files } = normalizeSearchToolResult(result);
+    return { files };
+  },
+};
 
 export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   // ============================================================================
@@ -179,22 +195,7 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
         icon: 'text-gray-500 dark:text-gray-400'
       }
     },
-    result: {
-      type: 'collapsible',
-      defaultOpen: false,
-      title: (result) => {
-        const toolData = result.toolUseResult || {};
-        const count = toolData.numFiles || toolData.filenames?.length || 0;
-        return `Found ${count} ${count === 1 ? 'file' : 'files'}`;
-      },
-      contentType: 'file-list',
-      getContentProps: (result) => {
-        const toolData = result.toolUseResult || {};
-        return {
-          files: toolData.filenames || []
-        };
-      }
-    }
+    result: searchResultConfig
   },
 
   Glob: {
@@ -212,22 +213,7 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
         icon: 'text-gray-500 dark:text-gray-400'
       }
     },
-    result: {
-      type: 'collapsible',
-      defaultOpen: false,
-      title: (result) => {
-        const toolData = result.toolUseResult || {};
-        const count = toolData.numFiles || toolData.filenames?.length || 0;
-        return `Found ${count} ${count === 1 ? 'file' : 'files'}`;
-      },
-      contentType: 'file-list',
-      getContentProps: (result) => {
-        const toolData = result.toolUseResult || {};
-        return {
-          files: toolData.filenames || []
-        };
-      }
-    }
+    result: searchResultConfig
   },
 
   // ============================================================================

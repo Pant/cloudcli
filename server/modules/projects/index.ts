@@ -1,5 +1,6 @@
 export {
   generateDisplayName,
+  getProjectSessionsPage,
   getProjectsWithSessions,
 } from './services/projects-with-sessions-fetch.service.js';
 export { updateProjectDisplayName } from './services/project-management.service.js';

@@ -112,7 +112,35 @@
     "browser": "Browser",
     "notifications": "Notifications",
     "plugins": "Plugins",
+    "cache": "Cache",
     "about": "About"
+  },
+  "cache": {
+    "title": "Cache",
+    "description": "Manage locally cached session histories for this account.",
+    "statsTitle": "Cached history",
+    "statsDescription": "Only this account's local histories are counted. Other accounts and server histories are preserved.",
+    "sessionCountLabel": "Cached sessions",
+    "messageCountLabel": "Cached messages",
+    "loading": "Loading cache statistics...",
+    "loadError": "Unable to load cache statistics.",
+    "syncSectionTitle": "Synchronize histories",
+    "syncDescription": "Fetch all available session histories for this account. Histories may be cached again automatically later.",
+    "syncButton": "Sync all histories",
+    "syncPending": "Syncing histories...",
+    "syncSuccess": "Synchronized {{succeeded}} of {{eligible}} histories.",
+    "syncPartial": "Synchronization finished with {{failed}} failed histories ({{succeeded}} of {{eligible}} succeeded).",
+    "syncError": "Unable to synchronize all histories.",
+    "clearSectionTitle": "Clear local histories",
+    "clearDescription": "Remove only this account's locally cached histories. Other accounts and server histories are preserved.",
+    "clearButton": "Clear this account's cache",
+    "clearPending": "Clearing cache...",
+    "clearSuccess": "This account's local cache was cleared. Histories may be cached again later.",
+    "clearError": "Unable to clear this account's cache.",
+    "confirmationTitle": "Clear this account's local histories?",
+    "confirmationDescription": "This removes locally cached session histories for this account only. Other accounts and server histories are preserved, and histories may be cached again later.",
+    "cancel": "Cancel",
+    "confirm": "Clear cache"
   },
   "notifications": {
     "title": "Notifications",
@@ -472,7 +500,13 @@
     },
     "managed": {
       "badge": "Managed",
-      "hint": "Managed by CloudCLI."
+      "hint": "Managed by CloudCLI.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "saving": "Saving…",
+      "enable": "Enable managed MCP server",
+      "disable": "Disable managed MCP server",
+      "saveFailed": "Failed to save managed MCP server state."
     },
     "help": {
       "title": "About Codex MCP",

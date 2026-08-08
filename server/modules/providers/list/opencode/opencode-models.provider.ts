@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import Database from 'better-sqlite3';
 import crossSpawn from 'cross-spawn';
 
@@ -52,6 +54,7 @@ export const OPENCODE_FALLBACK_MODELS: ProviderModelsDefinition = {
 };
 
 const OPEN_CODE_MODELS_TIMEOUT_MS = 20_000;
+const OPEN_CODE_METADATA_CACHE_TTL_MS = 30_000;
 // OpenCode prints one provider/model value per line. Model ids can contain
 // additional slashes (for example, some OpenRouter ids), so only validate the
 // provider separator and reject whitespace rather than imposing a slug format
@@ -71,6 +74,7 @@ type OpenCodeVerboseModel = {
   name?: string;
   providerID?: string;
   variants?: Record<string, unknown>;
+  limit?: Record<string, unknown>;
 };
 
 export const parseOpenCodeModelsStdout = (stdout: string): string[] => {
@@ -286,6 +290,19 @@ const readOpenCodeEffortValues = (
   return effortValues;
 };
 
+const readPositiveContextWindow = (value: unknown): number | undefined => (
+  typeof value === 'number'
+  && Number.isSafeInteger(value)
+  && value > 0
+    ? value
+    : undefined
+);
+
+const readOpenCodeContextWindow = (model: OpenCodeVerboseModel): number | undefined => {
+  const limit = readObjectRecord(model.limit);
+  return readPositiveContextWindow(limit?.context);
+};
+
 const mapOpenCodeVerboseModel = (model: OpenCodeVerboseModel): ProviderModelOption | null => {
   const value = readOpenCodeVerboseModelId(model);
   if (!value) {
@@ -293,11 +310,13 @@ const mapOpenCodeVerboseModel = (model: OpenCodeVerboseModel): ProviderModelOpti
   }
 
   const effortValues = readOpenCodeEffortValues(model.variants);
+  const contextWindow = readOpenCodeContextWindow(model);
 
   return {
     value,
     label: readOptionalString(model.name) ?? labelForOpenCodeModelId(value),
     description: descriptionForOpenCodeModelId(value),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(effortValues.length > 0
       ? {
           effort: {
@@ -375,6 +394,56 @@ const buildOpenCodeDefinitionFromCliOutput = (stdout: string): ProviderModelsDef
   }
 
   return buildOpenCodeDefinitionFromOptions(options);
+};
+
+export const parseConfiguredOpenCodeModelIds = (
+  content: string,
+  providerId: string,
+): string[] => {
+  try {
+    const configuration = readObjectRecord(JSON.parse(content));
+    const providers = readObjectRecord(configuration?.provider);
+    const provider = readObjectRecord(providers?.[providerId]);
+    const models = readObjectRecord(provider?.models);
+    if (!models) {
+      return [];
+    }
+
+    return Object.keys(models).map((modelId) => (
+      modelId.includes('/') ? modelId : `${providerId}/${modelId}`
+    ));
+  } catch {
+    return [];
+  }
+};
+
+const loadConfiguredOpenCodeModelIds = async (): Promise<string[]> => {
+  const providerId = process.env.CLOUDCLI_OPENCODE_PROVIDER_ID?.trim();
+  if (!providerId) {
+    return [];
+  }
+
+  const inlineConfiguration = process.env.OPENCODE_CONFIG_CONTENT?.trim();
+  if (inlineConfiguration) {
+    const inlineIds = parseConfiguredOpenCodeModelIds(inlineConfiguration, providerId);
+    if (inlineIds.length > 0) {
+      return inlineIds;
+    }
+  }
+
+  const configurationPath = process.env.OPENCODE_CONFIG?.trim();
+  if (!configurationPath) {
+    return [];
+  }
+
+  try {
+    return parseConfiguredOpenCodeModelIds(
+      await readFile(configurationPath, 'utf8'),
+      providerId,
+    );
+  } catch {
+    return [];
+  }
 };
 
 const parseOpenCodeSessionModelValue = (rawModel: unknown): string | null => {
@@ -466,14 +535,46 @@ const runOpenCodeModelsCommand = (): Promise<string> => new Promise((resolve, re
 });
 
 export class OpenCodeProviderModels implements IProviderModels {
+  private pendingModelDiscovery: Promise<ProviderModelsDefinition> | null = null;
+  private metadataCache: { definition: ProviderModelsDefinition; expiresAt: number } | null = null;
+
   constructor(
     private readonly loadModelList = runOpenCodeModelsCommand,
+    private readonly loadConfiguredModelIds = loadConfiguredOpenCodeModelIds,
   ) {}
 
+  private discoverModels(): Promise<ProviderModelsDefinition> {
+    if (this.pendingModelDiscovery) {
+      return this.pendingModelDiscovery;
+    }
+
+    const discovery = this.loadModelList()
+      .then((stdout) => {
+        const definition = buildOpenCodeDefinitionFromCliOutput(stdout);
+        this.metadataCache = {
+          definition,
+          expiresAt: Date.now() + OPEN_CODE_METADATA_CACHE_TTL_MS,
+        };
+        return definition;
+      })
+      .finally(() => {
+        if (this.pendingModelDiscovery === discovery) {
+          this.pendingModelDiscovery = null;
+        }
+      });
+
+    this.pendingModelDiscovery = discovery;
+    return discovery;
+  }
+
   async getSupportedModels(): Promise<ProviderModelsDefinition> {
+    const configuredIds = await this.loadConfiguredModelIds();
+    if (configuredIds.length > 0) {
+      return buildOpenCodeDefinitionFromIds(configuredIds);
+    }
+
     try {
-      const stdout = await this.loadModelList();
-      return buildOpenCodeDefinitionFromCliOutput(stdout);
+      return await this.discoverModels();
     } catch {
       return OPENCODE_FALLBACK_MODELS;
     }
@@ -529,5 +630,31 @@ export class OpenCodeProviderModels implements IProviderModels {
     }
 
     return buildDefaultProviderCurrentActiveModel(await this.getSupportedModels());
+  }
+
+  /**
+   * Resolves the discovered context window for the active or resumed OpenCode
+   * model selected by the caller. OpenCode model metadata is the source of
+   * truth; unknown, invalid, and unavailable limits deliberately return
+   * `undefined` so token-usage callers can keep their existing fallback.
+   */
+  async getContextWindowForModel(modelId: string | null | undefined): Promise<number | undefined> {
+    const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+    if (!normalizedModelId) {
+      return undefined;
+    }
+
+    try {
+      const cachedDefinition = this.metadataCache;
+      const models = cachedDefinition && cachedDefinition.expiresAt > Date.now()
+        ? cachedDefinition.definition
+        : await this.discoverModels();
+      const option = models.OPTIONS.find((candidate) => candidate.value === normalizedModelId);
+      return readPositiveContextWindow(option?.contextWindow);
+    } catch {
+      // Model discovery is supplemental metadata and must never make a run or
+      // usage lookup fail when OpenCode is unavailable or changes its output.
+      return undefined;
+    }
   }
 }

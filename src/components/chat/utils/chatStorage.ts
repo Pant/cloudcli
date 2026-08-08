@@ -49,7 +49,13 @@ export const safeLocalStorage = {
  * session's composer had at queue time — even from outside the composer,
  * e.g. the app-level auto-send that fires while another session is viewed.
  */
-export type QueuedSendOptions = Record<string, unknown>;
+export type QueuedSendOptions = Record<string, unknown> & {
+  model?: string;
+  effort?: string;
+  agent?: string;
+};
+
+export type QueuedSendOptionsPatch = Pick<QueuedSendOptions, 'model' | 'effort' | 'agent'>;
 
 export type StoredQueuedMessage = {
   content: string;
@@ -97,6 +103,27 @@ export function readQueuedMessage(sessionId: string): StoredQueuedMessage | null
 
 export function writeQueuedMessage(sessionId: string, message: StoredQueuedMessage): void {
   safeLocalStorage.setItem(queuedMessageKey(sessionId), JSON.stringify(message));
+}
+
+/** Patches only mutable provider preferences on an existing queued message. */
+export function patchQueuedMessageOptions(
+  sessionId: string,
+  patch: Partial<QueuedSendOptionsPatch>,
+): StoredQueuedMessage | null {
+  const queued = readQueuedMessage(sessionId);
+  if (!queued) {
+    return null;
+  }
+
+  const patched = {
+    ...queued,
+    options: {
+      ...(queued.options ?? {}),
+      ...patch,
+    },
+  };
+  writeQueuedMessage(sessionId, patched);
+  return patched;
 }
 
 export function clearQueuedMessage(sessionId: string): void {

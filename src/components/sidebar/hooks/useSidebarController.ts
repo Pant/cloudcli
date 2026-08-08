@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 
 import { api } from '../../../utils/api';
-import { usePaletteOps } from '../../../contexts/PaletteOpsContext';
+import { usePaletteOps } from '../../../contexts/paletteOps';
 import type { Project, ProjectSession, LLMProvider } from '../../../types/app';
-import type { SessionActivityMap } from '../../../hooks/useSessionProtection';
+import type { SessionActivityMap, SessionLifecycleMap } from '../../../hooks/useSessionProtection';
 import type {
   ArchivedProjectListItem,
   ArchivedSessionListItem,
@@ -22,6 +22,12 @@ import {
   readProjectSortOrder,
   sortProjects,
 } from '../utils/utils';
+import {
+  buildSessionForest,
+  deriveRunningProjects,
+  getDefaultExpandedSessionIds,
+  getSessionAncestorIds,
+} from '../utils/hierarchy';
 
 type SnippetHighlight = {
   start: number;
@@ -83,6 +89,8 @@ type UseSidebarControllerArgs = {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   activeSessions: SessionActivityMap;
+  sessionLifecycle: SessionLifecycleMap;
+  onStartSession: (sessionId: string) => Promise<void>;
   isLoading: boolean;
   isMobile: boolean;
   t: TFunction;
@@ -103,6 +111,8 @@ export function useSidebarController({
   selectedProject,
   selectedSession: _selectedSession,
   activeSessions,
+  sessionLifecycle,
+  onStartSession,
   isLoading,
   isMobile,
   t,
@@ -118,6 +128,8 @@ export function useSidebarController({
 }: UseSidebarControllerArgs) {
   const paletteOps = usePaletteOps();
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [expandedSessionIdsByProject, setExpandedSessionIdsByProject] = useState<Map<string, Set<string>>>(new Map());
+  const [collapsedSessionIdsByProject, setCollapsedSessionIdsByProject] = useState<Map<string, Set<string>>>(new Map());
   const [editingProject, setEditingProject] = useState<string | null>(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [editingName, setEditingName] = useState('');
@@ -151,6 +163,62 @@ export function useSidebarController({
   const isSidebarCollapsed = !isMobile && !sidebarVisible;
   const activeSessionIds = useMemo(() => new Set(activeSessions.keys()), [activeSessions]);
   const runningSessionsCount = activeSessionIds.size;
+
+  const getSessionForest = useCallback((project: Project) => (
+    buildSessionForest(project.sessions ?? [], project.projectId)
+  ), []);
+
+  // Newly discovered child branches start folded. Explicit expansions remain
+  // in `expandedSessionIdsByProject`, while forced selected/running ancestors
+  // are applied separately below.
+  useEffect(() => {
+    setExpandedSessionIdsByProject((previous) => {
+      const next = new Map(previous);
+      let changed = false;
+      for (const project of projects) {
+        const forest = getSessionForest(project);
+        const existing = next.get(project.projectId) ?? new Set<string>();
+        const collapsed = collapsedSessionIdsByProject.get(project.projectId) ?? new Set<string>();
+        const expanded = new Set(existing);
+        for (const id of getDefaultExpandedSessionIds(forest)) {
+          if (!collapsed.has(id)) {
+            expanded.add(id);
+          }
+        }
+        if (expanded.size !== existing.size || [...expanded].some((id) => !existing.has(id))) {
+          next.set(project.projectId, expanded);
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
+  }, [collapsedSessionIdsByProject, getSessionForest, projects]);
+
+  const forcedExpandedSessionIdsByProject = useMemo(() => {
+    const forced = new Map<string, Set<string>>();
+    for (const project of projects) {
+      const forest = getSessionForest(project);
+      const ids = new Set<string>();
+      const selectedId = _selectedSession?.id;
+      if (selectedId && forest.nodes.has(selectedId)) {
+        for (const ancestorId of getSessionAncestorIds(forest, selectedId)) {
+          ids.add(ancestorId);
+        }
+      }
+      for (const activeId of activeSessionIds) {
+        if (!forest.nodes.has(activeId)) {
+          continue;
+        }
+        for (const ancestorId of getSessionAncestorIds(forest, activeId)) {
+          ids.add(ancestorId);
+        }
+      }
+      if (ids.size > 0) {
+        forced.set(project.projectId, ids);
+      }
+    }
+    return forced;
+  }, [activeSessionIds, getSessionForest, projects, _selectedSession?.id]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -440,6 +508,25 @@ export function useSidebarController({
     });
   }, []);
 
+  const toggleSessionBranch = useCallback((projectId: string, sessionId: string) => {
+    setExpandedSessionIdsByProject((previous) => {
+      const next = new Map(previous);
+      const expanded = new Set(next.get(projectId) ?? []);
+      const collapsed = new Map(collapsedSessionIdsByProject);
+      const explicitlyCollapsed = new Set(collapsed.get(projectId) ?? []);
+      if (expanded.has(sessionId)) {
+        expanded.delete(sessionId);
+        explicitlyCollapsed.add(sessionId);
+      } else {
+        expanded.add(sessionId);
+        explicitlyCollapsed.delete(sessionId);
+      }
+      next.set(projectId, expanded);
+      setCollapsedSessionIdsByProject(collapsed.set(projectId, explicitlyCollapsed));
+      return next;
+    });
+  }, [collapsedSessionIdsByProject]);
+
   const handleSessionClick = useCallback(
     (session: SessionWithProvider, projectId: string) => {
       // Tag the session with its owning projectId so downstream handlers
@@ -592,25 +679,7 @@ export function useSidebarController({
       return [];
     }
 
-    return sortedProjects.reduce<Project[]>((acc, project) => {
-      const sessions = (project.sessions ?? []).filter((session) => activeSessionIds.has(String(session.id)));
-      const runningCount = sessions.length;
-
-      if (runningCount === 0) {
-        return acc;
-      }
-
-      acc.push({
-        ...project,
-        sessions,
-        sessionMeta: {
-          ...project.sessionMeta,
-          total: runningCount,
-          hasMore: false,
-        },
-      });
-      return acc;
-    }, []);
+    return deriveRunningProjects(sortedProjects, activeSessionIds);
   }, [activeSessionIds, sortedProjects]);
 
   const filteredProjects = useMemo(
@@ -927,8 +996,12 @@ export function useSidebarController({
   }, [setSidebarVisible]);
 
   return {
+    sessionLifecycle,
+    onStartSession,
     isSidebarCollapsed,
     expandedProjects,
+    expandedSessionIdsByProject,
+    forcedExpandedSessionIdsByProject,
     editingProject,
     showNewProject,
     editingName,
@@ -951,6 +1024,7 @@ export function useSidebarController({
     archivedSessionsCount: archivedProjects.length + archivedSessions.length,
     isArchivedSessionsLoading,
     toggleProject,
+    toggleSessionBranch,
     handleSessionClick,
     toggleStarProject,
     isProjectStarred,

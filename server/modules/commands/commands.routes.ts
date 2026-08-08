@@ -275,6 +275,8 @@ Custom commands can be created in:
           tokenUsage.contextWindow ??
           0,
       ) || 0;
+    const rawWindowTokens = tokenUsage.windowTokens ?? tokenUsage.window_tokens;
+    const reportedWindowTokens = Number(rawWindowTokens);
     const normalizedInputValue =
       tokenUsage.inputTokens ??
       tokenUsage.input ??
@@ -317,6 +319,9 @@ Custom commands can be created in:
     const computedUsed = inputTokens + outputTokens;
     const hasTokenBreakdown = computedUsed > 0;
     const used = Math.max(reportedUsed, computedUsed);
+    const hasWindowTokens = rawWindowTokens != null
+      && Number.isFinite(reportedWindowTokens)
+      && reportedWindowTokens >= 0;
 
     return {
       type: "builtin",
@@ -325,6 +330,7 @@ Custom commands can be created in:
         tokenUsage: {
           used,
           total,
+          ...(hasWindowTokens ? { windowTokens: reportedWindowTokens } : {}),
         },
         ...(hasTokenBreakdown
           ? {

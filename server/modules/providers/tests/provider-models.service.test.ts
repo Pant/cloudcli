@@ -453,3 +453,40 @@ test('resolveResumeModel never lets provider session state override the requeste
   assert.equal(model, 'gpt-5.5');
   assert.equal(providerLookups, 0);
 });
+
+test('provider models service resolves OpenCode context metadata through the provider capability', async () => {
+  const calls: string[] = [];
+  const service = createProviderModelsService({
+    resolveProvider: () => ({
+      models: {
+        getSupportedModels: async () => createModels('opencode-models'),
+        getCurrentActiveModel: async () => createCurrentActiveModel('opencode-active'),
+        getContextWindowForModel: async (modelId) => {
+          calls.push(modelId ?? '');
+          return modelId === 'openai/known-context' ? 128_000 : 0;
+        },
+      },
+    }),
+  });
+
+  assert.equal(await service.resolveOpenCodeContextWindow(' openai/known-context '), 128_000);
+  assert.equal(await service.resolveOpenCodeContextWindow('openai/unknown-context'), undefined);
+  assert.equal(await service.resolveOpenCodeContextWindow(null), undefined);
+  assert.deepEqual(calls, ['openai/known-context', 'openai/unknown-context']);
+});
+
+test('provider models service treats OpenCode context discovery failures as unavailable', async () => {
+  const service = createProviderModelsService({
+    resolveProvider: () => ({
+      models: {
+        getSupportedModels: async () => createModels('opencode-models'),
+        getCurrentActiveModel: async () => createCurrentActiveModel('opencode-active'),
+        getContextWindowForModel: async () => {
+          throw new Error('metadata lookup failed');
+        },
+      },
+    }),
+  });
+
+  assert.equal(await service.resolveOpenCodeContextWindow('openai/known-context'), undefined);
+});

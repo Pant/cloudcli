@@ -7,6 +7,8 @@ import type {
   ProviderAgentDefinition,
   ProviderAgentPermissionAction,
   ProviderAgentPermissionValue,
+  ProviderAgentPreferencesPatch,
+  ProviderAgentPreferencesResult,
   UpsertProviderAgentInput,
 } from '@/shared/types.js';
 import { AppError, readObjectRecord } from '@/shared/utils.js';
@@ -14,6 +16,8 @@ import { AppError, readObjectRecord } from '@/shared/utils.js';
 import { OpenCodeConfigStore } from './opencode-config.provider.js';
 
 const AGENT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
+const MODEL_REFERENCE_PATTERN = /^[^\s/]+\/[^\s]+$/;
+const BARE_MODEL_ID_PATTERN = /^[^\s/]+$/;
 const PERMISSION_ACTIONS = new Set<ProviderAgentPermissionAction>(['allow', 'ask', 'deny']);
 const THEME_COLORS = new Set(['primary', 'secondary', 'accent', 'success', 'warning', 'error', 'info']);
 const RESERVED_AGENT_OPTIONS = new Set([
@@ -97,6 +101,7 @@ type OpenCodeRuntimeAgentDetails = {
   native: boolean;
   hidden: boolean;
   disable: boolean;
+  reasoningEffort?: string;
 };
 
 const parseRuntimeAgentDetails = (name: string, output: string): OpenCodeRuntimeAgentDetails => {
@@ -120,6 +125,8 @@ const parseRuntimeAgentDetails = (name: string, output: string): OpenCodeRuntime
       : modelProvider
         ? [modelProvider, modelId].filter(Boolean).join('/')
         : undefined;
+    const options = readObjectRecord(details.options);
+    const reasoningEffort = optionalString(options?.reasoningEffort ?? details.reasoningEffort);
     return {
       description: typeof details.description === 'string' && details.description.trim()
         ? details.description.trim()
@@ -129,6 +136,7 @@ const parseRuntimeAgentDetails = (name: string, output: string): OpenCodeRuntime
       native: details.native === true,
       hidden: details.hidden === true,
       disable: details.disable === true,
+      reasoningEffort,
     };
   } catch (error) {
     throw new AppError(
@@ -252,6 +260,33 @@ const requiredDescription = (value: unknown): string => {
   return description;
 };
 
+const normalizeAgentModel = (value: unknown): string | undefined => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (typeof value !== 'string') {
+    return invalidAgent('model must be a string.');
+  }
+
+  const model = value.trim();
+  if (!model) {
+    return undefined;
+  }
+  if (MODEL_REFERENCE_PATTERN.test(model)) {
+    return model;
+  }
+
+  // CloudCLI's generated OpenAI-compatible provider owns bare model ids from
+  // its /models response. Qualify them before OpenCode parses the first path
+  // segment as a provider and leaves modelID empty (`model-id/`).
+  const cloudCliProvider = optionalString(process.env.CLOUDCLI_OPENCODE_PROVIDER_ID);
+  if (BARE_MODEL_ID_PATTERN.test(model) && cloudCliProvider && !cloudCliProvider.includes('/')) {
+    return `${cloudCliProvider}/${model}`;
+  }
+
+  return invalidAgent('model must use provider/model-id format.');
+};
+
 const validateOptionalNumber = (
   value: unknown,
   fieldName: string,
@@ -343,9 +378,6 @@ const validateAgent = (input: UpsertProviderAgentInput): UpsertProviderAgentInpu
   if (mode !== 'primary' && mode !== 'subagent' && mode !== 'all') {
     return invalidAgent('mode must be primary, subagent, or all.');
   }
-  if (input.model !== undefined && typeof input.model !== 'string') {
-    return invalidAgent('model must be a string.');
-  }
   if (input.prompt !== undefined && typeof input.prompt !== 'string') {
     return invalidAgent('prompt must be a string.');
   }
@@ -373,7 +405,7 @@ const validateAgent = (input: UpsertProviderAgentInput): UpsertProviderAgentInpu
     originalName,
     description: requiredDescription(input.description),
     mode,
-    model: optionalString(input.model),
+    model: normalizeAgentModel(input.model),
     prompt: input.prompt || undefined,
     temperature: validateOptionalNumber(input.temperature, 'temperature', 0, 1),
     topP: validateOptionalNumber(input.topP, 'topP', 0, 1),
@@ -442,6 +474,7 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
         mode: details.mode ?? agent.mode,
         description: details.description,
         model: details.model,
+        reasoningEffort: details.reasoningEffort,
       }));
   }
 
@@ -470,6 +503,55 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
       agents[agent.name] = toOpenCodeConfig(agent);
       config.agent = agents;
       return normalizeAgent(agent.name, agents[agent.name]) as ProviderAgentDefinition;
+    });
+  }
+
+  async updateAgentPreferences(
+    nameInput: string,
+    patch: ProviderAgentPreferencesPatch,
+  ): Promise<ProviderAgentPreferencesResult> {
+    const name = requiredAgentName(nameInput);
+    const hasModel = Object.prototype.hasOwnProperty.call(patch, 'model');
+    const hasReasoning = Object.prototype.hasOwnProperty.call(patch, 'reasoningEffort');
+    if (!hasModel && !hasReasoning) {
+      return invalidAgent('At least one of model or reasoningEffort is required.', 'OPENCODE_AGENT_PREFERENCES_REQUIRED');
+    }
+
+    const model = hasModel ? normalizeAgentModel(patch.model) : undefined;
+    if (hasModel && !model) {
+      return invalidAgent('model must be a non-empty string.', 'INVALID_OPENCODE_AGENT_MODEL');
+    }
+    if (hasReasoning && typeof patch.reasoningEffort !== 'string') {
+      return invalidAgent('reasoningEffort must be a string.', 'INVALID_OPENCODE_REASONING_EFFORT');
+    }
+    const reasoningEffort = hasReasoning ? patch.reasoningEffort!.trim() : undefined;
+    if (hasReasoning && !reasoningEffort) {
+      return invalidAgent('reasoningEffort must be a non-empty string.', 'INVALID_OPENCODE_REASONING_EFFORT');
+    }
+
+    return this.configStore.updateConfig('user', '', (config) => {
+      const agents = readObjectRecord(config.agent);
+      const existing = agents && readObjectRecord(agents[name]);
+      if (!agents || !existing) {
+        throw new AppError(`OpenCode global agent "${name}" was not found or is not configurable.`, {
+          code: 'OPENCODE_AGENT_NOT_CONFIGURABLE',
+          statusCode: 404,
+        });
+      }
+
+      const updated = { ...existing };
+      if (hasModel) updated.model = model;
+      if (hasReasoning) {
+        if (reasoningEffort === 'default') delete updated.reasoningEffort;
+        else updated.reasoningEffort = reasoningEffort;
+      }
+      config.agent = { ...agents, [name]: updated };
+      return {
+        provider: 'opencode' as const,
+        name,
+        model: optionalString(updated.model),
+        reasoningEffort: optionalString(updated.reasoningEffort),
+      };
     });
   }
 

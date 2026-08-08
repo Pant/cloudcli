@@ -21,6 +21,7 @@ import RemoveWorktreeModal from '../modals/RemoveWorktreeModal';
 type WorktreesViewProps = {
   isMobile: boolean;
   selectedProject: Project | null;
+  repository: string;
   localBranches: string[];
   onProjectSelect?: (project: Project) => void;
   onProjectsRefresh?: () => void;
@@ -163,6 +164,7 @@ function WorktreeRow({ worktree, isMobile, isBusy, onOpen, onMerge, onRemove }: 
 export default function WorktreesView({
   isMobile,
   selectedProject,
+  repository,
   localBranches,
   onProjectSelect,
   onProjectsRefresh,
@@ -179,7 +181,7 @@ export default function WorktreesView({
     openWorktree,
     mergeWorktree,
     removeWorktree,
-  } = useWorktreesController({ selectedProject, onProjectSelect, onProjectsRefresh });
+  } = useWorktreesController({ selectedProject, repository, onProjectSelect, onProjectsRefresh });
 
   const [showNewWorktreeModal, setShowNewWorktreeModal] = useState(false);
   const [mergeTarget, setMergeTarget] = useState<WorktreeInfo | null>(null);

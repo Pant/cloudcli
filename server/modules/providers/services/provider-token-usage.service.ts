@@ -6,6 +6,8 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import { sessionsDb } from '@/modules/database/index.js';
+import { providerModelsService } from '@/modules/providers/index.js';
+import { readOpenCodeLatestAssistantWindowTokens } from '@/modules/providers/list/opencode/opencode-token-usage.provider.js';
 import type { AnyRecord } from '@/shared/types.js';
 import { AppError, getOpenCodeDatabasePath } from '@/shared/utils.js';
 
@@ -19,11 +21,14 @@ type ProviderTokenUsageServiceDependencies = {
   readDirectory: (directoryPath: string) => Promise<Dirent[]>;
   readTextFile: (filePath: string) => Promise<string>;
   getClaudeContextWindow: () => string | undefined;
+  resolveOpenCodeSessionModel: (sessionId: string) => Promise<string | undefined>;
+  resolveOpenCodeContextWindow: (modelId: string | undefined) => Promise<number | undefined>;
 };
 
 type TokenUsageResult = {
   used: number;
   total?: number;
+  windowTokens?: number;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number;
@@ -45,6 +50,17 @@ type OpenCodeTokenRow = {
   cacheWriteTokens: number | null;
 };
 
+function createUnavailableOpenCodeTokenUsage(message: string): TokenUsageResult {
+  return {
+    used: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    breakdown: { input: 0, output: 0 },
+    unsupported: true,
+    message,
+  };
+}
+
 const defaultDependencies: ProviderTokenUsageServiceDependencies = {
   getSessionById: (sessionId) => sessionsDb.getSessionById(sessionId),
   getHomeDirectory: () => os.homedir(),
@@ -53,11 +69,49 @@ const defaultDependencies: ProviderTokenUsageServiceDependencies = {
   readDirectory: (directoryPath) => fsp.readdir(directoryPath, { withFileTypes: true }),
   readTextFile: (filePath) => fsp.readFile(filePath, 'utf8'),
   getClaudeContextWindow: () => process.env.CONTEXT_WINDOW,
+  resolveOpenCodeSessionModel: async (sessionId) => (
+    await providerModelsService.resolveSessionModel('opencode', { sessionId })
+  ).model,
+  resolveOpenCodeContextWindow: (modelId) => providerModelsService.resolveOpenCodeContextWindow(modelId),
 };
 
 function readUsageNumber(value: unknown): number {
   const parsedValue = Number(value);
   return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function readOptionalUsageNumber(value: unknown): number | undefined {
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
+}
+
+function readCodexCurrentWindowTokens(value: unknown): number | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const usage = value as AnyRecord;
+  const reportedTotal = readOptionalUsageNumber(usage.total_tokens ?? usage.totalTokens);
+  if (reportedTotal !== undefined) {
+    return reportedTotal;
+  }
+
+  const inputTokens = readOptionalUsageNumber(usage.input_tokens ?? usage.inputTokens);
+  const outputTokens = readOptionalUsageNumber(usage.output_tokens ?? usage.outputTokens);
+  const reasoningTokens = readOptionalUsageNumber(
+    usage.reasoning_output_tokens ?? usage.reasoningOutputTokens ?? usage.reasoning_tokens,
+  );
+  if (inputTokens === undefined && outputTokens === undefined && reasoningTokens === undefined) {
+    return undefined;
+  }
+
+  return (inputTokens ?? 0) + (outputTokens ?? 0) + (reasoningTokens ?? 0);
+}
+
+function readPositiveContextWindow(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
 }
 
 async function findCodexSessionFile(
@@ -96,6 +150,7 @@ function readCodexTokenUsage(fileContent: string): TokenUsageResult {
   let inputTokens = 0;
   let outputTokens = 0;
   let totalTokens = 0;
+  let windowTokens: number | undefined;
   let contextWindow = 200_000;
   const lines = fileContent.trim().split('\n');
 
@@ -115,6 +170,10 @@ function readCodexTokenUsage(fileContent: string): TokenUsageResult {
         totalTokens = readUsageNumber(tokenInfo.total_token_usage.total_tokens)
           || inputTokens + outputTokens;
       }
+      const currentWindowTokens = readCodexCurrentWindowTokens(tokenInfo.last_token_usage);
+      if (currentWindowTokens !== undefined) {
+        windowTokens = currentWindowTokens;
+      }
       contextWindow = readUsageNumber(tokenInfo.model_context_window) || contextWindow;
       break;
     } catch {
@@ -125,6 +184,7 @@ function readCodexTokenUsage(fileContent: string): TokenUsageResult {
   return {
     used: totalTokens,
     total: contextWindow,
+    ...(windowTokens === undefined ? {} : { windowTokens }),
     inputTokens,
     outputTokens,
     breakdown: { input: inputTokens, output: outputTokens },
@@ -136,9 +196,15 @@ function readClaudeTokenUsage(fileContent: string, configuredContextWindow: stri
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  let latestInputTokens = 0;
+  let latestOutputTokens = 0;
+  let hasCurrentMessageUsage = false;
   const lines = fileContent.trim().split('\n');
 
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
+  // Claude emits one assistant usage record per model call. Aggregate every
+  // trustworthy record for session totals while retaining the final record as
+  // the current context-window signal.
+  for (let index = 0; index < lines.length; index += 1) {
     try {
       const entry = JSON.parse(lines[index]) as AnyRecord;
       const usage = entry.type === 'assistant' ? entry.message?.usage : null;
@@ -147,19 +213,73 @@ function readClaudeTokenUsage(fileContent: string, configuredContextWindow: stri
       }
 
       const directInputTokens = readUsageNumber(usage.input_tokens ?? usage.inputTokens);
-      cacheReadTokens = readUsageNumber(
+      const cacheReadTokensForMessage = readUsageNumber(
         usage.cache_read_input_tokens ?? usage.cacheReadInputTokens ?? usage.cacheReadTokens,
       );
-      cacheCreationTokens = readUsageNumber(
+      const cacheCreationTokensForMessage = readUsageNumber(
         usage.cache_creation_input_tokens
           ?? usage.cacheCreationInputTokens
           ?? usage.cacheCreationTokens,
       );
-      inputTokens = directInputTokens + cacheReadTokens + cacheCreationTokens;
-      outputTokens = readUsageNumber(usage.output_tokens ?? usage.outputTokens);
-      break;
+      const outputTokensForMessage = readUsageNumber(usage.output_tokens ?? usage.outputTokens);
+      inputTokens += directInputTokens + cacheReadTokensForMessage + cacheCreationTokensForMessage;
+      outputTokens += outputTokensForMessage;
+      cacheReadTokens += cacheReadTokensForMessage;
+      cacheCreationTokens += cacheCreationTokensForMessage;
+      latestInputTokens = directInputTokens + cacheReadTokensForMessage + cacheCreationTokensForMessage;
+      latestOutputTokens = outputTokensForMessage;
+      hasCurrentMessageUsage = true;
     } catch {
       // Skip malformed lines without discarding usage from earlier messages.
+    }
+  }
+
+  // Some older Claude transcripts only retain cumulative result/modelUsage.
+  // Keep those counters for compatibility, but do not call them current-window
+  // usage because they are not a per-message snapshot.
+  if (!hasCurrentMessageUsage) {
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      try {
+        const entry = JSON.parse(lines[index]) as AnyRecord;
+        if (entry.type !== 'result') {
+          continue;
+        }
+
+        const modelUsage = entry.modelUsage && typeof entry.modelUsage === 'object'
+          ? entry.modelUsage[Object.keys(entry.modelUsage)[0]]
+          : null;
+        const usage = entry.usage && typeof entry.usage === 'object'
+          ? entry.usage
+          : modelUsage;
+        if (!usage || typeof usage !== 'object') {
+          continue;
+        }
+
+        inputTokens = readUsageNumber(
+          usage.input_tokens
+            ?? usage.inputTokens
+            ?? usage.cumulativeInputTokens,
+        );
+        cacheReadTokens = readUsageNumber(
+          usage.cache_read_input_tokens
+            ?? usage.cacheReadInputTokens
+            ?? usage.cacheReadTokens,
+        );
+        cacheCreationTokens = readUsageNumber(
+          usage.cache_creation_input_tokens
+            ?? usage.cacheCreationInputTokens
+            ?? usage.cacheCreationTokens,
+        );
+        inputTokens += cacheReadTokens + cacheCreationTokens;
+        outputTokens = readUsageNumber(
+          usage.output_tokens
+            ?? usage.outputTokens
+            ?? usage.cumulativeOutputTokens,
+        );
+        break;
+      } catch {
+        // Skip malformed lines while looking for an older cumulative result.
+      }
     }
   }
 
@@ -170,6 +290,7 @@ function readClaudeTokenUsage(fileContent: string, configuredContextWindow: stri
   return {
     used: inputTokens + outputTokens,
     total: contextWindow,
+    ...(hasCurrentMessageUsage ? { windowTokens: latestInputTokens + latestOutputTokens } : {}),
     inputTokens,
     outputTokens,
     cacheReadTokens,
@@ -193,14 +314,9 @@ function readOpenCodeTokenUsage(databasePath: string, providerSessionId: string)
     ];
 
     if (!requiredColumns.every((column) => columnNames.has(column))) {
-      return {
-        used: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        breakdown: { input: 0, output: 0 },
-        unsupported: true,
-        message: 'Token usage tracking is not available in this OpenCode database schema',
-      };
+      return createUnavailableOpenCodeTokenUsage(
+        'Token usage tracking is not available in this OpenCode database schema',
+      );
     }
 
     const row = database.prepare(`
@@ -215,10 +331,9 @@ function readOpenCodeTokenUsage(databasePath: string, providerSessionId: string)
     `).get(providerSessionId) as OpenCodeTokenRow | undefined;
 
     if (!row) {
-      throw new AppError('OpenCode session was not found.', {
-        code: 'OPENCODE_SESSION_NOT_FOUND',
-        statusCode: 404,
-      });
+      return createUnavailableOpenCodeTokenUsage(
+        'Token usage is unavailable because this OpenCode session is not present in provider storage',
+      );
     }
 
     const inputTokens = readUsageNumber(row.inputTokens) + readUsageNumber(row.cacheReadTokens);
@@ -228,15 +343,40 @@ function readOpenCodeTokenUsage(databasePath: string, providerSessionId: string)
       + readUsageNumber(row.reasoningTokens)
       + readUsageNumber(row.cacheReadTokens)
       + readUsageNumber(row.cacheWriteTokens);
+    const windowTokens = readOpenCodeLatestAssistantWindowTokens(database, providerSessionId, used === 0);
 
     return {
       used,
+      ...(windowTokens === undefined ? {} : { windowTokens }),
       inputTokens,
       outputTokens,
       breakdown: { input: inputTokens, output: outputTokens },
     };
   } finally {
     database.close();
+  }
+}
+
+async function attachOpenCodeContextWindow(
+  usage: TokenUsageResult,
+  sessionId: string,
+  dependencies: ProviderTokenUsageServiceDependencies,
+): Promise<TokenUsageResult> {
+  if (usage.unsupported) {
+    return usage;
+  }
+
+  try {
+    const activeModel = await dependencies.resolveOpenCodeSessionModel(sessionId);
+    const contextWindow = await dependencies.resolveOpenCodeContextWindow(activeModel);
+    const positiveContextWindow = readPositiveContextWindow(contextWindow);
+    return positiveContextWindow === undefined
+      ? usage
+      : { ...usage, total: positiveContextWindow };
+  } catch {
+    // Model metadata is supplemental to the existing counters. A missing or
+    // failing resolver must never make the REST token-usage endpoint fail.
+    return usage;
   }
 }
 
@@ -281,13 +421,13 @@ export function createProviderTokenUsageService(
       if (session.provider === 'opencode') {
         const databasePath = dependencies.getOpenCodeDatabasePath();
         if (!dependencies.fileExists(databasePath)) {
-          throw new AppError('OpenCode database was not found.', {
-            code: 'OPENCODE_DATABASE_NOT_FOUND',
-            statusCode: 404,
-          });
+          return createUnavailableOpenCodeTokenUsage(
+            'Token usage is unavailable because the OpenCode database was not found',
+          );
         }
 
-        return readOpenCodeTokenUsage(databasePath, providerSessionId);
+        const usage = readOpenCodeTokenUsage(databasePath, providerSessionId);
+        return attachOpenCodeContextWindow(usage, sessionId, dependencies);
       }
 
       if (session.provider === 'codex') {

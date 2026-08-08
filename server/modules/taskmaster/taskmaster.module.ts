@@ -12,6 +12,10 @@ import { createTaskmasterService } from './taskmaster.service.js';
 const taskmasterService = createTaskmasterService({
   readTextFile: (filePath) => fsPromises.readFile(filePath, 'utf8'),
   getHomeDirectory: os.homedir,
+  accessFile: fsPromises.access,
+  environment: process.env,
+  platform: process.platform,
+  spawnProcess: spawn,
 });
 
 /** Used by the server entrypoint to mount authenticated TaskMaster endpoints. */

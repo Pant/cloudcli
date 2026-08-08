@@ -17,6 +17,8 @@
     "download": "Dosyayı indir",
     "save": "Kaydet",
     "saving": "Kaydediliyor...",
+    "reload": "Diskten yeniden yükle",
+    "reloading": "Yeniden yükleniyor...",
     "saved": "Kaydedildi!",
     "exitFullscreen": "Tam ekrandan çık",
     "fullscreen": "Tam ekran",

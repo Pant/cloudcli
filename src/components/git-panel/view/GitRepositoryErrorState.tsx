@@ -9,6 +9,8 @@ type GitRepositoryErrorStateProps = {
   /** Failure from the last `git init` attempt, shown below the action. */
   initError?: string | null;
   onInitRepository?: () => void;
+  retryLabel?: string;
+  onRetry?: () => void;
 };
 
 export default function GitRepositoryErrorState({
@@ -18,6 +20,8 @@ export default function GitRepositoryErrorState({
   isInitializingRepository = false,
   initError,
   onInitRepository,
+  retryLabel = 'Retry',
+  onRetry,
 }: GitRepositoryErrorStateProps) {
   const showInitAction = canInitRepository && Boolean(onInitRepository);
 
@@ -60,6 +64,14 @@ export default function GitRepositoryErrorState({
           <h3 className="mb-3 text-center text-lg font-medium text-foreground">{error}</h3>
           {details && (
             <p className="max-w-md text-center text-sm leading-relaxed">{details}</p>
+          )}
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="mt-6 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              {retryLabel}
+            </button>
           )}
         </>
       )}

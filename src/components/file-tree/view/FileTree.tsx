@@ -48,12 +48,18 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
     }
   }, [toast]);
 
-  const { files, loading, refreshFiles } = useFileTreeData(selectedProject);
+  const { files, loading, generation, directoryLoading, loadDirectory, loadCompleteTree, refreshFiles } = useFileTreeData(selectedProject);
   const { viewMode, changeViewMode } = useFileTreeViewMode();
   const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories();
-  const { searchQuery, setSearchQuery, filteredFiles } = useFileTreeSearch({
+  const handleSearchError = useCallback((message: string) => {
+    showToast(message, 'error');
+  }, [showToast]);
+  const { searchQuery, setSearchQuery, filteredFiles, loading: searchLoading } = useFileTreeSearch({
     files,
     expandDirectories,
+    generation,
+    loadCompleteTree,
+    onSearchError: handleSearchError,
   });
 
   // File operations
@@ -94,10 +100,11 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
 
   // Centralized click behavior keeps file actions identical across all presentation modes.
   const handleItemClick = useCallback(
-    (item: FileTreeNode) => {
-      if (item.type === 'directory') {
-        toggleDirectory(item.path);
-        return;
+      (item: FileTreeNode) => {
+        if (item.type === 'directory') {
+          toggleDirectory(item.path);
+          void loadDirectory(item.path);
+          return;
       }
 
       if (isImageFile(item.name) && selectedProject) {
@@ -114,7 +121,7 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
 
       onFileOpen?.(item.path);
     },
-    [onFileOpen, selectedProject, toggleDirectory],
+    [loadDirectory, onFileOpen, selectedProject, toggleDirectory],
   );
 
   const formatRelativeTimeLabel = useCallback(
@@ -155,7 +162,7 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
         onNewFolder={() => operations.handleStartCreate('', 'directory')}
         onRefresh={refreshFiles}
         onCollapseAll={collapseAll}
-        loading={loading}
+        loading={loading || searchLoading}
         operationLoading={operationLoading}
         isUploading={upload.uploadProgress?.status === 'uploading'}
         uploadProgress={upload.uploadProgress?.progress ?? null}
@@ -204,6 +211,7 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
           searchQuery={searchQuery}
           viewMode={viewMode}
           expandedDirs={expandedDirs}
+          directoryLoading={directoryLoading}
           onItemClick={handleItemClick}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}

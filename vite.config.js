@@ -47,21 +47,60 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       chunkSizeWarningLimit: 1000,
-      rollupOptions: {
+      rolldownOptions: {
         output: {
-          manualChunks: {
-            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-            'vendor-codemirror': [
-              '@uiw/react-codemirror',
-              '@codemirror/lang-css',
-              '@codemirror/lang-html',
-              '@codemirror/lang-javascript',
-              '@codemirror/lang-json',
-              '@codemirror/lang-markdown',
-              '@codemirror/lang-python',
-              '@codemirror/theme-one-dark'
-            ],
-            'vendor-xterm': ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-clipboard', '@xterm/addon-webgl']
+          codeSplitting: {
+            groups: [
+              {
+                name: 'codemirror-state',
+                test: /node_modules[\\/]@codemirror[\\/]state[\\/]/,
+                priority: 34
+              },
+              {
+                name: 'codemirror-view',
+                test: /node_modules[\\/](?:@codemirror[\\/]view|crelt|style-mod|w3c-keyname)[\\/]/,
+                priority: 33
+              },
+              {
+                name: 'codemirror-language',
+                test: /node_modules[\\/](?:@codemirror[\\/]language|@lezer[\\/](?:common|highlight))[\\/]/,
+                priority: 32
+              },
+              {
+                name: 'codemirror-search',
+                test: /node_modules[\\/]@codemirror[\\/]search[\\/]/,
+                priority: 31
+              },
+              {
+                name: 'codemirror-commands',
+                test: /node_modules[\\/]@codemirror[\\/]commands[\\/]/,
+                priority: 30
+              },
+              {
+                name: 'syntax-highlighter',
+                test: /node_modules[\\/](?:react-syntax-highlighter|highlight\.js|prismjs|refractor|lowlight|hast-util-to-text)[\\/]/,
+                maxSize: 240000,
+                priority: 25
+              },
+              {
+                name: 'terminal',
+                test: /node_modules[\\/]@xterm[\\/]/,
+                maxSize: 240000,
+                priority: 25
+              },
+              {
+                name: 'react-core',
+                test: /node_modules[\\/](?:react|react-dom|react-router|react-router-dom|scheduler)[\\/]/,
+                maxSize: 240000,
+                priority: 20
+              },
+              {
+                name: 'i18n',
+                test: /node_modules[\\/](?:i18next|react-i18next|i18next-browser-languagedetector)[\\/]/,
+                maxSize: 240000,
+                priority: 20
+              }
+            ]
           }
         }
       }

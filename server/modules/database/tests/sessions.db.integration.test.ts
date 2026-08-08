@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { closeConnection } from '@/modules/database/connection.js';
+import Database from 'better-sqlite3';
+
+import { closeConnection, getConnection } from '@/modules/database/connection.js';
 import { initializeDatabase } from '@/modules/database/init-db.js';
+import { runMigrations } from '@/modules/database/migrations.js';
 import { sessionsDb } from '@/modules/database/repositories/sessions.db.js';
 
 async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promise<void> {
@@ -81,4 +84,140 @@ test('repository reads normalize SQLite UTC timestamps to ISO strings', async ()
     assert.match(row?.created_at ?? '', /^\d{4}-\d{2}-\d{2}T/);
     assert.match(row?.updated_at ?? '', /^\d{4}-\d{2}-\d{2}T/);
   });
+});
+
+test('fresh databases include nullable provider parent metadata', async () => {
+  await withIsolatedDatabase(() => {
+    const columns = getConnection().prepare('PRAGMA table_info(sessions)').all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const parentColumn = columns.find((column) => column.name === 'provider_parent_session_id');
+    assert.equal(parentColumn?.notnull, 0);
+
+    const hierarchyMarker = getConnection()
+      .prepare("SELECT value FROM app_config WHERE key = 'opencode_hierarchy_backfill_version'")
+      .get() as { value: string } | undefined;
+    assert.equal(hierarchyMarker?.value, '1');
+  });
+});
+
+test('migrated databases add provider parent metadata and reset the scan cursor', () => {
+  const db = new Database(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT);
+      CREATE TABLE projects (
+        project_id TEXT PRIMARY KEY,
+        project_path TEXT UNIQUE NOT NULL,
+        custom_project_name TEXT,
+        isStarred BOOLEAN DEFAULT 0,
+        isArchived BOOLEAN DEFAULT 0
+      );
+      CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL DEFAULT 'claude',
+        provider_session_id TEXT,
+        custom_name TEXT,
+        project_path TEXT,
+        jsonl_path TEXT,
+        model TEXT,
+        agent TEXT,
+        isArchived BOOLEAN DEFAULT 0,
+        created_at DATETIME,
+        updated_at DATETIME
+      );
+      CREATE TABLE scan_state (id INTEGER PRIMARY KEY CHECK (id = 1), last_scanned_at TIMESTAMP NULL);
+      INSERT INTO scan_state (id, last_scanned_at) VALUES (1, '2026-01-01 00:00:00');
+    `);
+
+    runMigrations(db);
+
+    const parentColumn = (db.prepare('PRAGMA table_info(sessions)').all() as Array<{
+      name: string;
+      notnull: number;
+    }>).find((column) => column.name === 'provider_parent_session_id');
+    assert.equal(parentColumn?.notnull, 0);
+    const scanState = db.prepare('SELECT last_scanned_at FROM scan_state WHERE id = 1').get() as {
+      last_scanned_at: string | null;
+    };
+    assert.equal(scanState.last_scanned_at, null);
+
+    const marker = db
+      .prepare("SELECT value FROM app_config WHERE key = 'opencode_hierarchy_backfill_version'")
+      .get() as { value: string } | undefined;
+    assert.equal(marker?.value, '1');
+
+    db.prepare('UPDATE scan_state SET last_scanned_at = ? WHERE id = 1').run('2026-02-01 00:00:00');
+    runMigrations(db);
+
+    const secondRunScanState = db.prepare('SELECT last_scanned_at FROM scan_state WHERE id = 1').get() as {
+      last_scanned_at: string | null;
+    };
+    assert.equal(secondRunScanState.last_scanned_at, '2026-02-01 00:00:00');
+    const secondRunMarker = db
+      .prepare("SELECT value FROM app_config WHERE key = 'opencode_hierarchy_backfill_version'")
+      .get() as { value: string } | undefined;
+    assert.equal(secondRunMarker?.value, '1');
+  } finally {
+    db.close();
+  }
+});
+
+test('partial hierarchy upgrades reset the scan cursor once even when the parent column already exists', () => {
+  const db = new Database(':memory:');
+  try {
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password_hash TEXT);
+      CREATE TABLE app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE projects (
+        project_id TEXT PRIMARY KEY,
+        project_path TEXT UNIQUE NOT NULL,
+        custom_project_name TEXT,
+        isStarred BOOLEAN DEFAULT 0,
+        isArchived BOOLEAN DEFAULT 0
+      );
+      CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL DEFAULT 'claude',
+        provider_session_id TEXT,
+        custom_name TEXT,
+        project_path TEXT,
+        jsonl_path TEXT,
+        model TEXT,
+        agent TEXT,
+        provider_parent_session_id TEXT,
+        isArchived BOOLEAN DEFAULT 0,
+        created_at DATETIME,
+        updated_at DATETIME
+      );
+      CREATE TABLE scan_state (id INTEGER PRIMARY KEY CHECK (id = 1), last_scanned_at TIMESTAMP NULL);
+      INSERT INTO scan_state (id, last_scanned_at) VALUES (1, '2026-01-01 00:00:00');
+    `);
+
+    runMigrations(db);
+
+    const firstRunScanState = db.prepare('SELECT last_scanned_at FROM scan_state WHERE id = 1').get() as {
+      last_scanned_at: string | null;
+    };
+    assert.equal(firstRunScanState.last_scanned_at, null);
+    assert.equal(
+      (db.prepare("SELECT value FROM app_config WHERE key = 'opencode_hierarchy_backfill_version'").get() as { value: string }).value,
+      '1',
+    );
+
+    db.prepare('UPDATE scan_state SET last_scanned_at = ? WHERE id = 1').run('2026-02-01 00:00:00');
+    runMigrations(db);
+
+    const secondRunScanState = db.prepare('SELECT last_scanned_at FROM scan_state WHERE id = 1').get() as {
+      last_scanned_at: string | null;
+    };
+    assert.equal(secondRunScanState.last_scanned_at, '2026-02-01 00:00:00');
+    assert.equal(
+      (db.prepare("SELECT value FROM app_config WHERE key = 'opencode_hierarchy_backfill_version'").get() as { value: string }).value,
+      '1',
+    );
+  } finally {
+    db.close();
+  }
 });

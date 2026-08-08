@@ -22,7 +22,7 @@ interface UseSlashCommandsOptions {
   provider: LLMProvider;
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
-  textareaRef: RefObject<HTMLTextAreaElement>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   onExecuteCommand: (command: SlashCommand, rawInput?: string) => void | Promise<void>;
 }
 

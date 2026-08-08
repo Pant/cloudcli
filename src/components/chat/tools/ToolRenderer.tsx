@@ -1,13 +1,32 @@
-import React, { memo, useMemo, useCallback } from 'react';
+import React, { lazy, memo, Suspense, useMemo, useCallback } from 'react';
 
 import type { Project } from '../../../types/app';
 import type { SubagentChildTool } from '../types/types';
 
-import { getToolConfig } from './configs/toolConfigs';
-import { OneLineDisplay, BashCommandDisplay, CollapsibleDisplay, ToolDiffViewer, MarkdownContent, FileListContent, TodoListContent, TaskListContent, TextContent, QuestionAnswerContent, SubagentContainer } from './components';
-import { PlanDisplay } from './components/PlanDisplay';
+import { getToolConfig, TOOL_CONFIGS } from './configs/toolConfigs';
+import { OneLineDisplay } from './components/OneLineDisplay';
+import { BashCommandDisplay } from './components/BashCommandDisplay';
+import { CollapsibleDisplay } from './components/CollapsibleDisplay';
+import { FileListContent } from './components/ContentRenderers/FileListContent';
+import { TextContent } from './components/ContentRenderers/TextContent';
 import { ToolStatusBadge } from './components/ToolStatusBadge';
 import type { ToolStatus } from './components/ToolStatusBadge';
+
+const ToolDiffViewer = lazy(() => import('./components/ToolDiffViewer').then((module) => ({ default: module.ToolDiffViewer })));
+const MarkdownContent = lazy(() => import('./components/ContentRenderers/MarkdownContent').then((module) => ({ default: module.MarkdownContent })));
+const TodoListContent = lazy(() => import('./components/ContentRenderers/TodoListContent').then((module) => ({ default: module.TodoListContent })));
+const TaskListContent = lazy(() => import('./components/ContentRenderers/TaskListContent').then((module) => ({ default: module.TaskListContent })));
+const QuestionAnswerContent = lazy(() => import('./components/ContentRenderers/QuestionAnswerContent').then((module) => ({ default: module.QuestionAnswerContent })));
+const SubagentContainer = lazy(() => import('./components/SubagentContainer').then((module) => ({ default: module.SubagentContainer })));
+const PlanDisplay = lazy(() => import('./components/PlanDisplay').then((module) => ({ default: module.PlanDisplay })));
+
+function ToolRendererFallback() {
+  return <div className="h-7 rounded-md border border-border/50 bg-muted/20" aria-hidden="true" />;
+}
+
+function LazyToolFamily({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<ToolRendererFallback />}>{children}</Suspense>;
+}
 
 type DiffLine = {
   type: string;
@@ -85,6 +104,9 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
   subagentState
 }) => {
   const config = getToolConfig(toolName);
+  const usesFallbackConfig = config === TOOL_CONFIGS.Default;
+  // The fallback body already contains the formatted raw input.
+  const shouldShowRawParameters = mode === 'input' && showRawParameters && !usesFallbackConfig;
   const displayConfig: any = mode === 'input' ? config.input : config.result;
 
   const parsedData = useMemo(() => {
@@ -113,11 +135,13 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
   if (isSubagentContainer && subagentState) {
     if (mode === 'result') return null;
     return (
-      <SubagentContainer
-        toolInput={toolInput}
-        toolResult={toolResult}
-        subagentState={subagentState}
-      />
+      <LazyToolFamily>
+        <SubagentContainer
+          toolInput={toolInput}
+          toolResult={toolResult}
+          subagentState={subagentState}
+        />
+      </LazyToolFamily>
     );
   }
 
@@ -194,16 +218,18 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
     const isStreaming = mode === 'input' && !toolResult;
 
     return (
-      <PlanDisplay
-        title={title}
-        content={contentProps.content || ''}
-        defaultOpen={displayConfig.defaultOpen ?? false}
-        isStreaming={isStreaming}
-        showRawParameters={mode === 'input' && showRawParameters}
-        rawContent={rawToolInput}
-        toolName={toolName}
-        toolId={toolId}
-      />
+      <LazyToolFamily>
+        <PlanDisplay
+          title={title}
+          content={contentProps.content || ''}
+          defaultOpen={displayConfig.defaultOpen ?? false}
+          isStreaming={isStreaming}
+          showRawParameters={shouldShowRawParameters}
+          rawContent={rawToolInput}
+          toolName={toolName}
+          toolId={toolId}
+        />
+      </LazyToolFamily>
     );
   }
 
@@ -228,17 +254,19 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
       case 'diff':
         if (createDiff) {
           contentComponent = (
+            <LazyToolFamily>
             <ToolDiffViewer
               {...contentProps}
               createDiff={createDiff}
               onFileClick={() => onFileOpen?.(contentProps.filePath)}
             />
+            </LazyToolFamily>
           );
         }
         break;
 
       case 'markdown':
-        contentComponent = <MarkdownContent content={contentProps.content || ''} />;
+        contentComponent = <LazyToolFamily><MarkdownContent content={contentProps.content || ''} /></LazyToolFamily>;
         break;
 
       case 'file-list':
@@ -254,24 +282,24 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
       case 'todo-list':
         if (contentProps.todos?.length > 0) {
           contentComponent = (
-            <TodoListContent
+            <LazyToolFamily><TodoListContent
               todos={contentProps.todos}
               isResult={contentProps.isResult}
-            />
+            /></LazyToolFamily>
           );
         }
         break;
 
       case 'task':
-        contentComponent = <TaskListContent content={contentProps.content || ''} />;
+        contentComponent = <LazyToolFamily><TaskListContent content={contentProps.content || ''} /></LazyToolFamily>;
         break;
 
       case 'question-answer':
         contentComponent = (
-          <QuestionAnswerContent
+          <LazyToolFamily><QuestionAnswerContent
             questions={contentProps.questions || []}
             answers={contentProps.answers || {}}
-          />
+          /></LazyToolFamily>
         );
         break;
 
@@ -315,7 +343,7 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
         defaultOpen={defaultOpen}
         onTitleClick={handleTitleClick}
         badge={badgeElement}
-        showRawParameters={mode === 'input' && showRawParameters}
+        showRawParameters={shouldShowRawParameters}
         rawContent={rawToolInput}
         toolCategory={getToolCategory(toolName)}
       >

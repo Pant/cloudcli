@@ -30,9 +30,12 @@ type ProjectApiView = {
   isArchived: boolean;
   isStarred: boolean;
   sessions: [];
-  sessionMeta: {
-    hasMore: false;
-    total: 0;
+    sessionMeta: {
+      hasMore: false;
+      total: 0;
+      rootTotal: 0;
+      rootOffset: 0;
+      nextOffset: 0;
   };
 };
 
@@ -81,6 +84,9 @@ function mapProjectRowToApiView(projectRow: ProjectRepositoryRow): ProjectApiVie
     sessionMeta: {
       hasMore: false,
       total: 0,
+      rootTotal: 0,
+      rootOffset: 0,
+      nextOffset: 0,
     },
   };
 }

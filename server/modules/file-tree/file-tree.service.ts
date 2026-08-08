@@ -8,7 +8,12 @@ import type {
   FileTreeServices,
   FileTreeUploadedFile,
 } from '@/shared/types.js';
-import { AppError, FORBIDDEN_WORKSPACE_PATHS, normalizeProjectPath } from '@/shared/utils.js';
+import {
+  AppError,
+  FILE_TREE_MAX_DEPTH,
+  FORBIDDEN_WORKSPACE_PATHS,
+  normalizeProjectPath,
+} from '@/shared/utils.js';
 
 const IGNORED_DIRECTORY_NAMES = new Set([
   'node_modules', 'dist', 'build', '.next', '.nuxt', '.cache', '.parcel-cache',
@@ -73,9 +78,10 @@ function resolvePathInsideProject(projectRoot: string, targetPath: string): stri
   const resolvedPath = path.isAbsolute(targetPath)
     ? path.resolve(targetPath)
     : path.resolve(projectRoot, targetPath);
-  const normalizedProjectRoot = path.resolve(projectRoot) + path.sep;
+  const normalizedProjectRoot = path.resolve(projectRoot);
+  const relativePath = path.relative(normalizedProjectRoot, resolvedPath);
 
-  if (!resolvedPath.startsWith(normalizedProjectRoot)) {
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     throw createFileTreeError('Path must be under project root', 403, 'PATH_OUTSIDE_PROJECT');
   }
 
@@ -172,6 +178,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     maximumDepth: number,
     currentDepth = 0,
     includeEntry: FileTreeEntryFilter = () => true,
+    includeMetadata = true,
   ): Promise<FileTreeNode[]> {
     let entries;
     try {
@@ -183,7 +190,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       }
     } catch (error) {
       const errorCode = readErrorCode(error);
-      if (errorCode !== 'EACCES' && errorCode !== 'EPERM') {
+      if (errorCode !== 'ENOENT' && errorCode !== 'EACCES' && errorCode !== 'EPERM') {
         dependencies.logger.error(`Error reading directory "${directoryPath}"`, error);
       }
       return [];
@@ -209,28 +216,30 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         permissionsRwx: '---------',
       };
 
-      try {
-        await acquire();
+      if (includeMetadata) {
         try {
-          const stats = await fileSystem.lstat(itemPath);
-          const ownerPermissions = (stats.mode >> 6) & 7;
-          const groupPermissions = (stats.mode >> 3) & 7;
-          const otherPermissions = stats.mode & 7;
+          await acquire();
+          try {
+            const stats = await fileSystem.lstat(itemPath);
+            const ownerPermissions = (stats.mode >> 6) & 7;
+            const groupPermissions = (stats.mode >> 3) & 7;
+            const otherPermissions = stats.mode & 7;
 
-          item.size = stats.size;
-          item.modified = stats.mtime.toISOString();
-          item.permissions = `${ownerPermissions}${groupPermissions}${otherPermissions}`;
-          item.permissionsRwx = permissionBitsToRwx(ownerPermissions)
-            + permissionBitsToRwx(groupPermissions)
-            + permissionBitsToRwx(otherPermissions);
-          if (stats.isSymbolicLink()) {
-            item.isSymlink = true;
+            item.size = stats.size;
+            item.modified = stats.mtime.toISOString();
+            item.permissions = `${ownerPermissions}${groupPermissions}${otherPermissions}`;
+            item.permissionsRwx = permissionBitsToRwx(ownerPermissions)
+              + permissionBitsToRwx(groupPermissions)
+              + permissionBitsToRwx(otherPermissions);
+            if (stats.isSymbolicLink()) {
+              item.isSymlink = true;
+            }
+          } finally {
+            release();
           }
-        } finally {
-          release();
+        } catch {
+          // Metadata failures should not hide an otherwise readable tree entry.
         }
-      } catch {
-        // Metadata failures should not hide an otherwise readable tree entry.
       }
 
       // Skip recursing into pseudo-filesystems and other system-critical
@@ -245,6 +254,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
           maximumDepth,
           currentDepth + 1,
           includeEntry,
+          includeMetadata,
         );
       }
 
@@ -400,6 +410,13 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
 
     async listProjectFiles(projectId, options) {
       const projectRoot = await resolveProjectRoot(projectId);
+      const targetPath = resolvePathInsideProject(projectRoot, options?.targetPath ?? '');
+      const requestedDepth = options?.depth ?? FILE_TREE_MAX_DEPTH;
+      const maximumDepth = Number.isFinite(requestedDepth)
+        ? Math.min(FILE_TREE_MAX_DEPTH, Math.max(0, Math.floor(requestedDepth)))
+        : FILE_TREE_MAX_DEPTH;
+      const includeMetadata = options?.includeMetadata ?? true;
+
       try {
         await fileSystem.access(projectRoot);
       } catch {
@@ -418,7 +435,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         }
       }
 
-      return buildFileTree(projectRoot, 10, 0, includeEntry);
+      return buildFileTree(targetPath, maximumDepth, 0, includeEntry, includeMetadata);
     },
 
     async createEntry(input) {

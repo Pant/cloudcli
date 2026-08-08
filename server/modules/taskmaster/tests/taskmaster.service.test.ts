@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { createTaskmasterService } from '../taskmaster.service.js';
@@ -12,6 +14,15 @@ function createDependencies(
 ): ServiceDependencies {
   return {
     getHomeDirectory: () => homeDirectory,
+    accessFile: async () => { throw new Error('not used'); },
+    environment: { PATH: '' },
+    platform: 'linux',
+    spawnProcess: (() => {
+      const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      return child;
+    }) as unknown as ServiceDependencies['spawnProcess'],
     readTextFile: async (filePath) => {
       const content = files[filePath];
       if (content === undefined) {

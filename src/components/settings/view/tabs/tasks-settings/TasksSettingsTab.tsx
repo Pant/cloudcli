@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
-import { useTasksSettings } from '../../../../../contexts/TasksSettingsContext';
+
+import { useTasksSettings } from '../../../../../contexts/useTasksSettings';
 import SettingsCard from '../../SettingsCard';
 import SettingsRow from '../../SettingsRow';
 import SettingsSection from '../../SettingsSection';

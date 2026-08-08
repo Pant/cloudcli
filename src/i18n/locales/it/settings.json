@@ -93,7 +93,35 @@
     "tasks": "Attività",
     "notifications": "Notifiche",
     "plugins": "Plugin",
+    "cache": "Cache",
     "about": "Informazioni"
+  },
+  "cache": {
+    "title": "Cache",
+    "description": "Gestisci gli storici delle sessioni memorizzati localmente per questo account.",
+    "statsTitle": "Storici memorizzati",
+    "statsDescription": "Vengono conteggiati solo gli storici locali di questo account. Gli altri account e gli storici sul server sono preservati.",
+    "sessionCountLabel": "Sessioni memorizzate",
+    "messageCountLabel": "Messaggi memorizzati",
+    "loading": "Caricamento delle statistiche della cache...",
+    "loadError": "Impossibile caricare le statistiche della cache.",
+    "syncSectionTitle": "Sincronizza gli storici",
+    "syncDescription": "Recupera tutti gli storici disponibili per questo account. Gli storici possono essere memorizzati di nuovo automaticamente in seguito.",
+    "syncButton": "Sincronizza tutti gli storici",
+    "syncPending": "Sincronizzazione degli storici...",
+    "syncSuccess": "Sincronizzati {{succeeded}} storici su {{eligible}}.",
+    "syncPartial": "Sincronizzazione completata con {{failed}} storici non riusciti ({{succeeded}} su {{eligible}} riusciti).",
+    "syncError": "Impossibile sincronizzare tutti gli storici.",
+    "clearSectionTitle": "Cancella gli storici locali",
+    "clearDescription": "Rimuovi solo gli storici memorizzati localmente per questo account. Gli altri account e gli storici sul server sono preservati.",
+    "clearButton": "Cancella la cache di questo account",
+    "clearPending": "Cancellazione della cache...",
+    "clearSuccess": "La cache locale di questo account è stata cancellata. Gli storici possono essere memorizzati di nuovo in seguito.",
+    "clearError": "Impossibile cancellare la cache di questo account.",
+    "confirmationTitle": "Cancellare gli storici locali di questo account?",
+    "confirmationDescription": "Questa azione rimuove solo gli storici delle sessioni memorizzati localmente per questo account. Gli altri account e gli storici sul server sono preservati e gli storici possono essere memorizzati di nuovo in seguito.",
+    "cancel": "Annulla",
+    "confirm": "Cancella cache"
   },
   "notifications": {
     "title": "Notifiche",
@@ -439,6 +467,16 @@
     "actions": {
       "edit": "Modifica server",
       "delete": "Elimina server"
+    },
+    "managed": {
+      "badge": "Gestito",
+      "hint": "Gestito da CloudCLI.",
+      "enabled": "Abilitato",
+      "disabled": "Disabilitato",
+      "saving": "Salvataggio…",
+      "enable": "Abilita il server MCP gestito",
+      "disable": "Disabilita il server MCP gestito",
+      "saveFailed": "Impossibile salvare lo stato del server MCP gestito."
     },
     "help": {
       "title": "Informazioni su Codex MCP",

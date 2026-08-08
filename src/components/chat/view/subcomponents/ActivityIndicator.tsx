@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Shimmer } from '../../../../shared/view/ui';
 import type { SessionActivity } from '../../../../hooks/useSessionProtection';
+
+import { getActivityLabel, getElapsedTimeParts } from './ActivityIndicator.utils';
 
 type ActivityIndicatorProps = {
   activity: SessionActivity | null;
@@ -23,10 +24,9 @@ const EXIT_ANIMATION_MS = 220;
 
 /**
  * Minimal response-in-progress indicator, in the spirit of the inline status
- * lines in Claude Code / Codex / OpenCode: a shimmering activity label, the
- * elapsed time, and an interrupt affordance. Rendered only while the viewed
- * session has an entry in the processing map; it disappears the instant that
- * entry is removed.
+ * lines in Claude Code / Codex / OpenCode: an activity label, the elapsed time,
+ * and an interrupt affordance. Rendered only while the viewed session has an
+ * entry in the processing map; it disappears after its bounded exit effect.
  */
 export default function ActivityIndicator({ activity, onAbort, isInputFocused = false }: ActivityIndicatorProps) {
   const { t } = useTranslation('chat');
@@ -64,11 +64,8 @@ export default function ActivityIndicator({ activity, onAbort, isInputFocused = 
   if (!renderedActivity) return null;
 
   const actionWords = ACTION_KEYS.map((key, i) => t(key, { defaultValue: DEFAULT_ACTION_WORDS[i] }));
-  const label = (renderedActivity.statusText || actionWords[Math.floor(elapsedSeconds / 4) % actionWords.length])
-    .replace(/\.+$/, '');
-
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
+  const label = getActivityLabel(renderedActivity.statusText, actionWords, elapsedSeconds);
+  const { minutes, seconds } = getElapsedTimeParts(elapsedSeconds);
   const elapsedLabel = minutes < 1
     ? t('claudeStatus.elapsed.seconds', { count: seconds, defaultValue: '{{count}}s' })
     : t('claudeStatus.elapsed.minutesSeconds', { minutes, seconds, defaultValue: '{{minutes}}m {{seconds}}s' });
@@ -87,8 +84,8 @@ export default function ActivityIndicator({ activity, onAbort, isInputFocused = 
     >
       <div className="flex items-end justify-between gap-2">
         <div className={`${tabSurfaceClassName} gap-2`}>
-          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary" aria-hidden />
-          <Shimmer className="font-medium">{`${label}…`}</Shimmer>
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+          <span className="font-medium">{`${label}…`}</span>
           <span className="tabular-nums text-muted-foreground/60">{elapsedLabel}</span>
         </div>
 

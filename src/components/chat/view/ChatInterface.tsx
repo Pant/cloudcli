@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDownIcon } from 'lucide-react';
 
-import { useTasksSettings } from '../../../contexts/TasksSettingsContext';
-import { useWebSocket } from '../../../contexts/WebSocketContext';
+import { useTasksSettings } from '../../../contexts/useTasksSettings';
+import { useWebSocket } from '../../../contexts/useWebSocket';
 import PermissionContext from '../../../contexts/PermissionContext';
 import type { ChatInterfaceProps, Provider } from '../types/types';
 import { useChatProviderState } from '../hooks/useChatProviderState';
@@ -11,11 +11,18 @@ import { useChatSessionState } from '../hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '../hooks/useChatRealtimeHandlers';
 import { useChatComposerState } from '../hooks/useChatComposerState';
 import { useOpenCodeAgentState } from '../hooks/useOpenCodeAgentState';
-import { useSessionStore } from '../../../stores/useSessionStore';
+import { useSessionStoreContext } from '../../../stores/sessionStoreContext';
+import { api } from '../../../utils/api';
+import type { AppointmentTriggerRequest, PromptAppointment } from '../types/appointments';
 
+import type { QuestionFormSubmitHandler } from './subcomponents/QuestionFormCard';
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
 import CommandResultModal from './subcomponents/CommandResultModal';
+import PromptAppointmentModal from './subcomponents/PromptAppointmentModal';
+import { persistOpenCodePreferenceChange } from './agentPreferenceIntegration';
+
+export type AgentPreferenceFeedback = 'model' | 'reasoning';
 
 function ChatInterface({
   selectedProject,
@@ -38,28 +45,24 @@ function ChatInterface({
   onShowAllTasks,
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
-  const { subscribe } = useWebSocket();
+  const { subscribe, connectionEpoch } = useWebSocket();
   const { t } = useTranslation('chat');
 
-  const sessionStore = useSessionStore();
-  const streamTimerRef = useRef<number | null>(null);
-  const accumulatedStreamRef = useRef('');
+  const sessionStore = useSessionStoreContext();
   const agentModelSyncKeyRef = useRef('');
+  const preferenceOperationRef = useRef(0);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [agentPreferenceFeedback, setAgentPreferenceFeedback] = useState<AgentPreferenceFeedback | null>(null);
+  const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
+  const [appointments, setAppointments] = useState<PromptAppointment[]>([]);
+  const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+  const [appointmentError, setAppointmentError] = useState<string | null>(null);
+  const [appointmentSubmitting, setAppointmentSubmitting] = useState(false);
+  const reviewAutoOpenedRef = useRef(new Set<string>());
   // When each session's `chat.subscribe` was last sent; idle acks older than
   // a later local request are discarded as stale.
   const statusCheckSentAtRef = useRef(new Map<string, number>());
-  // Highest live `seq` observed per session. Written by the realtime handler
-  // on every sequenced frame, read whenever a `chat.subscribe` is sent so the
-  // server replays only the events this client actually missed.
-  const lastSeqRef = useRef(new Map<string, number>());
-
-  const resetStreamingState = useCallback(() => {
-    if (streamTimerRef.current) {
-      clearTimeout(streamTimerRef.current);
-      streamTimerRef.current = null;
-    }
-    accumulatedStreamRef.current = '';
-  }, []);
+  const resetStreamingState = useCallback(() => undefined, []);
 
   const {
     provider,
@@ -84,6 +87,7 @@ function ChatInterface({
     providerModelCacheCatalog,
     providerModelsLoading,
     providerModelsRefreshing,
+    sessionModelLoading,
     hardRefreshProviderModels,
     selectProviderModel,
     setStoredProviderEffort,
@@ -100,8 +104,16 @@ function ChatInterface({
     selectAgent,
     rememberAgentModel,
     getAgentModel,
+    getAgentPreferences,
+    updateAgentPreferences,
     refreshAgents,
-  } = useOpenCodeAgentState(provider, selectedProject?.fullPath || selectedProject?.path);
+  } = useOpenCodeAgentState(
+    provider,
+    selectedProject?.fullPath || selectedProject?.path,
+    selectedSession?.id,
+    selectedSession?.agent,
+    selectedSession?.model,
+  );
 
   const {
     chatMessages,
@@ -112,10 +124,7 @@ function ChatInterface({
     currentSessionId,
     setCurrentSessionId,
     isLoadingSessionMessages,
-    isLoadingMoreMessages,
-    hasMoreMessages,
-    totalMessages,
-    isUserScrolledUp,
+     isUserScrolledUp,
     setIsUserScrolledUp,
     tokenBudget,
     setTokenBudget,
@@ -123,10 +132,6 @@ function ChatInterface({
     visibleMessages,
     loadEarlierMessages,
     loadAllMessages,
-    allMessagesLoaded,
-    isLoadingAllMessages,
-    loadAllJustFinished,
-    showLoadAllOverlay,
     createDiff,
     scrollContainerRef,
     scrollToBottom,
@@ -143,7 +148,7 @@ function ChatInterface({
     onSessionIdle,
     resetStreamingState,
     statusCheckSentAtRef,
-    lastSeqRef,
+    connectionEpoch,
     sessionStore,
   });
 
@@ -185,9 +190,12 @@ function ChatInterface({
     isDragActive,
     openAttachmentPicker,
     handleSubmit,
+    scheduleAppointment,
+    sendQuestionFormAnswer,
     queuedDraft,
     editQueuedDraft,
     deleteQueuedDraft,
+    patchQueuedDraftOptions,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,
@@ -232,22 +240,76 @@ function ChatInterface({
     resolvePermissionModeForProvider,
   });
 
+  const refreshAppointments = useCallback(async () => {
+    const projectId = selectedProject?.projectId;
+    if (!projectId) return;
+    setAppointmentsLoading(true);
+    try {
+      const response = await api.listProjectAppointments(projectId);
+      if (!response.ok) throw new Error(`Unable to load appointments (${response.status})`);
+      const body = await response.json();
+      const rows = Array.isArray(body?.data) ? body.data : [];
+      setAppointments(rows);
+      setAppointmentError(null);
+      if (rows.some((row: PromptAppointment) => row.status === 'needs_review') && !reviewAutoOpenedRef.current.has(projectId)) {
+        reviewAutoOpenedRef.current.add(projectId);
+        setAppointmentModalOpen(true);
+      }
+    } catch (error) {
+      setAppointmentError(error instanceof Error ? error.message : 'Unable to load appointments.');
+    } finally {
+      setAppointmentsLoading(false);
+    }
+  }, [selectedProject?.projectId]);
+
+  useEffect(() => {
+    void refreshAppointments();
+  }, [refreshAppointments]);
+
+  const handleCreateAppointment = useCallback(async (trigger: AppointmentTriggerRequest) => {
+    setAppointmentSubmitting(true);
+    setAppointmentError(null);
+    try {
+      await scheduleAppointment(trigger);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to schedule prompt.';
+      setAppointmentError(message);
+      throw error;
+    } finally {
+      setAppointmentSubmitting(false);
+    }
+  }, [scheduleAppointment]);
+
+  const showAgentPreferenceFeedback = useCallback((kind: AgentPreferenceFeedback) => {
+    setAgentPreferenceFeedback(kind);
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = setTimeout(() => setAgentPreferenceFeedback(null), 3000);
+  }, []);
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+  }, []);
+
+  const handleQuestionFormSubmit = useCallback<QuestionFormSubmitHandler>(
+    async (submission) => sendQuestionFormAnswer(submission.message),
+    [sendQuestionFormAnswer],
+  );
+
   // On WebSocket reconnect, re-fetch the current session's messages from the
   // server so missed streaming events are shown, then re-subscribe — the
   // `chat_subscribed` ack restores or clears the activity indicator, replays
   // missed live events, and re-attaches a still-running stream to this socket.
-  const handleWebSocketReconnect = useCallback(async () => {
-    if (!selectedProject || !selectedSession) return;
-    await sessionStore.refreshFromServer(selectedSession.id);
-    statusCheckSentAtRef.current.set(selectedSession.id, Date.now());
-    sendMessage({
+  const subscribeSession = useCallback((sessionId: string) => {
+    statusCheckSentAtRef.current.set(sessionId, Date.now());
+    return sendMessage({
       type: 'chat.subscribe',
-      sessions: [{
-        sessionId: selectedSession.id,
-        lastSeq: lastSeqRef.current.get(selectedSession.id) ?? 0,
-      }],
+      sessions: [sessionStore.getSubscriptionTarget(sessionId)],
     });
-  }, [selectedProject, selectedSession, sendMessage, sessionStore]);
+  }, [sendMessage, sessionStore]);
+
+  const handleRecoveryRequired = useCallback((sessionId: string) => {
+    void sessionStore.recoverSession(sessionId).then(() => subscribeSession(sessionId));
+  }, [sessionStore, subscribeSession]);
 
   useChatRealtimeHandlers({
     subscribe,
@@ -257,13 +319,10 @@ function ChatInterface({
     setTokenBudget,
     pendingPermissionRequests,
     setPendingPermissionRequests,
-    streamTimerRef,
-    accumulatedStreamRef,
-    lastSeqRef,
     statusCheckSentAtRef,
     onSessionProcessing,
     onSessionIdle,
-    onWebSocketReconnect: handleWebSocketReconnect,
+    onRecoveryRequired: handleRecoveryRequired,
     sessionStore,
   });
 
@@ -286,12 +345,6 @@ function ChatInterface({
       document.removeEventListener('keydown', handleGlobalEscape, { capture: true });
     };
   }, [canAbortSession, handleAbortSession]);
-
-  useEffect(() => {
-    return () => {
-      resetStreamingState();
-    };
-  }, [resetStreamingState]);
 
   const permissionContextValue = useMemo(() => ({
     pendingPermissionRequests,
@@ -316,15 +369,61 @@ function ChatInterface({
   // A composer pick becomes the default for new chats and, when a session is
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
+    if (provider === 'opencode' && selectedAgent) {
+      const operation = ++preferenceOperationRef.current;
+      try {
+        const preference = await persistOpenCodePreferenceChange({
+          agent: selectedAgent,
+          patch: { model },
+          updateAgentPreferences,
+          persistSessionModel: (nextModel) => selectProviderModel(
+            provider,
+            nextModel,
+            currentSessionId || selectedSession?.id || null,
+          ),
+          patchQueuedOptions: patchQueuedDraftOptions,
+          isCurrent: () => preferenceOperationRef.current === operation,
+        });
+        if (preference) showAgentPreferenceFeedback('model');
+      } catch (error) {
+        console.error('Error changing the selected OpenCode agent model:', error);
+      }
+      return;
+    }
     try {
       await selectProviderModel(provider, model, currentSessionId || selectedSession?.id || null);
-      if (provider === 'opencode' && selectedAgent) {
-        rememberAgentModel(selectedAgent, model);
-      }
     } catch (error) {
       console.error('Error changing the active session model:', error);
     }
-  }, [currentSessionId, provider, rememberAgentModel, selectProviderModel, selectedAgent, selectedSession?.id]);
+  }, [currentSessionId, patchQueuedDraftOptions, provider, selectProviderModel, selectedAgent, selectedSession?.id, showAgentPreferenceFeedback, updateAgentPreferences]);
+
+  const handleSelectComposerEffort = useCallback(async (nextEffort: string) => {
+    if (provider !== 'opencode' || !selectedAgent) {
+      setStoredProviderEffort(provider, nextEffort);
+      return;
+    }
+    const operation = ++preferenceOperationRef.current;
+    try {
+      const preference = await persistOpenCodePreferenceChange({
+        agent: selectedAgent,
+        patch: { reasoningEffort: nextEffort },
+        updateAgentPreferences,
+        patchQueuedOptions: patchQueuedDraftOptions,
+        isCurrent: () => preferenceOperationRef.current === operation,
+      });
+      if (!preference) return;
+      setStoredProviderEffort(provider, preference.reasoningEffort);
+      showAgentPreferenceFeedback('reasoning');
+    } catch (error) {
+      console.error('Error changing the selected OpenCode agent reasoning:', error);
+    }
+  }, [patchQueuedDraftOptions, provider, selectedAgent, setStoredProviderEffort, showAgentPreferenceFeedback, updateAgentPreferences]);
+
+  const handleSelectComposerAgent = useCallback((agent: string) => {
+    preferenceOperationRef.current += 1;
+    setAgentPreferenceFeedback(null);
+    selectAgent(agent);
+  }, [selectAgent]);
 
   useEffect(() => {
     if (provider !== 'opencode') {
@@ -342,25 +441,29 @@ function ChatInterface({
     }
     agentModelSyncKeyRef.current = syncKey;
 
-    const restoredModel = resolveAgentModelOption(selectedAgent);
-    if (!restoredModel || restoredModel === currentProviderModel) {
-      return;
-    }
-    void selectProviderModel(
-      provider,
-      restoredModel,
-      currentSessionId || selectedSession?.id || null,
-    ).then(() => {
-      rememberAgentModel(selectedAgent, restoredModel);
-    }).catch((error) => {
-      console.error('Error restoring the selected agent model:', error);
+    const operation = ++preferenceOperationRef.current;
+    const preference = getAgentPreferences(selectedAgent);
+    const restoredModel = resolveAgentModelOption(selectedAgent) || preference.model;
+    setStoredProviderEffort(provider, preference.reasoningEffort);
+    patchQueuedDraftOptions({
+      agent: selectedAgent,
+      ...(restoredModel ? { model: restoredModel } : {}),
+      effort: preference.reasoningEffort,
     });
+    if (!restoredModel || restoredModel === currentProviderModel) return;
+    void selectProviderModel(provider, restoredModel, currentSessionId || selectedSession?.id || null)
+      .then(() => {
+        if (preferenceOperationRef.current === operation) rememberAgentModel(selectedAgent, restoredModel);
+      })
+      .catch((error) => console.error('Error restoring the selected agent model:', error));
   }, [
     agentOptions.length,
     currentProviderModel,
     currentProviderModelOptions.length,
     currentSessionId,
     provider,
+    getAgentPreferences,
+    patchQueuedDraftOptions,
     rememberAgentModel,
     resolveAgentModelOption,
     selectedAgent,
@@ -368,6 +471,7 @@ function ChatInterface({
     selectedProject?.path,
     selectedSession?.id,
     selectProviderModel,
+    setStoredProviderEffort,
   ]);
 
   // Mirrors ChatComposer's own visibility check so the message pane can
@@ -429,18 +533,10 @@ function ChatInterface({
           isTaskMasterInstalled={isTaskMasterInstalled}
           onShowAllTasks={onShowAllTasks}
           setInput={setInput}
-          isLoadingMoreMessages={isLoadingMoreMessages}
-          hasMoreMessages={hasMoreMessages}
-          totalMessages={totalMessages}
-          sessionMessagesCount={chatMessages.length}
-          visibleMessageCount={visibleMessageCount}
+           visibleMessageCount={visibleMessageCount}
           visibleMessages={visibleMessages}
           loadEarlierMessages={loadEarlierMessages}
           loadAllMessages={loadAllMessages}
-          allMessagesLoaded={allMessagesLoaded}
-          isLoadingAllMessages={isLoadingAllMessages}
-          loadAllJustFinished={loadAllJustFinished}
-          showLoadAllOverlay={showLoadAllOverlay}
           createDiff={createDiff}
           onFileOpen={onFileOpen}
           onShowSettings={onShowSettings}
@@ -448,6 +544,7 @@ function ChatInterface({
           showRawParameters={showRawParameters}
           showThinking={showThinking}
           selectedProject={selectedProject}
+          onSubmitQuestionForm={handleQuestionFormSubmit}
         />
 
         <div className="relative flex-shrink-0">
@@ -475,22 +572,23 @@ function ChatInterface({
           agent={selectedAgent}
           availableAgentOptions={agentOptions}
           agentsLoading={agentsLoading}
-          onSelectAgent={selectAgent}
+           onSelectAgent={handleSelectComposerAgent}
           onRefreshAgents={() => void refreshAgents()}
           effort={currentProviderEffort}
           availableEffortOptions={currentProviderEffortOptions}
-          onSelectEffort={(nextEffort) => setStoredProviderEffort(provider, nextEffort)}
+           onSelectEffort={handleSelectComposerEffort}
           model={currentProviderModel}
           availableModelOptions={currentProviderModelOptions}
           onSelectModel={handleSelectComposerModel}
-          modelsLoading={providerModelsLoading}
+          modelsLoading={providerModelsLoading || sessionModelLoading}
           tokenBudget={tokenBudget}
           onShowTokenUsage={showCostModal}
           slashCommandsCount={slashCommandsCount}
           onToggleCommandMenu={handleToggleCommandMenu}
           hasInput={Boolean(input.trim())}
           onClearInput={handleClearInput}
-          onSubmit={handleSubmit}
+           onSubmit={handleSubmit}
+           onShowAppointments={() => setAppointmentModalOpen(true)}
           isDragActive={isDragActive}
           queuedDraft={queuedDraft}
           onEditQueuedDraft={editQueuedDraft}
@@ -530,7 +628,10 @@ function ChatInterface({
           isInputFocused={isInputFocused}
           onInputFocusChange={handleInputFocusChange}
           placeholder={t('input.placeholder', { provider: selectedProviderLabel })}
-          isTextareaExpanded={isTextareaExpanded}
+           isTextareaExpanded={isTextareaExpanded}
+           preferenceFeedback={agentPreferenceFeedback
+             ? t(`composer.preferenceFeedback.${agentPreferenceFeedback}`)
+             : null}
         />
         </div>
       </div>
@@ -544,6 +645,19 @@ function ChatInterface({
         onHardRefreshProviderModels={hardRefreshProviderModels}
         currentSessionId={currentSessionId || selectedSession?.id || null}
         onSelectProviderModel={selectProviderModel}
+      />
+      <PromptAppointmentModal
+        open={appointmentModalOpen}
+        onClose={() => setAppointmentModalOpen(false)}
+        projectId={selectedProject.projectId}
+        prompt={input}
+        attachmentCount={attachedFiles.length}
+        appointments={appointments}
+        loading={appointmentsLoading}
+        submitting={appointmentSubmitting}
+        error={appointmentError}
+        onCreate={handleCreateAppointment}
+        onAppointmentsChange={refreshAppointments}
       />
     </PermissionContext.Provider>
   );

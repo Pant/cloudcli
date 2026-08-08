@@ -12,6 +12,9 @@ dist-server/
 dist-ssr/
 build/
 out/
+/.typecheck-frontend.tsbuildinfo
+/.typecheck-backend.tsbuildinfo
+/.build-backend.tsbuildinfo
 
 # Environment variables
 .env
@@ -92,6 +95,7 @@ jspm_packages/
 tmp/
 temp/
 .tmp/
+/.manual-validation/
 
 # Vite
 .vite/

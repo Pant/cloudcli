@@ -95,6 +95,56 @@ test('project files route requests gitignore filtering when explicitly enabled',
   assert.deepEqual(inputs, [['project-1', { respectGitignore: true }]]);
 });
 
+test('project files route parses, clamps, and forwards listing controls', async () => {
+  const inputs: Parameters<FileTreeServices['listProjectFiles']>[] = [];
+  const services = createFakeServices({
+    listProjectFiles: async (...input) => {
+      inputs.push(input);
+      return [];
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/file-tree/projects/project-1/files?targetPath=src%2Fcomponents&depth=999&includeMetadata=false&respectGitignore=true`,
+    );
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.deepEqual(inputs, [[
+    'project-1',
+    {
+      respectGitignore: true,
+      targetPath: 'src/components',
+      depth: 10,
+      includeMetadata: false,
+    },
+  ]]);
+});
+
+test('project files route rejects invalid depth before invoking the service', async () => {
+  let listCalled = false;
+  const services = createFakeServices({
+    listProjectFiles: async () => {
+      listCalled = true;
+      return [];
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/file-tree/projects/project-1/files?depth=-1`,
+    );
+    const payload = await response.json() as { error: string };
+
+    assert.equal(response.status, 400);
+    assert.equal(payload.error, 'depth must be a non-negative integer');
+  });
+
+  assert.equal(listCalled, false);
+});
+
 test('create route parses the transport payload before invoking the service', async () => {
   const inputs: Parameters<FileTreeServices['createEntry']>[0][] = [];
   const services = createFakeServices({

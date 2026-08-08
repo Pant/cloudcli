@@ -4,6 +4,22 @@ export const SHELL_RESTART_DELAY_MS = 200;
 export const TERMINAL_INIT_DELAY_MS = 100;
 export const TERMINAL_RESIZE_DELAY_MS = 50;
 
+export type TerminalRendererPolicy = {
+  useWebgl: false;
+  cursorBlink: boolean;
+};
+
+// Keep terminal rendering on xterm's built-in renderer. WebGL is intentionally
+// opt-out rather than an implicit addon so every shell does not retain a GPU
+// surface while it is idle or hidden. Cursor blinking is only enabled for an
+// explicitly active shell because it otherwise causes recurring redraws.
+export function getTerminalRendererPolicy(isActive: boolean): TerminalRendererPolicy {
+  return {
+    useWebgl: false,
+    cursorBlink: isActive,
+  };
+}
+
 // CLI prompt overlay detection
 export const PROMPT_DEBOUNCE_MS = 500;
 export const PROMPT_BUFFER_SCAN_LINES = 20;
@@ -20,7 +36,6 @@ export const TERMINAL_OPTIONS: ITerminalOptions = {
   convertEol: true,
   scrollback: 10000,
   tabStopWidth: 4,
-  windowsMode: false,
   macOptionIsMeta: true,
   macOptionClickForcesSelection: true,
   // Keep the runtime theme keys used by the previous JSX implementation.

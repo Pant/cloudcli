@@ -31,11 +31,15 @@ function createScheduler() {
   let wasCleared = false;
 
   return {
-    setInterval(nextCallback: () => void) {
-      callback = nextCallback;
+    setInterval<TArgs extends any[]>(
+      nextCallback: (...args: TArgs) => void,
+      _delay?: number,
+      ...args: TArgs
+    ) {
+      callback = () => nextCallback(...args);
       return 1 as unknown as NodeJS.Timeout;
     },
-    clearInterval() {
+    clearInterval(_timeout?: NodeJS.Timeout | string | number) {
       wasCleared = true;
     },
     tick() {

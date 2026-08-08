@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "baseUrl": ".",
     "paths": {
@@ -16,13 +16,15 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".typecheck-frontend.tsbuildinfo",
     "jsx": "react-jsx",
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     // "checkJs": true, 
     "types": ["vite/client"],
-    "ignoreDeprecations": "5.0"
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src", "shared", "vite.config.js"]
 }

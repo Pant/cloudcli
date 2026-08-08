@@ -52,9 +52,8 @@ type PendingWatcherUpdate = {
   providers: Set<LLMProvider>;
   changeTypes: Set<WatcherEventType>;
   /**
-   * Provider-native session ids reported by the synchronizers. They are
-   * translated back to app-facing session rows at flush time, because the
-   * transcript file names on disk only ever contain provider ids.
+   * Canonical app session ids reported by the synchronizers. A shared OpenCode
+   * database write may materialize several hierarchy rows in one update.
    */
   updatedSessionIds: Set<string>;
 };
@@ -106,7 +105,7 @@ function schedulePendingWatcherFlush(): void {
 function queuePendingWatcherUpdate(
   eventType: WatcherEventType,
   provider: LLMProvider,
-  updatedSessionId: string | null
+  updatedSessionIds: string[]
 ): void {
   if (!pendingWatcherUpdate) {
     pendingWatcherUpdate = {
@@ -118,7 +117,7 @@ function queuePendingWatcherUpdate(
 
   pendingWatcherUpdate.providers.add(provider);
   pendingWatcherUpdate.changeTypes.add(eventType);
-  if (updatedSessionId) {
+  for (const updatedSessionId of updatedSessionIds) {
     pendingWatcherUpdate.updatedSessionIds.add(updatedSessionId);
   }
 
@@ -126,16 +125,14 @@ function queuePendingWatcherUpdate(
 }
 
 /**
- * Builds one `session_upserted` delta event for a provider-native session id.
- *
- * The event carries everything a sidebar needs to upsert the session in place
- * (session summary plus owning-project metadata), so clients never need a full
- * project-list refetch when a transcript file changes on disk. Returns `null`
- * when the id cannot be resolved to an indexed session row.
+ * Builds the canonical watcher delta consumed by the sidebar and its provider
+ * tests. The watcher passes either an app id or a provider-native id. The
+ * resulting payload always contains the stable app id; parent metadata is null
+ * for roots, canonical for resolved children, and omitted while unresolved.
  */
-async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Promise<string | null> {
-  const row = sessionsDb.getSessionByProviderSessionId(updatedProviderSessionId)
-    ?? sessionsDb.getSessionById(updatedProviderSessionId);
+export async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Promise<string | null> {
+  const row = sessionsDb.getSessionById(updatedProviderSessionId)
+    ?? sessionsDb.getSessionByProviderSessionId(updatedProviderSessionId);
   if (!row || row.isArchived) {
     return null;
   }
@@ -146,16 +143,24 @@ async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Prom
     ? project.custom_project_name
     : await generateDisplayName(path.basename(projectPath ?? '') || (projectPath ?? ''), projectPath);
 
+  const parentResolution = sessionsDb.getSessionParentResolution(row.session_id);
+  const session: Record<string, unknown> = {
+    id: row.session_id,
+    model: row.model?.trim() || null,
+    agent: row.agent?.trim() || null,
+    summary: row.custom_name || '',
+    messageCount: 0,
+    lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+  };
+  if (parentResolution.kind === 'root' || parentResolution.kind === 'resolved') {
+    session.parentSessionId = parentResolution.parentSessionId;
+  }
+
   return JSON.stringify({
     kind: 'session_upserted',
     sessionId: row.session_id,
     provider: row.provider,
-    session: {
-      id: row.session_id,
-      summary: row.custom_name || '',
-      messageCount: 0,
-      lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
-    },
+    session,
     project: project
       ? {
         projectId: project.project_id,
@@ -221,6 +226,18 @@ async function flushPendingWatcherUpdate(): Promise<void> {
 }
 
 /**
+ * Test seam for the Providers module's watcher queue. Production file events
+ * use the same bounded Set-backed queue and flush path.
+ */
+export async function flushSessionWatcherUpdatesForTest(
+  provider: LLMProvider,
+  updatedSessionIds: string[],
+): Promise<void> {
+  queuePendingWatcherUpdate('change', provider, updatedSessionIds);
+  await flushPendingWatcherUpdate();
+}
+
+/**
  * Handles file watcher updates and triggers provider file-level synchronization.
  */
 async function onUpdate(
@@ -240,9 +257,9 @@ async function onUpdate(
 
     console.log(`Session synchronization triggered by ${eventType} event for provider "${provider}"`, {
       filePath,
-      sessionId: result.sessionId,
+      sessionIds: result.sessionIds,
     });
-    queuePendingWatcherUpdate(eventType, provider, result.sessionId);
+    queuePendingWatcherUpdate(eventType, provider, result.sessionIds);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Session watcher sync failed for provider "${provider}"`, {

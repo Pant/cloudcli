@@ -20,6 +20,8 @@
     "checkJs": false,
     "strict": true,
     "noEmitOnError": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../.build-backend.tsbuildinfo",
     // The backend build emits both /server and /shared into dist-server, so rootDir must
     // stay one level above this file even though the config itself now lives in /server.
     "rootDir": "..",
@@ -29,7 +31,8 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node"],
+    "ignoreDeprecations": "6.0"
   },
   "include": ["./**/*.js", "./**/*.ts", "../shared/**/*.js", "../shared/**/*.ts"],
   "exclude": ["../dist", "../dist-server", "../node_modules", "../src"]

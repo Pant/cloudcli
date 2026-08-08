@@ -11,15 +11,17 @@ import type {
 } from 'react';
 import { useDropzone } from 'react-dropzone';
 
-import { authenticatedFetch } from '../../../utils/api';
+import { api, authenticatedFetch } from '../../../utils/api';
 import type { MarkSessionProcessing, SessionActivityMap } from '../../../hooks/useSessionProtection';
 import { grantClaudeToolPermission } from '../utils/chatPermissions';
 import {
   clearQueuedMessage,
+  patchQueuedMessageOptions,
   readQueuedMessage,
   safeLocalStorage,
   writeQueuedMessage,
   type QueuedSendOptions,
+  type QueuedSendOptionsPatch,
 } from '../utils/chatStorage';
 import type {
   ChatAttachment,
@@ -29,6 +31,7 @@ import type {
   SessionEstablishedContext,
 } from '../types/types';
 import type { Project, ProjectSession, LLMProvider, ProviderModelsCacheInfo } from '../../../types/app';
+import type { AppointmentCreateRequest, AppointmentTriggerRequest } from '../types/appointments';
 import { escapeRegExp } from '../utils/chatFormatting';
 
 import { useFileMentions } from './useFileMentions';
@@ -54,7 +57,7 @@ interface UseChatComposerStateArgs {
   processingSessions?: SessionActivityMap;
   canAbortSession: boolean;
   tokenBudget: Record<string, unknown> | null;
-  sendMessage: (message: unknown) => void;
+  sendMessage: (message: unknown) => boolean;
   sendByCtrlEnter?: boolean;
   onSessionProcessing?: MarkSessionProcessing;
   /**
@@ -108,6 +111,7 @@ export type ModelCommandData = {
 export type CostCommandData = {
   tokenUsage?: {
     used?: number;
+    windowTokens?: number | null;
     total?: number;
   };
   tokenBreakdown?: {
@@ -204,6 +208,17 @@ export type QueuedDraft = {
    */
   options?: QueuedSendOptions;
 };
+
+type ChatSubmission = {
+  content: string;
+  attachments: File[];
+  uploadedAttachments?: unknown[];
+  options?: QueuedSendOptions;
+  isQueuedSubmission?: boolean;
+  allowCommands?: boolean;
+};
+
+export type SendQuestionFormAnswer = (content: string, attachments?: File[]) => Promise<boolean>;
 
 const restoreQueuedDraft = (sessionKey: string): QueuedDraft | null => {
   const saved = readQueuedMessage(sessionKey);
@@ -675,15 +690,79 @@ export function useChatComposerState({
     selectedSession,
   ]);
 
-  const handleSubmit = useCallback(
-    async (
-      event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
-      queuedSubmission?: QueuedDraft,
-    ) => {
-      event.preventDefault();
-      const currentInput = queuedSubmission?.content ?? inputValueRef.current;
-      const currentAttachments = queuedSubmission?.attachments ?? attachedFiles;
-      const previouslyUploadedAttachments = queuedSubmission?.uploadedAttachments ?? [];
+  const allocateStableSession = useCallback(async (summaryInput: string): Promise<string> => {
+    const existingSessionId = selectedSession?.id || currentSessionId;
+    if (existingSessionId) return existingSessionId;
+    if (!selectedProject) throw new Error('Select a project before scheduling.');
+
+    const response = await authenticatedFetch('/api/providers/sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        provider,
+        projectPath: selectedProject.fullPath || selectedProject.path || '',
+      }),
+    });
+    if (!response.ok) throw new Error(`Failed to create session (${response.status})`);
+    const body = await response.json();
+    const sessionId = body?.data?.sessionId;
+    if (!sessionId) throw new Error('No session id returned.');
+    onSessionEstablished?.(sessionId, {
+      provider,
+      project: selectedProject,
+      summary: getNotificationSessionSummary(selectedSession, summaryInput),
+    });
+    return sessionId;
+  }, [currentSessionId, onSessionEstablished, provider, selectedProject, selectedSession]);
+
+  const clearComposerAfterSuccess = useCallback(() => {
+    setInput('');
+    inputValueRef.current = '';
+    resetCommandMenuState();
+    setAttachedFiles([]);
+    setUploadingFiles(new Map());
+    setFileErrors(new Map());
+    setIsTextareaExpanded(false);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    if (selectedProject) safeLocalStorage.removeItem(`draft_input_${selectedProject.projectId}`);
+  }, [resetCommandMenuState, selectedProject]);
+
+  const scheduleAppointment = useCallback(async (
+    trigger: AppointmentTriggerRequest,
+  ): Promise<AppointmentCreateRequest> => {
+    const prompt = inputValueRef.current;
+    const files = attachedFiles;
+    if (!selectedProject || (!prompt.trim() && files.length === 0)) {
+      throw new Error('Enter a prompt or attach a file before scheduling.');
+    }
+
+    const attachments = await uploadAttachmentFiles(files);
+    const sessionId = await allocateStableSession(prompt);
+    const request: AppointmentCreateRequest = {
+      ...trigger,
+      sessionId,
+      prompt,
+      options: buildSendOptions(prompt) as Record<string, unknown>,
+      attachments,
+    };
+    const response = await api.createProjectAppointment(selectedProject.projectId, request);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(
+        body?.error?.message
+        || (typeof body?.error === 'string' ? body.error : null)
+        || body?.message
+        || `Unable to schedule prompt (${response.status})`,
+      );
+    }
+    clearComposerAfterSuccess();
+    return request;
+  }, [allocateStableSession, attachedFiles, buildSendOptions, clearComposerAfterSuccess, selectedProject]);
+
+  const submitChatMessage = useCallback(
+    async (submission: ChatSubmission): Promise<boolean> => {
+      const currentInput = submission.content;
+      const currentAttachments = submission.attachments;
+      const previouslyUploadedAttachments = submission.uploadedAttachments ?? [];
       if (
         (
           !currentInput.trim()
@@ -692,7 +771,7 @@ export function useChatComposerState({
         )
         || !selectedProject
       ) {
-        return;
+        return false;
       }
 
       // A turn is already in flight: stash this message instead of sending it.
@@ -702,13 +781,18 @@ export function useChatComposerState({
         // A run can restart in the tiny gap between scheduling and flushing a
         // queued submission. Put the same durable draft back without uploading
         // its files again.
-        if (queuedSubmission) {
+        if (submission.isQueuedSubmission) {
           queuedDraftSessionRef.current = sessionKey;
-          setQueuedDraft(queuedSubmission);
-          return;
+          setQueuedDraft({
+            content: currentInput,
+            attachments: currentAttachments,
+            uploadedAttachments: previouslyUploadedAttachments,
+            options: submission.options,
+          });
+          return true;
         }
 
-        const queuedOptions = buildSendOptions(currentInput);
+        const queuedOptions = submission.options ?? buildSendOptions(currentInput);
         const queuedSessionKey = sessionKey;
         let uploadedAttachments: unknown[] = [];
         try {
@@ -721,7 +805,7 @@ export function useChatComposerState({
             content: `Failed to upload files: ${message}`,
             timestamp: new Date(),
           });
-          return;
+          return false;
         }
 
         const durableDraft: QueuedDraft = {
@@ -760,7 +844,7 @@ export function useChatComposerState({
             });
             onSessionProcessing?.(queuedSessionKey, { statusText: null, canInterrupt: true });
           }
-          return;
+          return true;
         }
 
         queuedDraftSessionRef.current = queuedSessionKey;
@@ -777,14 +861,14 @@ export function useChatComposerState({
         }
         // selectedProject is guaranteed by the guard at the top of handleSubmit.
         safeLocalStorage.removeItem(`draft_input_${selectedProject.projectId}`);
-        return;
+        return true;
       }
 
       // Intercept slash commands only when "/" is the first input character.
       // Also accept exact "help" as a convenience alias for users who expect CLI-style help.
       const commandInput = currentInput.trimEnd();
       const isHelpAlias = commandInput.trim().toLowerCase() === 'help';
-      if (commandInput.startsWith('/') || isHelpAlias) {
+      if (submission.allowCommands !== false && (commandInput.startsWith('/') || isHelpAlias)) {
         const firstSpace = commandInput.indexOf(' ');
         const commandName = isHelpAlias
           ? '/help'
@@ -811,7 +895,7 @@ export function useChatComposerState({
           if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
           }
-          return;
+          return true;
         }
       }
 
@@ -829,7 +913,7 @@ export function useChatComposerState({
             content: `Failed to upload files: ${message}`,
             timestamp: new Date(),
           });
-          return;
+          return false;
         }
       }
 
@@ -863,7 +947,7 @@ export function useChatComposerState({
             content: `Failed to start a new session: ${message}`,
             timestamp: new Date(),
           });
-          return;
+          return false;
         }
 
         if (!targetSessionId) {
@@ -872,7 +956,7 @@ export function useChatComposerState({
             content: 'Failed to start a new session: no session id returned.',
             timestamp: new Date(),
           });
-          return;
+          return false;
         }
 
         onSessionEstablished?.(targetSessionId, {
@@ -911,7 +995,7 @@ export function useChatComposerState({
         sessionId: targetSessionId,
         content: messageContent,
         options: {
-          ...(queuedSubmission?.options ?? buildSendOptions(messageContent)),
+          ...(submission.options ?? buildSendOptions(messageContent)),
           attachments: uploadedAttachments,
         },
       });
@@ -929,10 +1013,10 @@ export function useChatComposerState({
       }
 
       safeLocalStorage.removeItem(`draft_input_${selectedProject.projectId}`);
+      return true;
     },
     [
       selectedSession,
-      attachedFiles,
       buildSendOptions,
       currentSessionId,
       executeCommand,
@@ -949,6 +1033,39 @@ export function useChatComposerState({
       setIsUserScrolledUp,
       slashCommands,
     ],
+  );
+
+  const handleSubmit = useCallback(
+    async (
+      event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
+      queuedSubmission?: QueuedDraft,
+    ) => {
+      event.preventDefault();
+      await submitChatMessage({
+        content: queuedSubmission?.content ?? inputValueRef.current,
+        attachments: queuedSubmission?.attachments ?? attachedFiles,
+        uploadedAttachments: queuedSubmission?.uploadedAttachments,
+        options: queuedSubmission?.options,
+        isQueuedSubmission: Boolean(queuedSubmission),
+      });
+    },
+    [attachedFiles, submitChatMessage],
+  );
+
+  /**
+   * Sends a preformatted structured answer as a normal user message. It uses
+   * the same session allocation, optimistic echo, queueing, processing marker,
+   * scroll, attachment, and error lifecycle as typed composer input.
+   */
+  const sendQuestionFormAnswer = useCallback<SendQuestionFormAnswer>(
+    async (content: string, attachments: File[] = []) => {
+      return submitChatMessage({
+        content,
+        attachments,
+        allowCommands: false,
+      });
+    },
+    [submitChatMessage],
   );
 
   useEffect(() => {
@@ -1013,6 +1130,21 @@ export function useChatComposerState({
   const deleteQueuedDraft = useCallback(() => {
     setQueuedDraft(null);
   }, []);
+
+  const patchQueuedDraftOptions = useCallback((patch: Partial<QueuedSendOptionsPatch>) => {
+    if (!sessionKey || queuedDraftSessionRef.current !== sessionKey) {
+      return;
+    }
+
+    const patched = patchQueuedMessageOptions(sessionKey, patch);
+    if (!patched) {
+      return;
+    }
+
+    setQueuedDraft((current) => current
+      ? { ...current, options: patched.options }
+      : current);
+  }, [sessionKey]);
 
   // A voice transcript either fills the input (to edit before sending) or, when the
   // user tapped "stop and send", is submitted straight away. Mirror the value into
@@ -1294,9 +1426,12 @@ export function useChatComposerState({
     isDragActive,
     openAttachmentPicker: open,
     handleSubmit,
+    scheduleAppointment,
+    sendQuestionFormAnswer,
     queuedDraft,
     editQueuedDraft,
     deleteQueuedDraft,
+    patchQueuedDraftOptions,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,

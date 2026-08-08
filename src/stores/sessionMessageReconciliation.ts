@@ -1,4 +1,4 @@
-import type { NormalizedMessage } from './useSessionStore';
+import type { NormalizedMessage } from './normalizedMessage';
 
 const LOCAL_USER_DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const LOCAL_USER_DEDUPE_CLOCK_SKEW_MS = 10_000;

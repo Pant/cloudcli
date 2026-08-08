@@ -6,9 +6,10 @@ import test from 'node:test';
 
 import Database from 'better-sqlite3';
 
-import { closeConnection, initializeDatabase, sessionsDb } from '@/modules/database/index.js';
+import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { OpenCodeSessionSynchronizer } from '@/modules/providers/list/opencode/opencode-session-synchronizer.provider.js';
 import { OpenCodeSessionsProvider } from '@/modules/providers/list/opencode/opencode-sessions.provider.js';
+import { getProjectSessionsPage } from '@/modules/projects/index.js';
 import { appendImagesInputTag } from '@/shared/image-attachments.js';
 
 const patchHomeDir = (nextHomeDir: string) => {
@@ -132,9 +133,9 @@ const createOpenCodeDatabase = async (homeDir: string, workspacePath: string): P
     db.prepare(`
       INSERT INTO session (
         id, project_id, slug, directory, title, version, time_created, time_updated, time_archived,
-        tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
+        agent, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'open-session-1',
       'project-1',
@@ -145,6 +146,7 @@ const createOpenCodeDatabase = async (homeDir: string, workspacePath: string): P
       1_700_000_000_000,
       1_700_000_004_000,
       null,
+      'Code',
       10,
       20,
       7,
@@ -169,10 +171,11 @@ const createOpenCodeDatabase = async (homeDir: string, workspacePath: string): P
       path: { cwd: '.', root: '.' },
       cost: 0.01,
       tokens: {
-        input: 10,
-        output: 20,
+        total: 160_626,
+        input: 1_029,
+        output: 365,
         reasoning: 0,
-        cache: { read: 3, write: 2 },
+        cache: { read: 159_232, write: 0 },
       },
     });
 
@@ -182,6 +185,18 @@ const createOpenCodeDatabase = async (homeDir: string, workspacePath: string): P
     db.prepare(
       'INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)',
     ).run('message-assistant', 'open-session-1', 1_700_000_002_000, 1_700_000_003_000, assistantMessageData);
+    db.prepare(
+      'INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)',
+    ).run(
+      'message-assistant-bookkeeping',
+      'open-session-1',
+      1_700_000_004_000,
+      1_700_000_004_000,
+      JSON.stringify({
+        role: 'assistant',
+        tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
+    );
 
     const insertPart = db.prepare(`
       INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
@@ -246,6 +261,50 @@ const createOpenCodeDatabase = async (homeDir: string, workspacePath: string): P
   }
 };
 
+const createNestedOpenCodeDatabase = async (
+  homeDir: string,
+  workspacePath: string,
+  includeParentId = true,
+): Promise<void> => {
+  const dataDir = path.join(homeDir, '.local', 'share', 'opencode');
+  await mkdir(dataDir, { recursive: true });
+  const db = new Database(path.join(dataDir, 'opencode.db'));
+  try {
+    db.exec(`
+      CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT);
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        project_id TEXT,
+        ${includeParentId ? 'parent_id TEXT,' : ''}
+        directory TEXT,
+        title TEXT,
+        time_created INTEGER,
+        time_updated INTEGER,
+        time_archived INTEGER,
+        agent TEXT
+      );
+    `);
+    db.prepare('INSERT INTO project (id, worktree) VALUES (?, ?)').run('project-1', workspacePath);
+    const columns = includeParentId
+      ? '(id, project_id, parent_id, directory, title, time_created, time_updated, time_archived, agent)'
+      : '(id, project_id, directory, title, time_created, time_updated, time_archived, agent)';
+    const values = includeParentId ? 'VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)' : 'VALUES (?, ?, ?, ?, ?, ?, NULL, ?)';
+    const insert = db.prepare(`INSERT INTO session ${columns} ${values}`);
+    const rows = includeParentId
+      ? [
+        ['root-native', 'project-1', null, workspacePath, 'Root', 1_700_000_000_000, 1_700_000_003_000, 'root-agent'],
+        ['child-native', 'project-1', 'root-native', workspacePath, 'Child', 1_700_000_001_000, 1_700_000_002_000, 'child-agent'],
+        ['grandchild-native', 'project-1', 'child-native', workspacePath, 'Grandchild', 1_700_000_002_000, 1_700_000_004_000, 'grandchild-agent'],
+      ]
+      : [['root-native', 'project-1', workspacePath, 'Root', 1_700_000_000_000, 1_700_000_003_000, 'root-agent']];
+    for (const row of rows) {
+      insert.run(...row);
+    }
+  } finally {
+    db.close();
+  }
+};
+
 test('OpenCode session synchronizer indexes sqlite sessions without deletable transcript paths', { concurrency: false }, async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-sync-'));
   const workspacePath = path.join(tempRoot, 'workspace');
@@ -264,8 +323,165 @@ test('OpenCode session synchronizer indexes sqlite sessions without deletable tr
         assert.equal(indexed?.provider, 'opencode');
         assert.equal(indexed?.project_path, workspacePath);
         assert.equal(indexed?.custom_name, 'OpenCode indexed title');
+        assert.equal(indexed?.agent, 'Code');
         assert.equal(indexed?.jsonl_path, null);
       });
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode synchronizer indexes recursive parent relationships and returns every changed watcher row', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-sync-nested-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await createNestedOpenCodeDatabase(tempRoot, workspacePath);
+    await withIsolatedDatabase(async () => {
+      const synchronizer = new OpenCodeSessionSynchronizer();
+      assert.equal(await synchronizer.synchronize(), 3);
+      assert.equal(
+        await synchronizer.synchronizeFile(path.join(tempRoot, '.local', 'share', 'opencode', 'opencode.db')),
+        null,
+      );
+      assert.equal(sessionsDb.getSessionById('child-native')?.provider_parent_session_id, 'root-native');
+      assert.equal(sessionsDb.getSessionById('grandchild-native')?.provider_parent_session_id, 'child-native');
+      assert.equal(sessionsDb.getCanonicalParentSessionId('child-native'), 'root-native');
+      assert.equal(sessionsDb.getCanonicalParentSessionId('grandchild-native'), 'child-native');
+
+      const db = new Database(path.join(tempRoot, '.local', 'share', 'opencode', 'opencode.db'));
+      try {
+        db.prepare('UPDATE session SET title = ?, time_updated = ? WHERE id IN (?, ?)')
+          .run('Changed root', 1_700_000_010_000, 'root-native', 'child-native');
+      } finally {
+        db.close();
+      }
+
+      const changed = await synchronizer.synchronizeFile(
+        path.join(tempRoot, '.local', 'share', 'opencode', 'opencode.db'),
+      );
+      assert.deepEqual(new Set(Array.isArray(changed) ? changed : [changed]), new Set(['root-native', 'child-native']));
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode watcher sync rebroadcast set repairs child-before-parent ordering without historical noise', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-sync-order-race-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await createNestedOpenCodeDatabase(tempRoot, workspacePath);
+    const providerDbPath = path.join(tempRoot, '.local', 'share', 'opencode', 'opencode.db');
+    const providerDb = new Database(providerDbPath);
+    try {
+      providerDb.prepare('DELETE FROM session WHERE id IN (?, ?)').run('root-native', 'grandchild-native');
+    } finally {
+      providerDb.close();
+    }
+
+    await withIsolatedDatabase(async () => {
+      sessionsDb.createSession('historical-root', 'opencode', workspacePath, 'Historical root');
+      const synchronizer = new OpenCodeSessionSynchronizer();
+      assert.deepEqual(await synchronizer.synchronizeFile(providerDbPath), 'child-native');
+      assert.equal(sessionsDb.getCanonicalParentSessionId('child-native'), undefined);
+
+      const db = new Database(providerDbPath);
+      try {
+        db.prepare(`
+          INSERT INTO session (
+            id, project_id, parent_id, directory, title, time_created, time_updated, time_archived, agent
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+        `).run(
+          'root-native',
+          'project-1',
+          null,
+          workspacePath,
+          'Root',
+          1_700_000_000_000,
+          1_700_000_005_000,
+          'root-agent',
+        );
+      } finally {
+        db.close();
+      }
+
+      const repaired = await synchronizer.synchronizeFile(providerDbPath);
+      assert.deepEqual(new Set(Array.isArray(repaired) ? repaired : [repaired]), new Set([
+        'root-native',
+        'child-native',
+      ]));
+      assert.equal(sessionsDb.getCanonicalParentSessionId('child-native'), 'root-native');
+      assert.equal(Array.isArray(repaired) && repaired.includes('historical-root'), false);
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode hierarchy backfill hydrates canonical app parent ids from a production-shaped fixture', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-sync-hydration-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await createNestedOpenCodeDatabase(tempRoot, workspacePath);
+    await withIsolatedDatabase(async () => {
+      sessionsDb.createAppSession('app-root', 'opencode', workspacePath);
+      sessionsDb.createAppSession('app-child', 'opencode', workspacePath);
+      sessionsDb.createAppSession('app-grandchild', 'opencode', workspacePath);
+      sessionsDb.assignProviderSessionId('app-root', 'root-native');
+      sessionsDb.assignProviderSessionId('app-child', 'child-native');
+      sessionsDb.assignProviderSessionId('app-grandchild', 'grandchild-native');
+
+      assert.equal(await new OpenCodeSessionSynchronizer().synchronize(), 3);
+
+      assert.equal(sessionsDb.getSessionById('app-root')?.provider_parent_session_id, null);
+      assert.equal(sessionsDb.getSessionById('app-child')?.provider_parent_session_id, 'root-native');
+      assert.equal(sessionsDb.getSessionById('app-grandchild')?.provider_parent_session_id, 'child-native');
+
+      const project = projectsDb.getProjectPath(workspacePath);
+      assert.ok(project);
+      const hydrated = await getProjectSessionsPage(project.project_id);
+      assert.deepEqual(
+        hydrated.sessions.map((session) => [session.id, session.parentSessionId]),
+        [
+          ['app-root', null],
+          ['app-child', 'app-root'],
+          ['app-grandchild', 'app-child'],
+        ],
+      );
+      assert.equal(JSON.stringify(hydrated).includes('root-native'), false);
+      assert.equal(JSON.stringify(hydrated).includes('child-native'), false);
+      assert.equal(JSON.stringify(hydrated).includes('grandchild-native'), false);
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode synchronizer keeps old schemas without parent_id compatible', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-sync-no-parent-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await createNestedOpenCodeDatabase(tempRoot, workspacePath, false);
+    await withIsolatedDatabase(async () => {
+      assert.equal(await new OpenCodeSessionSynchronizer().synchronize(), 1);
+      assert.equal(sessionsDb.getSessionById('root-native')?.provider_parent_session_id, null);
     });
   } finally {
     restoreHomeDir();
@@ -379,6 +595,51 @@ test('OpenCode sessions provider normalizes quoted live text and skips user echo
   assert.deepEqual(userEcho, []);
 });
 
+test('OpenCode sessions provider unwraps current JSON events and canonicalizes tool calls', () => {
+  const provider = new OpenCodeSessionsProvider();
+  const normalized = provider.normalizeMessage({
+    type: 'tool_use',
+    timestamp: 1_700_000_003_000,
+    sessionID: 'open-session-live',
+    part: {
+      id: 'part-tool-live',
+      type: 'tool',
+      tool: 'edit',
+      callID: 'tool-call-live',
+      state: {
+        status: 'completed',
+        input: {
+          path: 'src/provider.ts',
+          oldString: 'before',
+          newString: 'after',
+        },
+        output: 'edited',
+      },
+    },
+  }, null);
+
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0]?.kind, 'tool_use');
+  assert.equal(normalized[0]?.toolName, 'Edit');
+  assert.equal(normalized[0]?.toolId, 'tool-call-live');
+  assert.deepEqual(normalized[0]?.toolInput, {
+    path: 'src/provider.ts',
+    oldString: 'before',
+    newString: 'after',
+    file_path: 'src/provider.ts',
+    old_string: 'before',
+    new_string: 'after',
+  });
+  assert.deepEqual(normalized[0]?.toolResult, { content: 'edited', isError: false });
+
+  const text = provider.normalizeMessage({
+    type: 'text',
+    sessionID: 'open-session-live',
+    part: { id: 'part-text-live', type: 'text', text: 'nested response' },
+  }, null);
+  assert.equal(text[0]?.content, 'nested response');
+});
+
 test('OpenCode sessions provider reads sqlite history and token usage', { concurrency: false }, async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-'));
   const workspacePath = path.join(tempRoot, 'workspace');
@@ -397,9 +658,12 @@ test('OpenCode sessions provider reads sqlite history and token usage', { concur
     assert.equal(history.messages[1]?.kind, 'thinking');
     assert.equal(history.messages[2]?.content, 'The provider is wired.');
     assert.equal(history.messages[3]?.kind, 'tool_use');
+    assert.equal(history.messages[3]?.toolName, 'Bash');
+    assert.deepEqual(history.messages[3]?.toolInput, { command: 'npm test' });
     assert.deepEqual(history.messages[3]?.toolResult, { content: 'ok', isError: false });
     assert.deepEqual(history.tokenUsage, {
       used: 42,
+      windowTokens: 160_626,
       inputTokens: 13,
       outputTokens: 20,
       breakdown: {
@@ -412,6 +676,147 @@ test('OpenCode sessions provider reads sqlite history and token usage', { concur
     assert.equal(paged.messages.length, 2);
     assert.equal(paged.hasMore, true);
     assert.equal(paged.messages[0]?.content, 'The provider is wired.');
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode history attaches the active model context maximum to token usage', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-context-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await createOpenCodeDatabase(tempRoot, workspacePath);
+    const provider = new OpenCodeSessionsProvider({
+      getCurrentActiveModel: async () => ({ model: 'openai/known-context' }),
+      getContextWindowForModel: async (modelId) => (
+        modelId === 'openai/known-context' ? 128_000 : undefined
+      ),
+    });
+
+    const history = await provider.fetchHistory('open-session-1');
+
+    assert.equal(history.tokenUsage && (history.tokenUsage as { total?: number }).total, 128_000);
+    assert.equal(history.total, 4);
+    assert.equal(history.messages.length, 4);
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode history keeps current token usage when context metadata is unavailable', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-no-context-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await createOpenCodeDatabase(tempRoot, workspacePath);
+    const provider = new OpenCodeSessionsProvider({
+      getCurrentActiveModel: async () => ({ model: 'openai/unknown-context' }),
+      getContextWindowForModel: async () => {
+        throw new Error('model metadata unavailable');
+      },
+    });
+
+    const history = await provider.fetchHistory('open-session-1');
+
+    assert.deepEqual(history.tokenUsage, {
+      used: 42,
+      windowTokens: 160_626,
+      inputTokens: 13,
+      outputTokens: 20,
+      breakdown: {
+        input: 13,
+        output: 20,
+      },
+    });
+    assert.equal(history.total, 4);
+    assert.equal(history.messages.length, 4);
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode history reports zero token usage for genuinely empty assistant data', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-empty-'));
+  const dataDir = path.join(tempRoot, '.local', 'share', 'opencode');
+  await mkdir(dataDir, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+  const db = new Database(path.join(dataDir, 'opencode.db'));
+
+  try {
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        tokens_input INTEGER,
+        tokens_output INTEGER,
+        tokens_reasoning INTEGER,
+        tokens_cache_read INTEGER,
+        tokens_cache_write INTEGER
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        time_created INTEGER,
+        data TEXT
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        message_id TEXT,
+        session_id TEXT,
+        time_created INTEGER,
+        data TEXT
+      )
+    `);
+    db.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)')
+      .run('open-empty', 0, 0, 0, 0, 0);
+    db.prepare('INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)')
+      .run('message-empty', 'open-empty', 1, JSON.stringify({
+        role: 'assistant',
+        tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      }));
+  } finally {
+    db.close();
+  }
+
+  try {
+    const provider = new OpenCodeSessionsProvider();
+    const history = await provider.fetchHistory('open-empty');
+
+    assert.deepEqual(history.tokenUsage, {
+      used: 0,
+      windowTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      breakdown: { input: 0, output: 0 },
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode history omits windowTokens for old databases without message token records', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-old-schema-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    await seedOpenCodeSession(tempRoot, workspacePath, {
+      sessionId: 'open-old-schema',
+      title: 'Old schema',
+      firstUserText: 'Old OpenCode database',
+    });
+    const provider = new OpenCodeSessionsProvider();
+    const history = await provider.fetchHistory('open-old-schema');
+    assert.equal(history.tokenUsage, undefined);
   } finally {
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });

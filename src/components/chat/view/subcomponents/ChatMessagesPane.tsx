@@ -12,14 +12,14 @@ import type {
 import { getIntrinsicMessageKey } from '../../utils/messageKeys';
 import { groupConsecutiveTools, isToolGroupItem } from '../../utils/toolGrouping';
 
+import type { QuestionFormSubmitHandler } from './QuestionFormCard';
 import MessageComponent from './MessageComponent';
 import ProviderSelectionEmptyState from './ProviderSelectionEmptyState';
 import ToolGroupContainer from './ToolGroupContainer';
-import LoadAllMessagesOverlay from './LoadAllMessagesOverlay';
 import ChatExportMenu from './ChatExportMenu';
 
 interface ChatMessagesPaneProps {
-  scrollContainerRef: RefObject<HTMLDivElement>;
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
   onWheel: () => void;
   onTouchMove: () => void;
   isLoadingSessionMessages: boolean;
@@ -32,7 +32,7 @@ interface ChatMessagesPaneProps {
   currentSessionId: string | null;
   provider: LLMProvider;
   setProvider: (provider: LLMProvider) => void;
-  textareaRef: RefObject<HTMLTextAreaElement>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   claudeModel: string;
   setClaudeModel: (model: string) => void;
   cursorModel: string;
@@ -47,18 +47,10 @@ interface ChatMessagesPaneProps {
   isTaskMasterInstalled: boolean | null;
   onShowAllTasks?: (() => void) | null;
   setInput: Dispatch<SetStateAction<string>>;
-  isLoadingMoreMessages: boolean;
-  hasMoreMessages: boolean;
-  totalMessages: number;
-  sessionMessagesCount: number;
   visibleMessageCount: number;
   visibleMessages: ChatMessage[];
   loadEarlierMessages: () => void;
   loadAllMessages: () => void;
-  allMessagesLoaded: boolean;
-  isLoadingAllMessages: boolean;
-  loadAllJustFinished: boolean;
-  showLoadAllOverlay: boolean;
   createDiff: any;
   onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
   onShowSettings?: () => void;
@@ -66,6 +58,7 @@ interface ChatMessagesPaneProps {
   showRawParameters?: boolean;
   showThinking?: boolean;
   selectedProject: Project;
+  onSubmitQuestionForm: QuestionFormSubmitHandler;
 }
 
 function ChatMessagesPane({
@@ -95,18 +88,10 @@ function ChatMessagesPane({
   isTaskMasterInstalled,
   onShowAllTasks,
   setInput,
-  isLoadingMoreMessages,
-  hasMoreMessages,
-  totalMessages,
-  sessionMessagesCount,
   visibleMessageCount,
   visibleMessages,
   loadEarlierMessages,
   loadAllMessages,
-  allMessagesLoaded,
-  isLoadingAllMessages,
-  loadAllJustFinished,
-  showLoadAllOverlay,
   createDiff,
   onFileOpen,
   onShowSettings,
@@ -114,6 +99,7 @@ function ChatMessagesPane({
   showRawParameters,
   showThinking,
   selectedProject,
+  onSubmitQuestionForm,
 }: ChatMessagesPaneProps) {
   const { t } = useTranslation('chat');
   const groupedVisibleMessages = useMemo(
@@ -204,38 +190,9 @@ function ChatMessagesPane({
         />
       ) : (
         <>
-          {/* Loading indicator for older messages (hide when load-all is active) */}
-          {isLoadingMoreMessages && !isLoadingAllMessages && !allMessagesLoaded && (
-            <div className="py-3 text-center text-gray-500 dark:text-gray-400">
-              <div className="flex items-center justify-center space-x-2">
-                <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-gray-400" />
-                <p className="text-sm">{t('session.loading.olderMessages')}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Indicator showing there are more messages to load (hide when all loaded) */}
-          {hasMoreMessages && !isLoadingMoreMessages && !allMessagesLoaded && (
-            <div className="border-b border-gray-200 py-2 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              {totalMessages > 0 && (
-                <span>
-                  {t('session.messages.showingOf', { shown: sessionMessagesCount, total: totalMessages })}{' '}
-                  <span className="text-xs">{t('session.messages.scrollToLoad')}</span>
-                </span>
-              )}
-            </div>
-          )}
-
-          <LoadAllMessagesOverlay
-            showLoadAllOverlay={showLoadAllOverlay}
-            isLoadingAllMessages={isLoadingAllMessages}
-            loadAllJustFinished={loadAllJustFinished}
-            totalMessages={totalMessages}
-            onLoadAllMessages={loadAllMessages}
-          />
-
-          {/* Legacy message count indicator (for non-paginated view) */}
-          {!hasMoreMessages && chatMessages.length > visibleMessageCount && (
+          {/* The server transcript is complete; these controls only reveal rows
+              already present in the local rendering window. */}
+          {chatMessages.length > visibleMessageCount && (
             <div className="border-b border-gray-200 py-2 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
               {t('session.messages.showingLast', { count: visibleMessageCount, total: chatMessages.length })} |
               <button className="ml-1 text-blue-600 underline hover:text-blue-700" onClick={loadEarlierMessages}>
@@ -273,6 +230,8 @@ function ChatMessagesPane({
                     showThinking={showThinking}
                     selectedProject={selectedProject}
                     provider={provider}
+                    transcriptMessages={chatMessages}
+                    onSubmitQuestionForm={onSubmitQuestionForm}
                   />
                 );
               }
@@ -284,6 +243,7 @@ function ChatMessagesPane({
                 <MessageComponent
                   key={getMessageKey(item)}
                   message={item}
+                  messageKey={getMessageKey(item)}
                   prevMessage={messagePrevMessage}
                   createDiff={createDiff}
                   onFileOpen={onFileOpen}
@@ -293,6 +253,9 @@ function ChatMessagesPane({
                   showThinking={showThinking}
                   selectedProject={selectedProject}
                   provider={provider}
+                  transcriptMessages={chatMessages}
+                  messageIndex={chatMessages.indexOf(item)}
+                  onSubmitQuestionForm={onSubmitQuestionForm}
                 />
               );
             });

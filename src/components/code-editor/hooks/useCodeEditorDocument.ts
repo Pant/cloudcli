@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { api } from '../../../utils/api';
 import type { CodeEditorFile } from '../types/types';
 import { isBinaryFile } from '../utils/binaryFile';
@@ -20,6 +21,7 @@ const getErrorMessage = (error: unknown) => {
 export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocumentParams) => {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
+  const [reloading, setReloading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -35,20 +37,29 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   const fileName = file.name;
   const fileDiffNewString = file.diffInfo?.new_string;
   const fileDiffOldString = file.diffInfo?.old_string;
+  const savingRef = useRef(false);
+  const reloadingRef = useRef(false);
 
-  useEffect(() => {
-    const loadFileContent = async () => {
-      try {
+  const loadFileContent = useCallback(async (manualReload = false) => {
+    try {
+      if (manualReload) {
+        if (reloadingRef.current || savingRef.current) return;
+        reloadingRef.current = true;
+        setReloading(true);
+        setSaveSuccess(false);
+        setSaveError(null);
+      } else {
         setLoading(true);
         setIsBinary(false);
+      }
 
+      if (!manualReload) {
         // Natively previewable media (image/pdf/audio/video) is rendered by
         // CodeEditorMediaPreview, so there is nothing to read as text here.
         // Clear any buffer left over from a previously opened text file so a
         // stray save can't write stale content over the binary file.
         if (getPreviewKind(file.name)) {
           setContent('');
-          setLoading(false);
           return;
         }
 
@@ -56,47 +67,61 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         if (isBinaryFile(file.name)) {
           setContent('');
           setIsBinary(true);
-          setLoading(false);
           return;
         }
 
         // Diff payload may already include full old/new snapshots, so avoid disk read.
         if (file.diffInfo && fileDiffNewString !== undefined && fileDiffOldString !== undefined) {
           setContent(fileDiffNewString);
-          setLoading(false);
           return;
         }
+      }
 
-        if (!fileProjectId) {
-          throw new Error('Missing project identifier');
-        }
+      if (!fileProjectId) {
+        throw new Error('Missing project identifier');
+      }
 
-        const response = await api.readFile(fileProjectId, filePath);
-        if (!response.ok) {
-          throw new Error(`Failed to load file: ${response.status} ${response.statusText}`);
-        }
+      const response = await api.readFile(fileProjectId, filePath);
+      if (!response.ok) {
+        throw new Error(`Failed to load file: ${response.status} ${response.statusText}`);
+      }
 
-        const data = await response.json();
-        setContent(data.content);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        console.error('Error loading file:', error);
+      const data = await response.json();
+      setContent(data.content);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      console.error('Error loading file:', error);
+      if (manualReload) {
+        setSaveError(message);
+      } else {
         setContent(`// Error loading file: ${message}\n// File: ${fileName}\n// Path: ${filePath}`);
-      } finally {
+      }
+    } finally {
+      if (manualReload) {
+        reloadingRef.current = false;
+        setReloading(false);
+      } else {
         setLoading(false);
       }
-    };
+    }
+  }, [file.name, file.diffInfo, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId]);
 
-    loadFileContent();
-  }, [file.diffInfo, file.name, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId]);
+  useEffect(() => {
+    void loadFileContent();
+  }, [loadFileContent]);
+
+  const handleReload = useCallback(async () => {
+    await loadFileContent(true);
+  }, [loadFileContent]);
 
   const handleSave = useCallback(async () => {
     // Preview-only and binary files have no editable text buffer; never write
     // them back (e.g. via Cmd/Ctrl+S) or we'd corrupt the file on disk.
-    if (previewKind || isBinaryFile(fileName)) {
+    if (previewKind || isBinaryFile(fileName) || savingRef.current || reloadingRef.current) {
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     setSaveError(null);
 
@@ -128,6 +153,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
       console.error('Error saving file:', error);
       setSaveError(message);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }, [content, filePath, fileProjectId, previewKind, fileName]);
@@ -151,6 +177,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     content,
     setContent,
     loading,
+    reloading,
     saving,
     saveSuccess,
     saveError,
@@ -158,6 +185,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     previewKind,
     fileProjectId,
     handleSave,
+    handleReload,
     handleDownload,
   };
 };

@@ -1,31 +1,49 @@
-import { useCallback, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
+import { useMatch, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
-import Sidebar from '../sidebar/view/Sidebar';
-import MainContent from '../main-content/view/MainContent';
-import CommandPalette from '../command-palette/CommandPalette';
-import { QuickSettingsPanel } from '../quick-settings-panel';
-import { useWebSocket } from '../../contexts/WebSocketContext';
-import { PaletteOpsProvider, usePaletteOpsRegister } from '../../contexts/PaletteOpsContext';
+import { useWebSocket } from '../../contexts/useWebSocket';
+import { PaletteOpsProvider } from '../../contexts/PaletteOpsContext';
+import { usePaletteOpsRegister } from '../../contexts/paletteOps';
 import { useDeviceSettings } from '../../hooks/useDeviceSettings';
 import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
 import { api } from '../../utils/api';
+import type {
+  LLMProvider,
+  ProjectSession,
+  RunningSessionAncestorSnapshot,
+  RunningSessionSnapshot,
+  SessionLifecycleSnapshot,
+  SessionLifecycleStatus,
+} from '../../types/app';
 
-type RunningSessionApiItem = {
-  sessionId?: unknown;
-  startedAt?: unknown;
-  statusText?: unknown;
-  canInterrupt?: unknown;
-};
+import { createSessionActivitySyncController, getSessionActivityPollInterval, isLifecycleRelevantEvent } from './sessionActivitySync';
+
+const Sidebar = lazy(() => import('../sidebar/view/Sidebar'));
+const MainContent = lazy(() => import('../main-content/view/MainContent'));
+const CommandPaletteTrigger = lazy(() => import('../command-palette/CommandPaletteTrigger'));
+const QuickSettingsPanelTrigger = lazy(() => import('../quick-settings-panel/view/QuickSettingsPanelTrigger'));
+
+function AppSurfaceLoadingState() {
+  return (
+    <div className="flex h-full w-full items-center justify-center" role="status" aria-label="Loading">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
+    </div>
+  );
+}
+
+type RunningSessionApiItem = RunningSessionSnapshot & { sessionId?: unknown };
 
 type RunningSessionsApiPayload = {
   data?: {
     sessions?: RunningSessionApiItem[];
   };
 };
+
+type LifecycleSessionsApiPayload = { data?: { sessions?: unknown[] } };
+const lifecycleStatuses = new Set<SessionLifecycleStatus>(['running', 'recovering', 'stalled', 'exited', 'failed', 'manually_stopped', 'recovery_exhausted']);
 
 const parseStartedAt = (value: unknown): number | undefined => {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -40,6 +58,89 @@ const parseStartedAt = (value: unknown): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const parseRunningAncestor = (value: unknown): RunningSessionAncestorSnapshot | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const item = value as RunningSessionAncestorSnapshot;
+  if (typeof item.sessionId !== 'string' || !item.sessionId) {
+    return null;
+  }
+
+  const session = item.session && typeof item.session === 'object'
+    ? {
+      ...(item.session as ProjectSession),
+      id: typeof item.session.id === 'string' && item.session.id ? item.session.id : item.sessionId,
+      provider: item.session.provider ?? item.provider,
+      ...(typeof item.parentSessionId === 'string' || item.parentSessionId === null
+        ? { parentSessionId: item.parentSessionId }
+        : {}),
+    }
+    : null;
+
+  return {
+    sessionId: item.sessionId,
+    provider: typeof item.provider === 'string' ? item.provider as LLMProvider : session?.provider,
+    parentSessionId: typeof item.parentSessionId === 'string'
+      ? item.parentSessionId
+      : item.parentSessionId === null
+        ? null
+        : session?.parentSessionId,
+    session,
+    project: item.project && typeof item.project === 'object' ? item.project : null,
+  };
+};
+
+const parseRunningSession = (value: RunningSessionApiItem): RunningSessionSnapshot | null => {
+  if (typeof value.sessionId !== 'string' || !value.sessionId) {
+    return null;
+  }
+
+  const session = value.session && typeof value.session === 'object'
+    ? {
+      ...(value.session as ProjectSession),
+      id: typeof value.session.id === 'string' && value.session.id ? value.session.id : value.sessionId,
+      provider: value.session.provider ?? value.provider,
+      parentSessionId: value.parentSessionId ?? value.session.parentSessionId,
+    }
+    : null;
+
+  return {
+    sessionId: value.sessionId,
+    provider: typeof value.provider === 'string' ? value.provider as LLMProvider : session?.provider,
+    parentSessionId: typeof value.parentSessionId === 'string' ? value.parentSessionId : value.parentSessionId === null ? null : session?.parentSessionId,
+    startedAt: parseStartedAt(value.startedAt),
+    status: typeof value.status === 'string' ? value.status : 'running',
+    statusText: typeof value.statusText === 'string' || value.statusText === null ? value.statusText : undefined,
+    canInterrupt: typeof value.canInterrupt === 'boolean' ? value.canInterrupt : undefined,
+    lastSeq: typeof value.lastSeq === 'number' && Number.isFinite(value.lastSeq) ? value.lastSeq : undefined,
+    session,
+    project: value.project && typeof value.project === 'object' ? value.project : null,
+    ancestors: Array.isArray(value.ancestors)
+      ? value.ancestors.map(parseRunningAncestor).filter((ancestor): ancestor is RunningSessionAncestorSnapshot => Boolean(ancestor))
+      : undefined,
+  };
+};
+
+const parseLifecycleSession = (value: unknown): SessionLifecycleSnapshot | null => {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.sessionId !== 'string' || !item.sessionId || typeof item.status !== 'string' || !lifecycleStatuses.has(item.status as SessionLifecycleStatus)) return null;
+  const context = parseRunningAncestor(value);
+  if (!context) return null;
+  return {
+    ...context,
+    status: item.status as SessionLifecycleStatus,
+    statusText: typeof item.statusText === 'string' || item.statusText === null ? item.statusText : null,
+    lastActivityAt: parseStartedAt(item.lastActivityAt) ?? 0,
+    restartable: item.restartable === true,
+    canInterrupt: item.canInterrupt === true,
+    terminalReason: typeof item.terminalReason === 'string' ? item.terminalReason as SessionLifecycleSnapshot['terminalReason'] : null,
+    exitCode: typeof item.exitCode === 'number' ? item.exitCode : null,
+    ancestors: Array.isArray(item.ancestors) ? item.ancestors.map(parseRunningAncestor).filter((ancestor): ancestor is NonNullable<typeof ancestor> => Boolean(ancestor)) : undefined,
+  };
+};
+
 export default function AppContent() {
   return (
     <PaletteOpsProvider>
@@ -50,16 +151,20 @@ export default function AppContent() {
 
 function AppContentInner() {
   const navigate = useNavigate();
-  const { sessionId } = useParams<{ sessionId?: string }>();
+  const sessionId = useMatch('/session/:sessionId')?.params.sessionId;
   const { t } = useTranslation('common');
   const { isMobile } = useDeviceSettings({ trackPWA: false });
-  const { ws, sendMessage, subscribe } = useWebSocket();
+  const { ws, sendMessage, subscribe, connectionEpoch } = useWebSocket();
+  const activitySyncRef = useRef<ReturnType<typeof createSessionActivitySyncController> | null>(null);
+  const activitySyncGenerationRef = useRef(0);
 
   const {
     processingSessions,
     markSessionProcessing,
     markSessionIdle,
     syncProcessingSessions,
+    sessionLifecycle,
+    syncSessionLifecycle,
   } = useSessionProtection();
 
   const {
@@ -85,6 +190,7 @@ function AppContentInner() {
     subscribe,
     isMobile,
     activeSessions: processingSessions,
+    lifecycleSessions: sessionLifecycle,
   });
 
   // Queued messages for sessions that finish while another session (or none)
@@ -99,47 +205,65 @@ function AppContentInner() {
   });
 
   const refreshRunningSessions = useCallback(async () => {
+    const generation = activitySyncGenerationRef.current;
     try {
-      const response = await api.runningSessions();
-      if (!response.ok) {
-        return;
-      }
-
+      const [response, lifecycleResponse] = await Promise.all([api.runningSessions(), api.sessionLifecycleStatus()]);
+      if (!response.ok || !lifecycleResponse.ok) return;
       const payload = (await response.json()) as RunningSessionsApiPayload;
+      const lifecyclePayload = (await lifecycleResponse.json()) as LifecycleSessionsApiPayload;
       const sessions = Array.isArray(payload.data?.sessions) ? payload.data.sessions : [];
-
+      const runningSnapshots = sessions.map(parseRunningSession).filter((session): session is NonNullable<typeof session> => Boolean(session));
+      const lifecycleSnapshots = (lifecyclePayload.data?.sessions ?? []).map(parseLifecycleSession).filter((item): item is SessionLifecycleSnapshot => Boolean(item));
+      if (!activitySyncRef.current || activitySyncGenerationRef.current !== generation) return;
       syncProcessingSessions(
-        sessions
-          .map((session) => {
-            if (typeof session.sessionId !== 'string' || !session.sessionId) {
-              return null;
-            }
-
-            return {
-              sessionId: session.sessionId,
-              startedAt: parseStartedAt(session.startedAt),
-              statusText: typeof session.statusText === 'string' ? session.statusText : undefined,
-              canInterrupt: typeof session.canInterrupt === 'boolean' ? session.canInterrupt : undefined,
-            };
-          })
-          .filter((session): session is NonNullable<typeof session> => Boolean(session)),
+        runningSnapshots,
       );
+      syncSessionLifecycle(lifecycleSnapshots);
     } catch (error) {
       console.error('[AppContent] Failed to sync running sessions:', error);
     }
-  }, [syncProcessingSessions]);
+  }, [syncProcessingSessions, syncSessionLifecycle]);
+
+  const startSession = useCallback(async (targetSessionId: string) => {
+    const response = await api.startSession(targetSessionId);
+    if (!response.ok) throw new Error(`Failed to start session (${response.status})`);
+    activitySyncRef.current?.invalidate(true);
+  }, []);
 
   useEffect(() => {
-    void refreshRunningSessions();
-  }, [refreshRunningSessions]);
+    activitySyncGenerationRef.current += 1;
+    const controller = createSessionActivitySyncController({ refresh: refreshRunningSessions });
+    activitySyncRef.current = controller;
+    const unsubscribe = subscribe((event) => {
+      if (isLifecycleRelevantEvent(event)) controller.invalidate();
+    });
+    const refreshOnFocus = () => controller.invalidate();
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === 'visible') controller.invalidate();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
+    controller.invalidate(true);
+    return () => {
+      activitySyncGenerationRef.current += 1;
+      activitySyncRef.current = null;
+      controller.dispose();
+      unsubscribe();
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
+    };
+  }, [refreshRunningSessions, subscribe]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      void refreshRunningSessions();
-    }, 5000);
+    if (connectionEpoch > 0) activitySyncRef.current?.invalidate(true);
+  }, [connectionEpoch]);
 
-    return () => window.clearInterval(interval);
-  }, [refreshRunningSessions]);
+  useEffect(() => {
+    activitySyncRef.current?.setPollInterval(getSessionActivityPollInterval(
+      processingSessions.size,
+      [...sessionLifecycle.values()].map((snapshot) => snapshot.status),
+    ));
+  }, [processingSessions, sessionLifecycle]);
 
   usePaletteOpsRegister({
     openSettings,
@@ -208,7 +332,9 @@ function AppContentInner() {
     <div className="fixed inset-0 flex bg-background" style={{ bottom: 'var(--keyboard-height, 0px)' }}>
       {!isMobile ? (
         <div className="h-full flex-shrink-0 border-r border-border/50">
-          <Sidebar {...sidebarSharedProps} />
+          <Suspense fallback={<AppSurfaceLoadingState />}>
+            <Sidebar {...sidebarSharedProps} sessionLifecycle={sessionLifecycle} onStartSession={startSession} />
+          </Suspense>
         </div>
       ) : (
         <div
@@ -234,48 +360,56 @@ function AppContentInner() {
             onClick={(event) => event.stopPropagation()}
             onTouchStart={(event) => event.stopPropagation()}
           >
-            <Sidebar {...sidebarSharedProps} />
+            <Suspense fallback={<AppSurfaceLoadingState />}>
+              <Sidebar {...sidebarSharedProps} sessionLifecycle={sessionLifecycle} onStartSession={startSession} />
+            </Suspense>
           </div>
         </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <MainContent
-          selectedProject={selectedProject}
-          selectedSession={selectedSession}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          ws={ws}
-          sendMessage={sendMessage}
-          isMobile={isMobile}
-          onMenuClick={() => setSidebarOpen(true)}
-          isLoading={isLoadingProjects}
-          onInputFocusChange={setIsInputFocused}
-          onSessionProcessing={markSessionProcessing}
-          onSessionIdle={markSessionIdle}
-          processingSessions={processingSessions}
-          onNavigateToSession={(targetSessionId: string, options) =>
-            navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
-          }
-          onSessionEstablished={(targetSessionId, context) =>
-            registerOptimisticSession({ sessionId: targetSessionId, ...context })
-          }
-          onShowSettings={openSettings}
-          externalMessageUpdate={externalMessageUpdate}
-          newSessionTrigger={newSessionTrigger}
-          onProjectSelect={handleProjectSelect}
-          onProjectsRefresh={() => void refreshProjectsSilently()}
-        />
+        <Suspense fallback={<AppSurfaceLoadingState />}>
+          <MainContent
+            selectedProject={selectedProject}
+            selectedSession={selectedSession}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            ws={ws}
+            sendMessage={sendMessage}
+            isMobile={isMobile}
+            onMenuClick={() => setSidebarOpen(true)}
+            isLoading={isLoadingProjects}
+            onInputFocusChange={setIsInputFocused}
+            onSessionProcessing={markSessionProcessing}
+            onSessionIdle={markSessionIdle}
+            processingSessions={processingSessions}
+            onNavigateToSession={(targetSessionId: string, options) =>
+              navigate(`/session/${targetSessionId}`, { replace: Boolean(options?.replace) })
+            }
+            onSessionEstablished={(targetSessionId, context) =>
+              registerOptimisticSession({ sessionId: targetSessionId, ...context })
+            }
+            onShowSettings={openSettings}
+            externalMessageUpdate={externalMessageUpdate}
+            newSessionTrigger={newSessionTrigger}
+            onProjectSelect={handleProjectSelect}
+            onProjectsRefresh={() => void refreshProjectsSilently()}
+          />
+        </Suspense>
       </div>
 
-      <CommandPalette
-        selectedProject={selectedProject}
-        onStartNewChat={handleNewSession}
-        onOpenSettings={() => openSettings()}
-        onShowTab={setActiveTab}
-      />
+      <Suspense fallback={null}>
+        <CommandPaletteTrigger
+          selectedProject={selectedProject}
+          onStartNewChat={handleNewSession}
+          onOpenSettings={() => openSettings()}
+          onShowTab={setActiveTab}
+        />
+      </Suspense>
 
-      <QuickSettingsPanel />
+      <Suspense fallback={null}>
+        <QuickSettingsPanelTrigger />
+      </Suspense>
     </div>
   );
 }

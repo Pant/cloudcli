@@ -27,11 +27,12 @@ self.addEventListener('fetch', event => {
   // Navigation requests (HTML) — always go to network, no caching
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('/manifest.json').then(() =>
+      fetch(event.request).catch(() =>
         new Response('<h1>Offline</h1><p>Please check your connection.</p>', {
+          status: 503,
           headers: { 'Content-Type': 'text/html' }
         })
-      ))
+      )
     );
     return;
   }
@@ -53,7 +54,10 @@ self.addEventListener('fetch', event => {
 
   // Everything else — network-first
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
+    fetch(event.request).catch(async () => {
+      const cached = await caches.match(event.request);
+      return cached || new Response('Resource unavailable while offline.', { status: 503 });
+    })
   );
 });
 

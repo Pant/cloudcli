@@ -3,7 +3,7 @@
  * Converts NormalizedMessage[] from the session store into ChatMessage[] for the UI.
  */
 
-import type { NormalizedMessage } from '../../../stores/useSessionStore';
+import type { NormalizedMessage } from '../../../stores/normalizedMessage';
 import type { ChatMessage, SubagentChildTool } from '../types/types';
 import { decodeHtmlEntities, unescapeWithMathProtection, formatUsageLimitText } from '../utils/chatFormatting';
 
@@ -81,6 +81,11 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
 
   for (const msg of messages) {
     const sharedMetadata = {
+      id: msg.id,
+      sessionId: msg.sessionId,
+      generation: msg.generation,
+      seq: msg.seq,
+      sourceKind: msg.kind,
       displayText: msg.displayText,
       commandName: msg.commandName,
       commandMessage: msg.commandMessage,
@@ -107,6 +112,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
               timestamp: msg.timestamp,
               isTaskNotification: true,
               taskStatus: taskNotif.status,
+              renderKeySuffix: 'task-notification',
               ...sharedMetadata,
             });
             // Render the agent's result as a normal assistant message so its
@@ -116,6 +122,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
                 type: 'assistant',
                 content: formatUsageLimitText(unescapeWithMathProtection(decodeHtmlEntities(taskNotif.result))),
                 timestamp: msg.timestamp,
+                renderKeySuffix: 'task-result',
                 ...sharedMetadata,
               });
             }

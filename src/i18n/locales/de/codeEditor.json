@@ -17,6 +17,8 @@
     "download": "Datei herunterladen",
     "save": "Speichern",
     "saving": "Wird gespeichert...",
+    "reload": "Von Festplatte neu laden",
+    "reloading": "Wird neu geladen...",
     "saved": "Gespeichert!",
     "exitFullscreen": "Vollbild beenden",
     "fullscreen": "Vollbild",

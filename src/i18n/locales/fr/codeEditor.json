@@ -17,6 +17,8 @@
     "download": "Télécharger le fichier",
     "save": "Enregistrer",
     "saving": "Enregistrement...",
+    "reload": "Recharger depuis le disque",
+    "reloading": "Rechargement...",
     "saved": "Enregistré !",
     "exitFullscreen": "Quitter le plein écran",
     "fullscreen": "Plein écran",

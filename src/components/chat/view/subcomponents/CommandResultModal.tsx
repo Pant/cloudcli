@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Activity,
   BadgeCheck,
@@ -25,6 +25,8 @@ import type {
   ModelCommandData,
   StatusCommandData,
 } from '../../hooks/useChatComposerState';
+
+import { formatPercentage, getTokenUsageDetails } from './CommandResultModalCostContent.utils';
 
 type CommandResultModalProps = {
   payload: CommandModalPayload | null;
@@ -345,7 +347,7 @@ function ModelsContent({
                   onClick={() => handleSelectModel(option.value)}
                   disabled={Boolean(changingModel)}
                   aria-label={`Select model ${option.value}`}
-                  className={`settings-content-enter group flex min-h-[4rem] flex-col rounded-2xl border p-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60 ${
+                  className={`settings-content-enter group flex min-h-16 flex-col rounded-2xl border p-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60 ${
                     isCurrent
                       ? 'border-primary/45 bg-primary/10'
                       : isPendingSelection
@@ -401,9 +403,8 @@ function ModelsContent({
   );
 }
 
-function CostContent({ data }: { data: CostCommandData }) {
-  const used = Number(data.tokenUsage?.used ?? 0);
-  const total = Number(data.tokenUsage?.total ?? 0);
+export function CostContent({ data }: { data: CostCommandData }) {
+  const { used, windowTokens, maximum, windowPercentage, remaining, visualPercentage } = getTokenUsageDetails(data.tokenUsage);
   const model = data.model || 'Unknown';
   const provider = getProviderLabel(data.provider, data.provider || 'Unknown');
   const hasBreakdown =
@@ -431,10 +432,29 @@ function CostContent({ data }: { data: CostCommandData }) {
             icon: TerminalSquare,
           },
         ]),
-    ...(total > 0
-      ? [{ label: 'Context window', value: formatNumber(total), icon: Gauge }]
-      : []),
+    {
+      label: 'Current context tokens',
+      value: windowTokens === null ? 'Unavailable' : formatNumber(windowTokens),
+      icon: Activity,
+    },
+    {
+      label: 'Context window maximum',
+      value: maximum === null ? 'Unavailable' : formatNumber(maximum),
+      icon: Gauge,
+    },
+    {
+      label: 'Current context percentage',
+      value: windowPercentage === null ? 'Unavailable' : formatPercentage(windowPercentage),
+      icon: Activity,
+    },
+    {
+      label: 'Remaining context tokens',
+      value: remaining === null ? 'Unavailable' : formatNumber(remaining),
+      icon: Gauge,
+    },
   ];
+
+  const canRenderContextMeter = windowTokens !== null && maximum !== null && windowPercentage !== null && visualPercentage !== null;
 
   return (
     <div className="space-y-4">
@@ -458,6 +478,43 @@ function CostContent({ data }: { data: CostCommandData }) {
           );
         })}
       </div>
+
+      {canRenderContextMeter ? (
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4" data-context-meter>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="text-sm font-semibold text-foreground">Current context-window usage</span>
+            <span className="font-mono text-sm font-semibold text-primary">{formatPercentage(windowPercentage)}</span>
+          </div>
+          <div
+            className="h-2.5 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label="Current context-window usage"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={visualPercentage}
+            aria-valuetext={`${formatNumber(windowTokens)} of ${formatNumber(maximum)} current context-window tokens occupied (${formatPercentage(windowPercentage)})`}
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-300"
+              style={{ width: `${visualPercentage}%` }}
+            />
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            {formatNumber(remaining ?? 0)} tokens remaining in the current context window of {formatNumber(maximum)}.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-border/70 bg-muted/20 p-4" data-context-meter-unavailable>
+          <p className="text-sm font-semibold text-foreground">Current context-window occupancy unavailable</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {windowTokens === null && maximum === null
+              ? 'The model has not reported current occupancy or a positive context-window maximum. Cumulative session totals above remain available.'
+              : windowTokens === null
+                ? 'The model has not reported current context occupancy, so percentage, remaining capacity, and the progress meter are unavailable.'
+                : 'The model has not reported a positive context-window maximum, so percentage, remaining capacity, and the progress meter are unavailable.'}
+          </p>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
         <div className="grid gap-3 sm:grid-cols-2">
@@ -542,7 +599,7 @@ export default function CommandResultModal({
     cost: {
       eyebrow: 'Session telemetry',
       title: 'Token Usage',
-      subtitle: 'Input, output, and total token counts for this session.',
+      subtitle: 'Cumulative session totals plus current context-window occupancy.',
       icon: Coins,
     },
     status: {

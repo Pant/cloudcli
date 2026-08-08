@@ -94,7 +94,35 @@
     "computer": "Bilgisayar Kullanımı",
     "notifications": "Bildirimler",
     "plugins": "Eklentiler",
+    "cache": "Önbellek",
     "about": "Hakkında"
+  },
+  "cache": {
+    "title": "Önbellek",
+    "description": "Bu hesaba ait yerel önbelleğe alınmış oturum geçmişlerini yönetin.",
+    "statsTitle": "Önbelleğe alınmış geçmiş",
+    "statsDescription": "Yalnızca bu hesabın yerel geçmişleri sayılır. Diğer hesaplar ve sunucu geçmişleri korunur.",
+    "sessionCountLabel": "Önbelleğe alınmış oturumlar",
+    "messageCountLabel": "Önbelleğe alınmış mesajlar",
+    "loading": "Önbellek istatistikleri yükleniyor...",
+    "loadError": "Önbellek istatistikleri yüklenemedi.",
+    "syncSectionTitle": "Geçmişleri eşitle",
+    "syncDescription": "Bu hesap için kullanılabilir tüm oturum geçmişlerini al. Geçmişler daha sonra otomatik olarak yeniden önbelleğe alınabilir.",
+    "syncButton": "Tüm geçmişleri eşitle",
+    "syncPending": "Geçmişler eşitleniyor...",
+    "syncSuccess": "{{eligible}} geçmişten {{succeeded}} tanesi eşitlendi.",
+    "syncPartial": "Eşitleme {{failed}} başarısız geçmişle tamamlandı ({{eligible}} geçmişten {{succeeded}} başarılı).",
+    "syncError": "Tüm geçmişler eşitlenemedi.",
+    "clearSectionTitle": "Yerel geçmişleri temizle",
+    "clearDescription": "Yalnızca bu hesabın yerel önbelleğe alınmış geçmişlerini kaldır. Diğer hesaplar ve sunucu geçmişleri korunur.",
+    "clearButton": "Bu hesabın önbelleğini temizle",
+    "clearPending": "Önbellek temizleniyor...",
+    "clearSuccess": "Bu hesabın yerel önbelleği temizlendi. Geçmişler daha sonra yeniden önbelleğe alınabilir.",
+    "clearError": "Bu hesabın önbelleği temizlenemedi.",
+    "confirmationTitle": "Bu hesabın yerel geçmişleri temizlensin mi?",
+    "confirmationDescription": "Bu işlem yalnızca bu hesabın yerel önbelleğe alınmış oturum geçmişlerini kaldırır. Diğer hesaplar ve sunucu geçmişleri korunur; geçmişler daha sonra yeniden önbelleğe alınabilir.",
+    "cancel": "İptal",
+    "confirm": "Önbelleği temizle"
   },
   "notifications": {
     "title": "Bildirimler",
@@ -440,6 +468,16 @@
     "actions": {
       "edit": "Sunucuyu düzenle",
       "delete": "Sunucuyu sil"
+    },
+    "managed": {
+      "badge": "Yönetilen",
+      "hint": "CloudCLI tarafından yönetilir.",
+      "enabled": "Etkin",
+      "disabled": "Devre dışı",
+      "saving": "Kaydediliyor…",
+      "enable": "Yönetilen MCP sunucusunu etkinleştir",
+      "disable": "Yönetilen MCP sunucusunu devre dışı bırak",
+      "saveFailed": "Yönetilen MCP sunucusunun durumu kaydedilemedi."
     },
     "help": {
       "title": "Codex MCP Hakkında",

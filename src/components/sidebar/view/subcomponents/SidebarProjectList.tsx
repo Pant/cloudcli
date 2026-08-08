@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import type { TFunction } from 'i18next';
 
 import type { LoadingProgress, Project, ProjectSession, LLMProvider } from '../../../../types/app';
-import type { SessionActivityMap } from '../../../../hooks/useSessionProtection';
+import type { SessionActivityMap, SessionLifecycleMap } from '../../../../hooks/useSessionProtection';
 import type { MCPServerStatus, SessionWithProvider } from '../../types/types';
 
 import SidebarProjectItem from './SidebarProjectItem';
@@ -29,7 +29,12 @@ export type SidebarProjectListProps = {
   onLoadMoreSessions: (projectId: string) => void;
   loadingMoreProjects: Set<string>;
   activeSessions: SessionActivityMap;
+  sessionLifecycle: SessionLifecycleMap;
+  onStartSession: (sessionId: string) => Promise<void>;
   attentionSessionIds: ReadonlySet<string>;
+  expandedSessionIdsByProject: Map<string, Set<string>>;
+  forcedExpandedSessionIdsByProject: Map<string, Set<string>>;
+  onToggleSessionBranch: (projectId: string, sessionId: string) => void;
   forceExpanded?: boolean;
   isProjectStarred: (projectName: string) => boolean;
   onEditingNameChange: (value: string) => void;
@@ -76,7 +81,12 @@ export default function SidebarProjectList({
   onLoadMoreSessions,
   loadingMoreProjects,
   activeSessions,
+  sessionLifecycle,
+  onStartSession,
   attentionSessionIds,
+  expandedSessionIdsByProject,
+  forcedExpandedSessionIdsByProject,
+  onToggleSessionBranch,
   forceExpanded = false,
   isProjectStarred,
   onEditingNameChange,
@@ -154,7 +164,12 @@ export default function SidebarProjectList({
               onDeleteSession={onDeleteSession}
               onLoadMoreSessions={onLoadMoreSessions}
               activeSessions={activeSessions}
+              sessionLifecycle={sessionLifecycle}
+              onStartSession={onStartSession}
               attentionSessionIds={attentionSessionIds}
+              expandedSessionIds={expandedSessionIdsByProject.get(project.projectId) ?? new Set()}
+              forcedExpandedSessionIds={forcedExpandedSessionIdsByProject.get(project.projectId) ?? new Set()}
+              onToggleSessionBranch={(sessionId) => onToggleSessionBranch(project.projectId, sessionId)}
               onNewSession={onNewSession}
               onEditingSessionNameChange={onEditingSessionNameChange}
               onStartEditingSession={onStartEditingSession}

@@ -14,6 +14,11 @@ import {
 import { useShellRuntime } from '../hooks/useShellRuntime';
 import { sendSocketMessage } from '../utils/socket';
 import { getSessionDisplayName } from '../utils/auth';
+import {
+  EMPTY_MOBILE_TERMINAL_MODIFIERS,
+  type MobileTerminalModifier,
+  type MobileTerminalModifiers,
+} from '../utils/terminalShortcutKeys';
 
 import ShellConnectionOverlay from './subcomponents/ShellConnectionOverlay';
 import ShellEmptyState from './subcomponents/ShellEmptyState';
@@ -47,6 +52,19 @@ export default function Shell({
   const { t } = useTranslation('chat');
   const [isRestarting, setIsRestarting] = useState(false);
   const [cliPromptOptions, setCliPromptOptions] = useState<CliPromptOption[] | null>(null);
+  const [mobileModifiers, setMobileModifiers] = useState<MobileTerminalModifiers>(
+    EMPTY_MOBILE_TERMINAL_MODIFIERS,
+  );
+  const clearMobileModifiers = useCallback(() => {
+    setMobileModifiers(EMPTY_MOBILE_TERMINAL_MODIFIERS);
+  }, []);
+  const toggleMobileModifier = useCallback((modifier: MobileTerminalModifier) => {
+    setMobileModifiers((current) => ({ ...current, [modifier]: !current[modifier] }));
+  }, []);
+  const mobileModifierInput = useMemo(
+    () => ({ mobileModifiers, clearMobileModifiers }),
+    [clearMobileModifiers, mobileModifiers],
+  );
   const promptCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restartAfterInitRef = useRef(false);
@@ -67,10 +85,12 @@ export default function Shell({
     initialCommand,
     isPlainShell,
     minimal,
+    isActive,
     autoConnect,
     isRestarting,
     onProcessComplete,
     onOutputRef,
+    mobileModifierInput,
   });
 
   // Check xterm.js buffer for CLI prompt patterns (❯ N. label)
@@ -244,6 +264,9 @@ export default function Shell({
           wsRef={wsRef}
           terminalRef={terminalRef}
           isConnected={isConnected}
+          mobileModifiers={mobileModifiers}
+          onToggleModifier={toggleMobileModifier}
+          onClearModifiers={clearMobileModifiers}
           bottomOffset="bottom-0"
         />
       </>
@@ -347,6 +370,9 @@ export default function Shell({
         wsRef={wsRef}
         terminalRef={terminalRef}
         isConnected={isConnected}
+        mobileModifiers={mobileModifiers}
+        onToggleModifier={toggleMobileModifier}
+        onClearModifiers={clearMobileModifiers}
       />
 
     </div>

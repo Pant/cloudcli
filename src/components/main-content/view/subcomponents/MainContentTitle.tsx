@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import type { AppTab, Project, ProjectSession } from '../../../../types/app';
-import { usePlugins } from '../../../../contexts/PluginsContext';
+import { usePlugins } from '../../../../contexts/plugins';
 
 type MainContentTitleProps = {
   activeTab: AppTab;

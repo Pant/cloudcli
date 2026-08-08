@@ -34,8 +34,14 @@ try {
       }
     }
   });
-} catch (e: any) {
-  console.error('No .env file found or error reading it:', e.message);
+} catch (error: unknown) {
+  const fileError = error as NodeJS.ErrnoException;
+  if (fileError.code !== 'ENOENT') {
+    console.error(
+      'Error reading .env:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 // Keep the default database in a stable user-level location so rebuilding dist-server

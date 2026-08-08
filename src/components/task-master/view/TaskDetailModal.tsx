@@ -13,10 +13,11 @@ import {
   Save,
   X,
 } from 'lucide-react';
+
 import { cn } from '../../../lib/utils';
 import { copyTextToClipboard } from '../../../utils/clipboard';
 import { api } from '../../../utils/api';
-import { useTaskMaster } from '../context/TaskMasterContext';
+import { useTaskMaster } from '../context/taskMasterContextContract';
 import type { TaskId, TaskMasterTask, TaskReference } from '../types';
 
 type TaskDetailModalProps = {

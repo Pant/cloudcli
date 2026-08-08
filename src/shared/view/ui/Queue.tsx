@@ -1,4 +1,5 @@
 import * as React from 'react';
+
 import { cn } from '../../../lib/utils';
 
 /* ─── Types ──────────────────────────────────────────────────────── */
@@ -82,7 +83,9 @@ export const QueueItemIndicator = React.forwardRef<HTMLDivElement, React.HTMLAtt
           </svg>
         )}
         {status === 'in_progress' && (
-          <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500 dark:bg-blue-400" />
+          <span
+            className="h-2 w-2 rounded-full bg-blue-500 ring-2 ring-blue-500/20 dark:bg-blue-400 dark:ring-blue-400/20"
+          />
         )}
         {status === 'pending' && (
           <svg className="h-3.5 w-3.5 text-muted-foreground/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -13,10 +13,12 @@ export function useShellRuntime({
   initialCommand,
   isPlainShell,
   minimal,
+  isActive,
   autoConnect,
   isRestarting,
   onProcessComplete,
   onOutputRef,
+  mobileModifierInput,
 }: UseShellRuntimeOptions): UseShellRuntimeResult {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -62,8 +64,10 @@ export function useShellRuntime({
     wsRef,
     selectedProject,
     minimal,
+    isActive,
     isRestarting,
     closeSocket,
+    mobileModifierInput,
   });
 
   const { isConnected, isConnecting, connectToShell, disconnectFromShell } = useShellConnection({

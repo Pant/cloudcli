@@ -26,8 +26,8 @@ import {
   DialogContent,
   DialogTitle,
 } from '../../shared/view/ui';
-import { useTheme } from '../../contexts/ThemeContext';
-import { usePaletteOps } from '../../contexts/PaletteOpsContext';
+import { useTheme } from '../../contexts/useTheme';
+import { usePaletteOps } from '../../contexts/paletteOps';
 import { SETTINGS_MAIN_TABS } from '../settings/constants/constants';
 import type { AppTab, Project } from '../../types/app';
 
@@ -49,6 +49,8 @@ const PAGE_LABELS: Record<Page, string> = {
 };
 
 type CommandPaletteProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   selectedProject: Project | null;
   onStartNewChat: (project: Project) => void;
   onOpenSettings: (tab?: string) => void;
@@ -64,12 +66,13 @@ const NAV_TABS: Array<{ id: AppTab; label: string; keywords: string }> = [
 ];
 
 export default function CommandPalette({
+  open,
+  onOpenChange,
   selectedProject,
   onStartNewChat,
   onOpenSettings,
   onShowTab,
 }: CommandPaletteProps) {
-  const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [pages, setPages] = React.useState<Page[]>([]);
   const { toggleDarkMode } = useTheme();
@@ -77,17 +80,6 @@ export default function CommandPalette({
   const ops = usePaletteOps();
 
   const page = pages.at(-1);
-
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isCmdK = (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k';
-      if (!isCmdK) return;
-      e.preventDefault();
-      setOpen((prev) => !prev);
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   React.useEffect(() => {
     if (!open) {
@@ -135,9 +127,9 @@ export default function CommandPalette({
   }, [sessions, messageMatches, showSessions]);
 
   const run = React.useCallback((fn: () => void) => {
-    setOpen(false);
+    onOpenChange(false);
     fn();
-  }, []);
+  }, [onOpenChange]);
 
   const pushPage = React.useCallback((next: Page) => {
     setSearch('');
@@ -164,7 +156,7 @@ export default function CommandPalette({
   const branchesShown = page === 'branches' ? branches : branches.slice(0, browseLimit);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl overflow-hidden p-0">
         <DialogTitle>Command palette</DialogTitle>
         <Command label="Command palette" onKeyDown={handleKeyDown}>

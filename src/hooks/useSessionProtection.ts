@@ -1,5 +1,14 @@
 import { useCallback, useState } from 'react';
 
+import type {
+  LLMProvider,
+  Project,
+  ProjectSession,
+  RunningSessionAncestorSnapshot,
+  RunningSessionSnapshot,
+  SessionLifecycleSnapshot,
+} from '../types/app';
+
 export interface SessionActivity {
   /** Provider-supplied status line; null renders the default activity label. */
   statusText: string | null;
@@ -9,15 +18,23 @@ export interface SessionActivity {
    * the elapsed-time display and the stale `chat_subscribed` idle-ack guard.
    */
   startedAt: number;
+  /** Canonical hierarchy metadata from the latest running snapshot. */
+  provider?: LLMProvider;
+  parentSessionId?: string | null;
+  session?: ProjectSession | null;
+  project?: Pick<Project, 'projectId' | 'path' | 'fullPath' | 'displayName' | 'isStarred'> | null;
+  /** Inactive hierarchy context carried by the exact running snapshot. */
+  ancestors?: RunningSessionAncestorSnapshot[];
+  lastSeq?: number;
+  /** True until the activity appears in an authoritative running snapshot. */
+  locallyStarted?: boolean;
 }
 
 export type SessionActivityMap = ReadonlyMap<string, SessionActivity>;
+export type SessionLifecycleMap = ReadonlyMap<string, SessionLifecycleSnapshot>;
 
-export type SessionActivitySnapshot = {
+export type SessionActivitySnapshot = RunningSessionSnapshot & {
   sessionId: string;
-  statusText?: string | null;
-  canInterrupt?: boolean;
-  startedAt?: number;
 };
 
 export type MarkSessionProcessing = (
@@ -36,6 +53,43 @@ export type SyncProcessingSessions = (
 
 const LOCAL_ACTIVITY_GRACE_MS = 10_000;
 
+export const reconcileLifecycleSnapshots = (
+  snapshots: readonly SessionLifecycleSnapshot[],
+): Map<string, SessionLifecycleSnapshot> => new Map(
+  snapshots.filter((snapshot) => Boolean(snapshot.sessionId)).map((snapshot) => [snapshot.sessionId, snapshot]),
+);
+
+export const reconcileProcessingSnapshots = (
+  previous: ReadonlyMap<string, SessionActivity>,
+  sessions: readonly SessionActivitySnapshot[],
+  now = Date.now(),
+): Map<string, SessionActivity> => {
+  const incoming = new Map(sessions.filter((session) => Boolean(session.sessionId)).map((session) => [session.sessionId, session]));
+  const updated = new Map<string, SessionActivity>();
+  for (const [sessionId, snapshot] of incoming) {
+    const existing = previous.get(sessionId);
+    const snapshotStartedAt = typeof snapshot.startedAt === 'number' && Number.isFinite(snapshot.startedAt) && snapshot.startedAt > 0
+      ? snapshot.startedAt
+      : undefined;
+    updated.set(sessionId, {
+      statusText: snapshot.statusText !== undefined ? snapshot.statusText : existing?.statusText ?? null,
+      canInterrupt: snapshot.canInterrupt ?? existing?.canInterrupt ?? true,
+      startedAt: snapshotStartedAt ?? existing?.startedAt ?? now,
+      provider: snapshot.provider ?? existing?.provider,
+      parentSessionId: snapshot.parentSessionId !== undefined ? snapshot.parentSessionId : existing?.parentSessionId,
+      session: snapshot.session ? { ...snapshot.session, id: snapshot.session.id ?? sessionId, provider: snapshot.session.provider ?? snapshot.provider ?? existing?.session?.provider } as ProjectSession : existing?.session ?? null,
+      project: snapshot.project ? { ...snapshot.project, projectId: snapshot.project.projectId ?? existing?.project?.projectId ?? '' } as SessionActivity['project'] : existing?.project ?? null,
+      lastSeq: typeof snapshot.lastSeq === 'number' ? snapshot.lastSeq : existing?.lastSeq,
+      ancestors: snapshot.ancestors ?? existing?.ancestors,
+      locallyStarted: false,
+    });
+  }
+  for (const [sessionId, activity] of previous) {
+    if (!incoming.has(sessionId) && activity.locallyStarted && now - activity.startedAt < LOCAL_ACTIVITY_GRACE_MS) updated.set(sessionId, activity);
+  }
+  return updated;
+};
+
 const sessionActivityMapsMatch = (
   left: ReadonlyMap<string, SessionActivity>,
   right: ReadonlyMap<string, SessionActivity>,
@@ -51,6 +105,12 @@ const sessionActivityMapsMatch = (
       || leftActivity.statusText !== rightActivity.statusText
       || leftActivity.canInterrupt !== rightActivity.canInterrupt
       || leftActivity.startedAt !== rightActivity.startedAt
+      || leftActivity.provider !== rightActivity.provider
+      || leftActivity.parentSessionId !== rightActivity.parentSessionId
+      || leftActivity.lastSeq !== rightActivity.lastSeq
+      || JSON.stringify(leftActivity.ancestors) !== JSON.stringify(rightActivity.ancestors)
+      || JSON.stringify(leftActivity.session) !== JSON.stringify(rightActivity.session)
+      || JSON.stringify(leftActivity.project) !== JSON.stringify(rightActivity.project)
     ) {
       return false;
     }
@@ -71,6 +131,7 @@ export function useSessionProtection() {
   const [processingSessions, setProcessingSessions] = useState<Map<string, SessionActivity>>(
     new Map(),
   );
+  const [sessionLifecycle, setSessionLifecycle] = useState<Map<string, SessionLifecycleSnapshot>>(new Map());
 
   const markSessionProcessing = useCallback<MarkSessionProcessing>((sessionId, activity) => {
     if (!sessionId) {
@@ -84,6 +145,7 @@ export function useSessionProtection() {
           activity?.statusText !== undefined ? activity.statusText : existing?.statusText ?? null,
         canInterrupt: activity?.canInterrupt ?? existing?.canInterrupt ?? true,
         startedAt: existing?.startedAt ?? Date.now(),
+        locallyStarted: existing?.locallyStarted ?? true,
       };
 
       if (
@@ -128,45 +190,24 @@ export function useSessionProtection() {
     const now = Date.now();
 
     setProcessingSessions((prev) => {
-      const incoming = new Map<string, SessionActivitySnapshot>();
-      for (const session of sessions) {
-        if (!session.sessionId) {
-          continue;
-        }
-        incoming.set(session.sessionId, session);
-      }
-
-      const updated = new Map<string, SessionActivity>();
-
-      for (const [sessionId, snapshot] of incoming) {
-        const existing = prev.get(sessionId);
-        const snapshotStartedAt =
-          typeof snapshot.startedAt === 'number' && Number.isFinite(snapshot.startedAt) && snapshot.startedAt > 0
-            ? snapshot.startedAt
-            : undefined;
-
-        updated.set(sessionId, {
-          statusText:
-            snapshot.statusText !== undefined ? snapshot.statusText : existing?.statusText ?? null,
-          canInterrupt: snapshot.canInterrupt ?? existing?.canInterrupt ?? true,
-          startedAt: snapshotStartedAt ?? existing?.startedAt ?? now,
-        });
-      }
-
-      for (const [sessionId, activity] of prev) {
-        if (!incoming.has(sessionId) && now - activity.startedAt < LOCAL_ACTIVITY_GRACE_MS) {
-          updated.set(sessionId, activity);
-        }
-      }
-
+      const updated = reconcileProcessingSnapshots(prev, sessions, now);
       return sessionActivityMapsMatch(prev, updated) ? prev : updated;
+    });
+  }, []);
+
+  const syncSessionLifecycle = useCallback((snapshots: readonly SessionLifecycleSnapshot[]) => {
+    setSessionLifecycle((previous) => {
+      const next = reconcileLifecycleSnapshots(snapshots);
+      return JSON.stringify([...previous]) === JSON.stringify([...next]) ? previous : next;
     });
   }, []);
 
   return {
     processingSessions,
+    sessionLifecycle,
     markSessionProcessing,
     markSessionIdle,
     syncProcessingSessions,
+    syncSessionLifecycle,
   };
 }

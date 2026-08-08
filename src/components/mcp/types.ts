@@ -33,6 +33,7 @@ export type ProviderMcpServer = {
   workspacePath?: string;
   projectName?: string;
   projectDisplayName?: string;
+  enabled?: boolean;
 };
 
 export type McpFormState = {
@@ -67,6 +68,7 @@ export type UpsertProviderMcpServerPayload = {
   envVars?: string[];
   bearerTokenEnvVar?: string;
   envHttpHeaders?: KeyValueMap;
+  enabled?: boolean;
 };
 
 export type GlobalMcpServerResult = {

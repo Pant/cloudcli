@@ -1,6 +1,6 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
+@plugin "@tailwindcss/typography";
 
 /* Global spinner animation - defined early to ensure it loads */
 @keyframes spin {
@@ -121,13 +121,14 @@
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: hsl(var(--border));
     box-sizing: border-box;
     transition: none;
   }
   
   body {
-    @apply bg-background text-foreground;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
 
     font-family: "Encode Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -390,7 +391,7 @@
   
   /* Ensure checkbox styling is preserved */
   input[type="checkbox"] {
-    @apply accent-blue-600;
+    accent-color: var(--color-blue-600);
     opacity: 1;
   }
   
@@ -563,7 +564,9 @@
 }
 
 /* Mobile optimizations and components */
-@layer components {
+/* Component-level workspace styles remain ordinary CSS. Keeping these rules
+   outside Tailwind's layer transform preserves escaped selectors and nested
+   media queries for the production CSS parser. */
   .chat-messages-pane {
     contain: layout style paint;
   }
@@ -575,13 +578,24 @@
   .chat-activity-enter {
     animation: chat-activity-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
     transform-origin: bottom center;
-    will-change: transform, opacity, filter;
   }
 
   .chat-activity-exit {
     animation: chat-activity-exit 220ms cubic-bezier(0.4, 0, 1, 1) both;
     transform-origin: bottom center;
-    will-change: transform, opacity, filter;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chat-activity-enter {
+      animation: none;
+      transform: none;
+    }
+
+    .chat-activity-exit {
+      animation: none;
+      opacity: 0;
+      transform: none;
+    }
   }
 
   .chat-activity-tab {
@@ -636,26 +650,30 @@
     
     /* Better mobile touch targets */
     .mobile-touch-target {
-      @apply min-h-[44px] min-w-[44px];
+      min-height: 44px;
+      min-width: 44px;
     }
     
     /* Chat message improvements */
     .chat-message.user {
-      @apply justify-end;
+      justify-content: flex-end;
     }
     
     .chat-message.user > div {
-      @apply max-w-[85%];
+      max-width: 85%;
     }
     
     .chat-message.assistant > div,
     .chat-message.error > div {
-      @apply w-full sm:max-w-[95%];
+      width: 100%;
+      max-width: 100%;
     }
     
     /* Session name truncation on mobile */
     .session-name-mobile {
-      @apply truncate;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       max-width: calc(100vw - 120px); /* Account for sidebar padding and buttons */
     }
     
@@ -697,6 +715,13 @@
       }
     }
   }
+
+@media (min-width: 640px) and (max-width: 768px) {
+  .chat-message.assistant > div,
+  .chat-message.error > div {
+    max-width: 95%;
+  }
+}
   
   /* Touch device optimizations for all screen sizes */
   @media (hover: none) and (pointer: coarse) {
@@ -802,7 +827,6 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
-}
 
 /* Hide markdown backticks in prose content */
 .prose code::before,
@@ -812,7 +836,8 @@
 }
 
 /* Custom spinner animation for mobile compatibility */
-@layer utilities {
+/* Utility-like workspace styles remain ordinary CSS for the same reason as
+   the component styles above. */
   @keyframes spin {
     from {
       transform: rotate(0deg);
@@ -967,17 +992,14 @@
   @keyframes chat-activity-enter {
     0% {
       opacity: 0;
-      filter: blur(3px);
       transform: translateY(18px) scaleY(0.92);
     }
     65% {
       opacity: 1;
-      filter: blur(0);
       transform: translateY(-2px) scaleY(1.01);
     }
     100% {
       opacity: 1;
-      filter: blur(0);
       transform: translateY(0) scaleY(1);
     }
   }
@@ -985,12 +1007,10 @@
   @keyframes chat-activity-exit {
     0% {
       opacity: 1;
-      filter: blur(0);
       transform: translateY(0) scaleY(1);
     }
     100% {
       opacity: 0;
-      filter: blur(2px);
       transform: translateY(14px) scaleY(0.96);
     }
   }
@@ -1013,4 +1033,3 @@
       background-color: transparent;
     }
   }
-}

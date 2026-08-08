@@ -308,7 +308,7 @@ function extractTokenBudget(sdkMessage) {
     return null;
   }
 
-  const messageUsage = sdkMessage.message?.usage || sdkMessage.usage;
+  const messageUsage = sdkMessage.message?.usage;
   if (messageUsage && typeof messageUsage === 'object') {
     const directInputTokens = readNumber(messageUsage.input_tokens ?? messageUsage.inputTokens);
     const cacheCreationTokens = readNumber(messageUsage.cache_creation_input_tokens ?? messageUsage.cacheCreationInputTokens ?? messageUsage.cacheCreationTokens);
@@ -322,11 +322,32 @@ function extractTokenBudget(sdkMessage) {
     return {
       used: totalUsed,
       total: contextWindow,
+      windowTokens: totalUsed,
       inputTokens,
       outputTokens,
       cacheReadTokens,
       cacheCreationTokens,
       cacheTokens,
+      breakdown: {
+        input: inputTokens,
+        output: outputTokens,
+      },
+    };
+  }
+
+  // Some SDK versions expose a non-message `usage` object. Preserve that
+  // compatibility payload, but do not relabel it as current context usage:
+  // only per-message usage is a trustworthy current-call snapshot.
+  if (sdkMessage.usage && typeof sdkMessage.usage === 'object') {
+    const inputTokens = readNumber(sdkMessage.usage.input_tokens ?? sdkMessage.usage.inputTokens);
+    const outputTokens = readNumber(sdkMessage.usage.output_tokens ?? sdkMessage.usage.outputTokens);
+    const totalUsed = inputTokens + outputTokens;
+    const contextWindow = parseInt(process.env.CONTEXT_WINDOW, 10) || 160000;
+    return {
+      used: totalUsed,
+      total: contextWindow,
+      inputTokens,
+      outputTokens,
       breakdown: {
         input: inputTokens,
         output: outputTokens,

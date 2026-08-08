@@ -1,9 +1,48 @@
+import type { SpawnOptions } from 'node:child_process';
 import path from 'node:path';
+
+import type spawn from 'cross-spawn';
 
 type TaskmasterServiceDependencies = {
     readTextFile(filePath: string): Promise<string>;
     getHomeDirectory(): string;
+    accessFile(filePath: string, mode?: number): Promise<void>;
+    environment: NodeJS.ProcessEnv;
+    platform: NodeJS.Platform;
+    spawnProcess: typeof spawn;
 };
+
+type ProcessResult = {
+    code: number | null;
+    error: Error | null;
+    stdout: string;
+};
+
+function runProcess(
+    spawnProcess: typeof spawn,
+    command: string,
+    args: string[],
+    options: SpawnOptions,
+): Promise<ProcessResult> {
+    return new Promise((resolve) => {
+        const child = spawnProcess(command, args, options);
+        let stdout = '';
+        let settled = false;
+
+        child.stdout?.on('data', (data) => {
+            stdout += data.toString();
+        });
+
+        const settle = (code: number | null, error: Error | null = null) => {
+            if (settled) return;
+            settled = true;
+            resolve({ code, error, stdout });
+        };
+
+        child.once('error', (error) => settle(null, error));
+        child.once('close', (code) => settle(code));
+    });
+}
 
 /**
  * Creates TaskMaster status workflows for the TaskMaster composition root.
@@ -12,6 +51,54 @@ type TaskmasterServiceDependencies = {
  */
 export function createTaskmasterService(dependencies: TaskmasterServiceDependencies) {
     return {
+        /** Probes the TaskMaster CLI directly without invoking a generic command shell. */
+        async checkInstallation() {
+            const pathValue = dependencies.environment.PATH ?? '';
+            const executableNames = dependencies.platform === 'win32'
+                ? (dependencies.environment.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+                    .split(';')
+                    .filter(Boolean)
+                    .map((extension) => `task-master${extension.toLowerCase()}`)
+                : ['task-master'];
+            let installPath: string | null = null;
+
+            for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
+                for (const executableName of executableNames) {
+                    const candidatePath = path.join(directory, executableName);
+                    try {
+                        await dependencies.accessFile(candidatePath);
+                        installPath = candidatePath;
+                        break;
+                    } catch {
+                        // Continue through PATH/PATHEXT until an executable shim is found.
+                    }
+                }
+                if (installPath) break;
+            }
+
+            if (!installPath) {
+                return {
+                    isInstalled: false,
+                    installPath: null,
+                    version: null,
+                    reason: 'TaskMaster CLI not found in PATH',
+                };
+            }
+
+            const versionResult = await runProcess(
+                dependencies.spawnProcess,
+                installPath,
+                ['--version'],
+                { stdio: ['ignore', 'pipe', 'pipe'], shell: false },
+            );
+
+            return {
+                isInstalled: true,
+                installPath,
+                version: versionResult.code === 0 ? versionResult.stdout.trim() : 'unknown',
+                reason: null,
+            };
+        },
         /** Detects TaskMaster in the user's Claude MCP configuration without exposing secret values. */
         async detectMcpServer() {
             const homeDirectory = dependencies.getHomeDirectory();

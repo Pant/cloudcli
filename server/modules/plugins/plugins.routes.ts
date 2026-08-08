@@ -5,8 +5,9 @@ import express from 'express';
 
 import type { createPluginsService } from './plugins.service.js';
 
-function wildcardPath(req: express.Request): string {
-  return ((req.params as Record<string, string>)['0'] ?? '').trim();
+function wildcardPath(req: express.Request, parameterName: string): string {
+  const value = req.params[parameterName];
+  return (Array.isArray(value) ? value.join('/') : value ?? '').trim();
 }
 
 function routeParameter(value: string | string[]): string {
@@ -23,9 +24,12 @@ export function createPluginsRouter(service: ReturnType<typeof createPluginsServ
 
   router.get('/', respond(() => service.list()));
   router.get('/:name/manifest', respond((req) => service.getManifest(routeParameter(req.params.name))));
-  router.get('/:name/assets/*', async (req, res, next) => {
+  router.get('/:name/assets/*assetPath', async (req, res, next) => {
     try {
-      const asset = service.resolveAsset(routeParameter(req.params.name), wildcardPath(req));
+      const asset = service.resolveAsset(
+        routeParameter(req.params.name),
+        wildcardPath(req, 'assetPath'),
+      );
       res.setHeader('Content-Type', asset.contentType);
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       const stream = fs.createReadStream(asset.path);
@@ -36,7 +40,7 @@ export function createPluginsRouter(service: ReturnType<typeof createPluginsServ
   router.put('/:name/enable', respond((req) => service.setEnabled(routeParameter(req.params.name), req.body?.enabled)));
   router.post('/install', respond((req) => service.install(req.body?.url)));
   router.post('/:name/update', respond((req) => service.update(routeParameter(req.params.name))));
-  router.all('/:name/rpc/*', async (req, res, next) => {
+  router.all('/:name/rpc/*rpcPath', async (req, res, next) => {
     try {
       const { port, secrets } = await service.prepareRpc(routeParameter(req.params.name));
       const headers: Record<string, string> = {
@@ -47,7 +51,7 @@ export function createPluginsRouter(service: ReturnType<typeof createPluginsServ
       }
       const query = req.url.includes('?') ? `?${req.url.split('?').slice(1).join('?')}` : '';
       const proxyRequest = http.request({
-        hostname: '127.0.0.1', port, path: `/${wildcardPath(req)}${query}`, method: req.method, headers,
+        hostname: '127.0.0.1', port, path: `/${wildcardPath(req, 'rpcPath')}${query}`, method: req.method, headers,
       }, (proxyResponse) => {
         res.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);
         proxyResponse.pipe(res);

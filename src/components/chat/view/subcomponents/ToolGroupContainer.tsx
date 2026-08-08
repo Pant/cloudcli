@@ -6,6 +6,7 @@ import type { Project } from '../../../../types/app';
 import type { ToolGroupItem } from '../../utils/toolGrouping';
 import { getToolConfig } from '../../tools';
 
+import type { QuestionFormSubmitHandler } from './QuestionFormCard';
 import MessageComponent from './MessageComponent';
 
 type DiffLine = {
@@ -26,6 +27,8 @@ interface ToolGroupContainerProps {
   showThinking?: boolean;
   selectedProject?: Project | null;
   provider: Provider | string;
+  transcriptMessages: ChatMessage[];
+  onSubmitQuestionForm: QuestionFormSubmitHandler;
 }
 
 function parseToolInput(toolInput: unknown): unknown {
@@ -69,6 +72,8 @@ export default function ToolGroupContainer({
   showThinking,
   selectedProject,
   provider,
+  transcriptMessages,
+  onSubmitQuestionForm,
 }: ToolGroupContainerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const config = getToolConfig(group.toolName).input;
@@ -94,7 +99,7 @@ export default function ToolGroupContainer({
   }, [group.messages]);
 
   return (
-    <div className="chat-message tool px-3 sm:px-0" data-message-timestamp={group.timestamp || undefined}>
+    <div className="chat-message tool px-3 sm:px-0" data-message-key={`tool-group-${getMessageKey(group.messages[0])}`} data-message-timestamp={group.timestamp || undefined}>
       <button
         type="button"
         className={`group flex w-full items-center gap-2 border-l-2 ${borderClass} rounded-r-md bg-muted/25 px-3 py-2 text-left transition-colors hover:bg-muted/40 dark:bg-muted/10 dark:hover:bg-muted/20`}
@@ -126,6 +131,7 @@ export default function ToolGroupContainer({
             <MessageComponent
               key={getMessageKey(message)}
               message={message}
+              messageKey={getMessageKey(message)}
               prevMessage={index > 0 ? group.messages[index - 1] : prevMessage}
               createDiff={createDiff}
               onFileOpen={onFileOpen}
@@ -135,6 +141,9 @@ export default function ToolGroupContainer({
               showThinking={showThinking}
               selectedProject={selectedProject}
               provider={provider}
+              transcriptMessages={transcriptMessages}
+              messageIndex={transcriptMessages.indexOf(message)}
+              onSubmitQuestionForm={onSubmitQuestionForm}
             />
           ))}
         </div>

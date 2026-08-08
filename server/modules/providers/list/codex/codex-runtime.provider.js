@@ -30,6 +30,32 @@ function readUsageNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function readOptionalUsageNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function readCodexWindowTokens(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const totalTokens = readOptionalUsageNumber(value.total_tokens ?? value.totalTokens);
+  if (totalTokens !== undefined) {
+    return totalTokens;
+  }
+
+  const inputTokens = readOptionalUsageNumber(value.input_tokens ?? value.inputTokens);
+  const outputTokens = readOptionalUsageNumber(value.output_tokens ?? value.outputTokens);
+  const reasoningTokens = readOptionalUsageNumber(
+    value.reasoning_output_tokens ?? value.reasoningOutputTokens ?? value.reasoning_tokens,
+  );
+  if (inputTokens === undefined && outputTokens === undefined && reasoningTokens === undefined) {
+    return undefined;
+  }
+  return (inputTokens ?? 0) + (outputTokens ?? 0) + (reasoningTokens ?? 0);
+}
+
 function extractCodexTokenBudget(event) {
   const info = event?.info || event?.payload?.info || event?.usage?.info;
   const usage = info?.total_token_usage || event?.usage?.total_token_usage || event?.usage;
@@ -41,9 +67,19 @@ function extractCodexTokenBudget(event) {
   const outputTokens = readUsageNumber(usage.output_tokens);
   const used = readUsageNumber(usage.total_tokens) || inputTokens + outputTokens;
 
+  const windowTokens = readCodexWindowTokens(
+    info?.last_token_usage
+      || event?.usage?.last_token_usage
+      // The SDK's turn.completed usage is the latest turn call rather than a
+      // cumulative session row, so retain it as a current-window signal when
+      // the richer rollout fields are not present.
+      || (!info?.total_token_usage && !event?.usage?.total_token_usage ? usage : undefined),
+  );
+
   return {
     used,
     total: readUsageNumber(info?.model_context_window || event?.usage?.model_context_window) || 200000,
+    ...(windowTokens === undefined ? {} : { windowTokens }),
     inputTokens,
     outputTokens,
     breakdown: {

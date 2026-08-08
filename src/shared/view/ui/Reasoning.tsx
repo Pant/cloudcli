@@ -4,27 +4,10 @@ import * as React from 'react';
 import { BrainIcon, ChevronDownIcon } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
+
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './Collapsible';
+import { ReasoningContext, useReasoning } from './ReasoningContext';
 import { Shimmer } from './Shimmer';
-
-/* ─── Context ────────────────────────────────────────────────────── */
-
-interface ReasoningContextValue {
-  isStreaming: boolean;
-  isOpen: boolean;
-  setIsOpen: (open: boolean) => void;
-  duration: number | undefined;
-}
-
-const ReasoningContext = React.createContext<ReasoningContextValue | null>(null);
-
-export const useReasoning = () => {
-  const context = React.useContext(ReasoningContext);
-  if (!context) {
-    throw new Error('Reasoning components must be used within Reasoning');
-  }
-  return context;
-};
 
 /* ─── Reasoning (root) ───────────────────────────────────────────── */
 

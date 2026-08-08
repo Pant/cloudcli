@@ -118,6 +118,45 @@ export const authenticatedFetch = (url, options = {}) => {
   });
 };
 
+/**
+ * Build the optional File Tree query without requiring callers to concatenate
+ * or encode query strings themselves.  The API's root listing is represented
+ * by an omitted `targetPath`; `path` is supported as a convenience alias.
+ *
+ * @param {Record<string, unknown>} options
+ * @returns {string}
+ */
+export const buildFileTreeQuery = (options = {}) => {
+  const params = new URLSearchParams();
+  const targetPath = options.targetPath ?? options.path;
+  const includeMetadata = options.includeMetadata ?? options.metadata;
+
+  if (typeof targetPath === 'string' && targetPath.length > 0 && targetPath !== '.') {
+    params.set('targetPath', targetPath);
+  }
+  if (typeof options.depth === 'number' && Number.isFinite(options.depth)) {
+    params.set('depth', String(options.depth));
+  }
+  if (typeof includeMetadata === 'boolean') {
+    params.set('includeMetadata', String(includeMetadata));
+  }
+  if (typeof options.respectGitignore === 'boolean') {
+    params.set('respectGitignore', String(options.respectGitignore));
+  }
+
+  return params.toString();
+};
+
+/**
+ * @param {string} projectId
+ * @param {Record<string, unknown>} options
+ * @returns {string}
+ */
+export const buildFileTreeUrl = (projectId, options = {}) => {
+  const query = buildFileTreeQuery(options);
+  return `/api/file-tree/projects/${encodeURIComponent(projectId)}/files${query ? `?${query}` : ''}`;
+};
+
 // API endpoints
 export const api = {
   // Auth endpoints (no token required)
@@ -152,6 +191,34 @@ export const api = {
   },
   projectTaskmaster: (projectId) =>
     authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/taskmaster`),
+  listProjectAppointments: (projectId) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}`),
+  createProjectAppointment: (projectId, appointment) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}`, {
+      method: 'POST',
+      body: JSON.stringify(appointment),
+    }),
+  reorderProjectAppointments: (projectId, appointmentIds) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}/queue`, {
+      method: 'PUT',
+      body: JSON.stringify({ appointmentIds }),
+    }),
+  setAppointmentActive: (projectId, appointmentId, isActive) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}/${encodeURIComponent(appointmentId)}/active`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isActive }),
+    }),
+  dispatchProjectAppointment: (projectId, appointmentId) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}/${encodeURIComponent(appointmentId)}/dispatch`, {
+      method: 'POST',
+    }),
+  postponeAppointment: (projectId, appointmentId, dueAt) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}/${encodeURIComponent(appointmentId)}/postpone`, {
+      method: 'PATCH',
+      body: JSON.stringify({ dueAt }),
+    }),
+  cancelAppointment: (projectId, appointmentId) =>
+    authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}/${encodeURIComponent(appointmentId)}`, { method: 'DELETE' }),
   // Unified endpoint for persisted session messages.
   // Provider/project metadata are resolved by the backend from sessionId.
   unifiedSessionMessages: (sessionId, _provider = 'claude', { limit = null, offset = 0 } = {}) => {
@@ -193,6 +260,10 @@ export const api = {
     authenticatedFetch(`/api/providers/sessions/${encodeURIComponent(sessionId)}`),
   runningSessions: () =>
     authenticatedFetch('/api/providers/sessions/running'),
+  sessionLifecycleStatus: () =>
+    authenticatedFetch('/api/providers/sessions/status'),
+  startSession: (sessionId) =>
+    authenticatedFetch(`/api/providers/sessions/${encodeURIComponent(sessionId)}/start`, { method: 'POST' }),
   providerSessionId: (sessionId) =>
     authenticatedFetch(`/api/providers/sessions/${encodeURIComponent(sessionId)}/provider-id`),
   restoreSession: (sessionId) =>
@@ -242,10 +313,33 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ filePath, content }),
     }),
-  getFiles: (projectId, options = {}) =>
-    authenticatedFetch(`/api/file-tree/projects/${projectId}/files`, options),
-  getMentionableFiles: (projectId, options = {}) =>
-    authenticatedFetch(`/api/file-tree/projects/${projectId}/files?respectGitignore=true`, options),
+  getFiles: (projectId, options = {}) => {
+    const {
+      targetPath: _targetPath,
+      path: _path,
+      depth: _depth,
+      includeMetadata: _includeMetadata,
+      metadata: _metadata,
+      respectGitignore: _respectGitignore,
+      ...fetchOptions
+    } = options;
+    return authenticatedFetch(buildFileTreeUrl(projectId, options), fetchOptions);
+  },
+  getMentionableFiles: (projectId, options = {}) => {
+    const {
+      targetPath: _targetPath,
+      path: _path,
+      depth: _depth,
+      includeMetadata: _includeMetadata,
+      metadata: _metadata,
+      respectGitignore: _respectGitignore,
+      ...fetchOptions
+    } = options;
+    return authenticatedFetch(
+      buildFileTreeUrl(projectId, { ...options, respectGitignore: true }),
+      fetchOptions,
+    );
+  },
 
   // File operations
   createFile: (projectId, { path, type, name }) =>

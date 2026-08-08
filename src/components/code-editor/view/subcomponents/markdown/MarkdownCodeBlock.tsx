@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { ComponentProps } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark as prismOneDark, oneLight as prismOneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
 import { copyTextToClipboard } from '../../../../../utils/clipboard';
-import { useTheme } from '../../../../../contexts/ThemeContext';
+import { useTheme } from '../../../../../contexts/useTheme';
+
+const ControlledSyntaxHighlighter = lazy(() => import('../../../../markdown/ControlledSyntaxHighlighter'));
 
 type MarkdownCodeBlockProps = {
   inline?: boolean;
@@ -35,11 +36,11 @@ export default function MarkdownCodeBlock({
   }
 
   const languageMatch = /language-(\w+)/.exec(className || '');
-  const language = languageMatch ? languageMatch[1] : 'text';
+  const language = languageMatch ? languageMatch[1] : undefined;
 
   return (
     <div className="group relative my-2">
-      {language !== 'text' && (
+      {language && (
         <div className="absolute left-3 top-2 z-10 text-xs font-medium uppercase text-gray-400">{language}</div>
       )}
 
@@ -57,20 +58,9 @@ export default function MarkdownCodeBlock({
         {copied ? 'Copied!' : 'Copy'}
       </button>
 
-      <SyntaxHighlighter
-        language={language}
-        style={isDarkMode ? prismOneDark : prismOneLight}
-        customStyle={{
-          margin: 0,
-          borderRadius: '0.75rem',
-          fontSize: '0.875rem',
-          padding: language !== 'text' ? '2rem 1rem 1rem 1rem' : '1rem',
-          ...(isDarkMode ? {} : { background: 'hsl(var(--muted))' }),
-        }}
-        codeTagProps={{ style: isDarkMode ? {} : { background: 'transparent' } }}
-      >
-        {rawContent}
-      </SyntaxHighlighter>
+      <Suspense fallback={<pre className="m-0 overflow-x-auto rounded-xl bg-muted p-4 pt-8 text-sm"><code>{rawContent}</code></pre>}>
+        <ControlledSyntaxHighlighter code={rawContent} language={language} isDarkMode={isDarkMode} />
+      </Suspense>
     </div>
   );
 }

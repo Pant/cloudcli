@@ -1,5 +1,10 @@
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
-import type { ProviderAgentDefinition, UpsertProviderAgentInput } from '@/shared/types.js';
+import type {
+  ProviderAgentDefinition,
+  ProviderAgentPreferencesPatch,
+  ProviderAgentPreferencesResult,
+  UpsertProviderAgentInput,
+} from '@/shared/types.js';
 import { AppError } from '@/shared/utils.js';
 
 const resolveAgentProvider = (providerName: string) => {
@@ -32,5 +37,13 @@ export const providerAgentsService = {
 
   async removeProviderAgent(providerName: string, name: string) {
     return resolveAgentProvider(providerName).agents!.removeAgent(name);
+  },
+
+  async updateProviderAgentPreferences(
+    providerName: string,
+    name: string,
+    patch: ProviderAgentPreferencesPatch,
+  ): Promise<ProviderAgentPreferencesResult> {
+    return resolveAgentProvider(providerName).agents!.updateAgentPreferences(name, patch);
   },
 };

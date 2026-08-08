@@ -1,11 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-import './index.css'
-import 'katex/dist/katex.min.css'
 
-// Initialize i18n
-import './i18n/config.js'
+import App from './App.tsx'
+import { initializeI18n } from './i18n/config.js'
+import './index.css'
 
 // Register service worker for PWA + Web Push support
 if ('serviceWorker' in navigator) {
@@ -14,8 +12,10 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
+initializeI18n().then((i18n) => {
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <React.StrictMode>
+      <App i18n={i18n} />
+    </React.StrictMode>,
+  )
+})

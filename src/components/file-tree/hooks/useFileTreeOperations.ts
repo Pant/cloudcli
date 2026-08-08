@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import JSZip from 'jszip';
+
 import { api } from '../../../utils/api';
 import type { FileTreeNode } from '../types/types';
 import type { Project } from '../../../types/app';
+import { collectFileTreeZipEntries } from '../utils/fileTreeUtils';
 
 // Invalid filename characters
 const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/;
@@ -262,26 +264,6 @@ export function useFileTreeOperations({
     URL.revokeObjectURL(url);
   }, []);
 
-  // Download file or folder
-  const handleDownload = useCallback(async (item: FileTreeNode) => {
-    if (!selectedProject) return;
-
-    setOperationLoading(true);
-    try {
-      if (item.type === 'directory') {
-        // Download folder as ZIP
-        await downloadFolderAsZip(item);
-      } else {
-        // Download single file
-        await downloadSingleFile(item);
-      }
-    } catch (err) {
-      showToast((err as Error).message, 'error');
-    } finally {
-      setOperationLoading(false);
-    }
-  }, [selectedProject, showToast]);
-
   // Download a single file
   const downloadSingleFile = useCallback(async (item: FileTreeNode) => {
     if (!selectedProject) return;
@@ -303,32 +285,30 @@ export function useFileTreeOperations({
 
     const zip = new JSZip();
 
-    // Recursively get all files in the folder
-    const collectFiles = async (node: FileTreeNode, currentPath: string) => {
-      const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
+    // The UI node may only contain opened branches. Fetch the authoritative
+    // subtree before building the ZIP manifest so unopened descendants are not
+    // silently omitted.
+    const response = await api.getFiles(selectedProject.projectId, {
+      targetPath: folder.path,
+      depth: 10,
+      includeMetadata: true,
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to load "${folder.name}" for ZIP export: ${response.status} ${errorText}`);
+    }
 
-      if (node.type === 'file') {
-        const response = await api.readFileBlob(selectedProject.projectId, node.path);
-        if (!response.ok) {
-          throw new Error(`Failed to download "${node.name}" for ZIP export`);
-        }
-
-        // Store raw bytes in the archive so binary files stay intact.
-        const fileBytes = await response.arrayBuffer();
-        zip.file(fullPath, fileBytes);
-      } else if (node.type === 'directory' && node.children) {
-        // Recursively process children
-        for (const child of node.children) {
-          await collectFiles(child, fullPath);
-        }
+    const subtreeChildren = (await response.json()) as FileTreeNode[];
+    const entries = collectFileTreeZipEntries(subtreeChildren);
+    for (const { node, archivePath } of entries) {
+      const fileResponse = await api.readFileBlob(selectedProject.projectId, node.path);
+      if (!fileResponse.ok) {
+        throw new Error(`Failed to download "${node.name}" for ZIP export`);
       }
-    };
 
-    // If the folder has children, process them
-    if (folder.children && folder.children.length > 0) {
-      for (const child of folder.children) {
-        await collectFiles(child, '');
-      }
+      // Store raw bytes in the archive so binary files stay intact.
+      const fileBytes = await fileResponse.arrayBuffer();
+      zip.file(archivePath, fileBytes);
     }
 
     // Generate ZIP file
@@ -337,6 +317,26 @@ export function useFileTreeOperations({
 
     showToast(t('fileTree.toast.folderDownloaded', 'Folder downloaded as ZIP'), 'success');
   }, [selectedProject, showToast, t, triggerBrowserDownload]);
+
+  // Download file or folder
+  const handleDownload = useCallback(async (item: FileTreeNode) => {
+    if (!selectedProject) return;
+
+    setOperationLoading(true);
+    try {
+      if (item.type === 'directory') {
+        // Download folder as ZIP
+        await downloadFolderAsZip(item);
+      } else {
+        // Download single file
+        await downloadSingleFile(item);
+      }
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setOperationLoading(false);
+    }
+  }, [downloadFolderAsZip, downloadSingleFile, selectedProject, showToast]);
 
   return {
     // Rename operations

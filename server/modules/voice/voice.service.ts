@@ -103,7 +103,7 @@ function validateConfiguredBackend(config: ResolvedVoiceConfig): VoiceServiceRes
 
 function createTranscriptionFormData(audio: VoiceAudioUpload, sttModel: string): FormData {
   const formData = new FormData();
-  formData.append('file', new Blob([audio.bytes], { type: audio.mimeType }), audio.fileName);
+  formData.append('file', new Blob([new Uint8Array(audio.bytes)], { type: audio.mimeType }), audio.fileName);
   formData.append('model', sttModel);
   return formData;
 }

@@ -8,6 +8,7 @@ import type {
   LLMProvider,
   NormalizedMessage,
   RealtimeClientConnection,
+  ChatSubscriptionSnapshot,
 } from '@/shared/types.js';
 
 type ChatRunStatus = 'running' | 'completed';
@@ -36,6 +37,9 @@ type ChatRun = {
   writer: ChatSessionWriter;
   startedAt: number;
   completedAt: number | null;
+  generation: number;
+  lastProgressAt: number;
+  subscribers: Map<RealtimeClientConnection, { replaying: boolean; queued: NormalizedMessage[] }>;
 };
 
 /**
@@ -62,44 +66,56 @@ const MAX_BUFFERED_EVENTS_PER_RUN = 5000;
  */
 const runs = new Map<string, ChatRun>();
 
-async function broadcastCanonicalSessionUpsert(appSessionId: string): Promise<void> {
-  const row = sessionsDb.getSessionById(appSessionId);
-  if (!row || row.isArchived) {
-    return;
-  }
+async function broadcastCanonicalSessionUpserts(appSessionIds: string[]): Promise<void> {
+  const payloads: string[] = [];
 
-  const projectPath = row.project_path;
-  const project = projectPath ? projectsDb.getProjectPath(projectPath) : null;
-  const displayName = project?.custom_project_name?.trim()
-    ? project.custom_project_name
-    : await generateDisplayName(path.basename(projectPath ?? '') || (projectPath ?? ''), projectPath);
+  for (const appSessionId of new Set(appSessionIds)) {
+    const row = sessionsDb.getSessionById(appSessionId);
+    if (!row || row.isArchived) {
+      continue;
+    }
 
-  const payload = JSON.stringify({
-    kind: 'session_upserted',
-    sessionId: row.session_id,
-    providerSessionId: row.provider_session_id,
-    provider: row.provider,
-    session: {
+    const projectPath = row.project_path;
+    const project = projectPath ? projectsDb.getProjectPath(projectPath) : null;
+    const displayName = project?.custom_project_name?.trim()
+      ? project.custom_project_name
+      : await generateDisplayName(path.basename(projectPath ?? '') || (projectPath ?? ''), projectPath);
+    const parentResolution = sessionsDb.getSessionParentResolution(row.session_id);
+    const session: Record<string, unknown> = {
       id: row.session_id,
+      model: row.model?.trim() || null,
+      agent: row.agent?.trim() || null,
       summary: row.custom_name || '',
       messageCount: 0,
       lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
-    },
-    project: project
-      ? {
-        projectId: project.project_id,
-        path: project.project_path,
-        fullPath: project.project_path,
-        displayName,
-        isStarred: Boolean(project.isStarred),
-      }
-      : null,
-    timestamp: new Date().toISOString(),
-  });
+    };
+    if (parentResolution.kind === 'root' || parentResolution.kind === 'resolved') {
+      session.parentSessionId = parentResolution.parentSessionId;
+    }
+
+    payloads.push(JSON.stringify({
+      kind: 'session_upserted',
+      sessionId: row.session_id,
+      provider: row.provider,
+      session,
+      project: project
+        ? {
+          projectId: project.project_id,
+          path: project.project_path,
+          fullPath: project.project_path,
+          displayName,
+          isStarred: Boolean(project.isStarred),
+        }
+        : null,
+      timestamp: new Date().toISOString(),
+    }));
+  }
 
   connectedClients.forEach((client) => {
     if (client.readyState === WS_OPEN_STATE) {
-      client.send(payload);
+      for (const payload of payloads) {
+        client.send(payload);
+      }
     }
   });
 }
@@ -127,6 +143,7 @@ function evictRunLater(appSessionId: string): void {
  * 4. Flip the run to `completed` when the terminal `complete` event passes by.
  */
 function decorateAndRecordEvent(run: ChatRun, message: NormalizedMessage): NormalizedMessage | null {
+  if (runs.get(run.appSessionId) !== run) return null;
   // Exactly-one-complete contract: when a run is aborted the chat handler
   // emits the terminal `complete` immediately, but the killed runtime may
   // still emit its own `complete` from its exit handler moments later.
@@ -136,11 +153,13 @@ function decorateAndRecordEvent(run: ChatRun, message: NormalizedMessage): Norma
   }
 
   run.lastSeq += 1;
+  run.lastProgressAt = Date.now();
 
   const outbound: NormalizedMessage = {
     ...message,
     sessionId: run.appSessionId,
     seq: run.lastSeq,
+    generation: run.generation,
   };
 
   if (message.kind === 'complete') {
@@ -177,8 +196,8 @@ function recordProviderSessionId(run: ChatRun, providerSessionId: string): void 
   run.providerSessionId = providerSessionId;
 
   try {
-    sessionsDb.assignProviderSessionId(run.appSessionId, providerSessionId);
-    void broadcastCanonicalSessionUpsert(run.appSessionId).catch((error) => {
+    const affectedChildSessionIds = sessionsDb.assignProviderSessionId(run.appSessionId, providerSessionId);
+    void broadcastCanonicalSessionUpserts([run.appSessionId, ...affectedChildSessionIds]).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[ChatRunRegistry] Failed to broadcast canonical session mapping', {
         appSessionId: run.appSessionId,
@@ -213,8 +232,11 @@ export const chatRunRegistry = {
     appSessionId: string;
     provider: LLMProvider;
     providerSessionId: string | null;
-    connection: RealtimeClientConnection;
+    connection: RealtimeClientConnection | null;
     userId: string | number | null;
+    generation?: number;
+    onProgress?: (generation: number, message: NormalizedMessage) => void;
+    onComplete?: (generation: number, message: NormalizedMessage) => void;
   }): ChatRun | null {
     const existing = runs.get(input.appSessionId);
     if (existing && existing.status === 'running') {
@@ -231,18 +253,43 @@ export const chatRunRegistry = {
       writer: null as unknown as ChatSessionWriter,
       startedAt: Date.now(),
       completedAt: null,
+      generation: input.generation ?? 0,
+      lastProgressAt: Date.now(),
+      subscribers: new Map(),
     };
 
     run.writer = new ChatSessionWriter({
-      connection: input.connection,
       userId: input.userId,
       provider: input.provider,
       providerSessionId: input.providerSessionId,
       onProviderSessionId: (providerSessionId) => {
         recordProviderSessionId(run, providerSessionId);
       },
-      decorateOutboundEvent: (message) => decorateAndRecordEvent(run, message),
+      decorateOutboundEvent: (message) => {
+        const outbound = decorateAndRecordEvent(run, message);
+        if (outbound) {
+          input.onProgress?.(run.generation, outbound);
+          if (outbound.kind === 'complete') input.onComplete?.(run.generation, outbound);
+        }
+        return outbound;
+      },
+      forwardOutboundEvent: (message) => {
+        const payload = JSON.stringify(message);
+        for (const [connection, subscription] of run.subscribers) {
+          if (connection.readyState !== WS_OPEN_STATE) {
+            run.subscribers.delete(connection);
+          } else if (subscription.replaying) {
+            subscription.queued.push(message);
+          } else {
+            connection.send(payload);
+          }
+        }
+      },
     });
+
+    if (input.connection) {
+      run.subscribers.set(input.connection, { replaying: false, queued: [] });
+    }
 
     runs.set(input.appSessionId, run);
     return run;
@@ -261,6 +308,8 @@ export const chatRunRegistry = {
     provider: LLMProvider;
     startedAt: number;
     lastSeq: number;
+    lastProgressAt: number;
+    generation: number;
   }> {
     return Array.from(runs.values())
       .filter((run) => run.status === 'running')
@@ -269,11 +318,13 @@ export const chatRunRegistry = {
         provider: run.provider,
         startedAt: run.startedAt,
         lastSeq: run.lastSeq,
+        lastProgressAt: run.lastProgressAt,
+        generation: run.generation,
       }));
   },
 
   /**
-   * Re-attaches a run's outbound stream to a (new) websocket connection.
+   * Adds a websocket connection to a run's outbound stream.
    *
    * This is the generic replacement for the Claude-only writer reconnect:
    * after a page refresh the new socket subscribes and immediately starts
@@ -285,8 +336,69 @@ export const chatRunRegistry = {
       return false;
     }
 
-    run.writer.updateWebSocket(connection);
+    run.subscribers.set(connection, { replaying: false, queued: [] });
     return true;
+  },
+
+  /** Removes a closed browser connection from every run subscription set. */
+  detachConnection(connection: RealtimeClientConnection): void {
+    for (const run of runs.values()) run.subscribers.delete(connection);
+  },
+
+  /**
+   * Captures one generation-aware replay boundary and pauses this requester's
+   * live fanout until `finishSubscription` flushes events emitted after it.
+   */
+  beginSubscription(
+    appSessionId: string,
+    connection: RealtimeClientConnection,
+    requestedGeneration: number | undefined,
+    requestedLastSeq: number,
+  ): ChatSubscriptionSnapshot {
+    const run = runs.get(appSessionId);
+    if (!run) {
+      return { sessionId: appSessionId, generation: null, isProcessing: false, lastSeq: 0,
+        replayFromSeq: null, replayToSeq: null, replayGap: true, refreshRequired: true, events: [] };
+    }
+
+    const boundary = run.lastSeq;
+    const firstRetainedSeq = run.events[0]?.seq ?? boundary + 1;
+    const generationMatches = requestedGeneration === undefined || requestedGeneration === run.generation;
+    const afterSeq = generationMatches ? requestedLastSeq : 0;
+    const coverageComplete = afterSeq >= firstRetainedSeq - 1;
+    const completedNeedsRefresh = run.status === 'completed' &&
+      (!generationMatches || requestedLastSeq < boundary);
+    const refreshRequired = !coverageComplete || completedNeedsRefresh;
+    const events = refreshRequired
+      ? []
+      : run.events.filter((event) => (event.seq ?? 0) > afterSeq && (event.seq ?? 0) <= boundary);
+
+    if (run.status === 'running') {
+      run.subscribers.set(connection, { replaying: true, queued: [] });
+    }
+
+    return {
+      sessionId: appSessionId,
+      generation: run.generation,
+      isProcessing: run.status === 'running',
+      lastSeq: boundary,
+      replayFromSeq: events[0]?.seq ?? null,
+      replayToSeq: events.at(-1)?.seq ?? null,
+      replayGap: !coverageComplete,
+      refreshRequired,
+      events,
+    };
+  },
+
+  /** Completes requester replay and flushes post-boundary live events in order. */
+  finishSubscription(appSessionId: string, connection: RealtimeClientConnection): void {
+    const subscription = runs.get(appSessionId)?.subscribers.get(connection);
+    if (!subscription) return;
+    subscription.replaying = false;
+    for (const event of subscription.queued) {
+      if (connection.readyState === WS_OPEN_STATE) connection.send(JSON.stringify(event));
+    }
+    subscription.queued.length = 0;
   },
 
   /**
@@ -309,7 +421,7 @@ export const chatRunRegistry = {
    * marked running. Used when a provider runtime throws or resolves without
    * having produced its own terminal event, and by the abort path.
    */
-  completeRun(appSessionId: string, opts: { exitCode: number; aborted?: boolean }): void {
+  completeRun(appSessionId: string, opts: { exitCode: number; aborted?: boolean; signal?: NodeJS.Signals | null }): void {
     const run = runs.get(appSessionId);
     if (!run || run.status !== 'running') {
       return;
@@ -326,7 +438,7 @@ export const chatRunRegistry = {
    * milliseconds of the previous turn ending) — the session-keyed
    * `completeRun` would terminate that newer run.
    */
-  completeRunIfCurrent(run: ChatRun, opts: { exitCode: number; aborted?: boolean }): void {
+  completeRunIfCurrent(run: ChatRun, opts: { exitCode: number; aborted?: boolean; signal?: NodeJS.Signals | null }): void {
     if (runs.get(run.appSessionId) !== run || run.status !== 'running') {
       return;
     }

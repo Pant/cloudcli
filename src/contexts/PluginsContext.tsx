@@ -1,45 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+
 import { authenticatedFetch } from '../utils/api';
 
-export type Plugin = {
-  name: string;
-  displayName: string;
-  version: string;
-  description: string;
-  author: string;
-  icon: string;
-  type: 'react' | 'module';
-  slot: 'tab';
-  entry: string;
-  server: string | null;
-  permissions: string[];
-  enabled: boolean;
-  serverRunning: boolean;
-  dirName: string;
-  repoUrl: string | null;
-};
+import { PluginsContext } from './plugins';
+import type { Plugin } from './plugins';
 
-type PluginsContextValue = {
-  plugins: Plugin[];
-  loading: boolean;
-  pluginsError: string | null;
-  refreshPlugins: () => Promise<void>;
-  installPlugin: (url: string) => Promise<{ success: boolean; error?: string }>;
-  uninstallPlugin: (name: string) => Promise<{ success: boolean; error?: string }>;
-  updatePlugin: (name: string) => Promise<{ success: boolean; error?: string }>;
-  togglePlugin: (name: string, enabled: boolean) => Promise<{ success: boolean; error: string | null }>;
-};
-
-const PluginsContext = createContext<PluginsContextValue | null>(null);
-
-export function usePlugins() {
-  const context = useContext(PluginsContext);
-  if (!context) {
-    throw new Error('usePlugins must be used within a PluginsProvider');
-  }
-  return context;
-}
+export type { Plugin } from './plugins';
 
 export function PluginsProvider({ children }: { children: ReactNode }) {
   const [plugins, setPlugins] = useState<Plugin[]>([]);

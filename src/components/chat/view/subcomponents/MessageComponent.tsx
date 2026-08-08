@@ -7,8 +7,14 @@ import type {
   ClaudePermissionSuggestion,
   PermissionGrantResult,
   Provider,
+  QuestionForm,
 } from '../../types/types';
 import { formatUsageLimitText } from '../../utils/chatFormatting';
+import {
+  hasUnterminatedQuestionForm,
+  splitQuestionFormSegments,
+} from '../../utils/questionForms';
+import { findSubsequentQuestionFormAnswers } from '../../utils/questionFormTranscript';
 import type { Project } from '../../../../types/app';
 import { ToolRenderer, ToolErrorDisplay, shouldHideToolResult } from '../../tools';
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '../../../../shared/view/ui';
@@ -18,6 +24,7 @@ import ChatMessageFiles from './ChatMessageFiles';
 import { Markdown } from './Markdown';
 import MessageCopyControl from './MessageCopyControl';
 import MessageSpeakControl from './MessageSpeakControl';
+import { QuestionFormCard, type QuestionFormSubmitHandler } from './QuestionFormCard';
 
 type DiffLine = {
   type: string;
@@ -36,6 +43,10 @@ type MessageComponentProps = {
   showThinking?: boolean;
   selectedProject?: Project | null;
   provider: Provider | string;
+  transcriptMessages: ChatMessage[];
+  messageIndex: number;
+  onSubmitQuestionForm: QuestionFormSubmitHandler;
+  messageKey?: string;
 };
 
 type InteractiveOption = {
@@ -46,7 +57,29 @@ type InteractiveOption = {
 
 const COPY_HIDDEN_TOOL_NAMES = new Set(['Bash', 'Edit', 'Write', 'ApplyPatch']);
 
-const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider }: MessageComponentProps) => {
+function isQuestionFormAssistantMessage(message: ChatMessage): boolean {
+  return message.type === 'assistant'
+    && !message.isToolUse
+    && !message.isInteractivePrompt
+    && !message.isThinking
+    && !message.isTaskNotification;
+}
+
+function getQuestionFormCopyText(form: QuestionForm): string {
+  return [form.title, ...form.questions.map((question) => `- ${question.label}`)].join('\n');
+}
+
+function getSegmentedAssistantCopyText(
+  content: string,
+  segments: ReturnType<typeof splitQuestionFormSegments>,
+): string {
+  return segments
+    .map((segment) => segment.kind === 'form' ? getQuestionFormCopyText(segment.form) : segment.text)
+    .join('')
+    .trim();
+}
+
+const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider, transcriptMessages, messageIndex, onSubmitQuestionForm, messageKey }: MessageComponentProps) => {
   const { t } = useTranslation('chat');
   const isGrouped = prevMessage && prevMessage.type === message.type &&
     ((prevMessage.type === 'assistant') ||
@@ -59,9 +92,21 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
     () => formatUsageLimitText(String(message.content || '')),
     [message.content]
   );
+  const questionFormSegments = useMemo(
+    () => isQuestionFormAssistantMessage(message)
+      ? splitQuestionFormSegments(formattedMessageContent)
+      : [],
+    [formattedMessageContent, message],
+  );
+  const hasQuestionFormContent = isQuestionFormAssistantMessage(message) && (
+    questionFormSegments.some((segment) => segment.kind !== 'text')
+    || hasUnterminatedQuestionForm(formattedMessageContent)
+  );
   const assistantCopyContent = message.isToolUse
     ? String(message.displayText || message.content || '')
-    : formattedMessageContent;
+    : hasQuestionFormContent
+      ? getSegmentedAssistantCopyText(formattedMessageContent, questionFormSegments)
+      : formattedMessageContent;
   const isCommandOrFileEditToolResponse = Boolean(
     message.isToolUse && COPY_HIDDEN_TOOL_NAMES.has(String(message.toolName || ''))
   );
@@ -83,6 +128,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
     <div
       ref={messageRef}
       data-message-timestamp={message.timestamp || undefined}
+      data-message-key={messageKey}
       className={`chat-message ${message.type} ${isGrouped ? 'grouped' : ''} ${message.type === 'user' ? 'flex justify-end px-3 sm:px-0' : 'px-3 sm:px-0'}`}
     >
       {message.type === 'user' ? (
@@ -334,7 +380,37 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   </Reasoning>
                 )}
 
-                {(() => {
+                {hasQuestionFormContent ? (
+                  <div className="space-y-3">
+                    {questionFormSegments.map((segment, segmentIndex) => {
+                      if (segment.kind === 'form') {
+                        const submittedAnswers = findSubsequentQuestionFormAnswers(
+                          segment.form,
+                          transcriptMessages,
+                          messageIndex,
+                        );
+
+                        return (
+                          <QuestionFormCard
+                            key={`question-form-${segment.form.id}-${segmentIndex}`}
+                            form={segment.form}
+                            onSubmit={onSubmitQuestionForm}
+                            submittedAnswers={submittedAnswers ?? undefined}
+                          />
+                        );
+                      }
+
+                      return (
+                        <Markdown
+                          key={`question-form-text-${segmentIndex}`}
+                          className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert"
+                        >
+                          {segment.text}
+                        </Markdown>
+                      );
+                    })}
+                  </div>
+                ) : (() => {
                   const content = formattedMessageContent;
 
                   // Detect if content is pure JSON (starts with { or [)
@@ -400,4 +476,3 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
 });
 
 export default MessageComponent;
-

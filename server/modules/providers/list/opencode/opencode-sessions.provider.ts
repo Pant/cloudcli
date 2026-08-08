@@ -3,7 +3,7 @@ import fsSync from 'node:fs';
 import Database from 'better-sqlite3';
 
 import { parseFilesInputTag, parseImagesInputTag } from '@/shared/image-attachments.js';
-import type { IProviderSessions } from '@/shared/interfaces.js';
+import type { IProviderModels, IProviderSessions } from '@/shared/interfaces.js';
 import type { AnyRecord, FetchHistoryOptions, FetchHistoryResult, NormalizedMessage } from '@/shared/types.js';
 import {
   createNormalizedMessage,
@@ -17,7 +17,23 @@ import {
   unwrapJsonStringLiteral,
 } from '@/shared/utils.js';
 
+import { readOpenCodeLatestAssistantWindowTokens } from './opencode-token-usage.provider.js';
+
 const PROVIDER = 'opencode';
+
+const OPENCODE_TOOL_NAME_ALIASES: Record<string, string> = {
+  bash: 'Bash',
+  edit: 'Edit',
+  glob: 'Glob',
+  grep: 'Grep',
+  question: 'AskUserQuestion',
+  read: 'Read',
+  task: 'Task',
+  todo_write: 'TodoWrite',
+  'todo-write': 'TodoWrite',
+  todowrite: 'TodoWrite',
+  write: 'Write',
+};
 
 type OpenCodeHistoryRow = {
   message_id: string;
@@ -61,6 +77,64 @@ const formatToolContent = (value: unknown): string => {
   }
 };
 
+const normalizeOpenCodeToolName = (value: unknown): string => {
+  const toolName = readOptionalString(value) ?? 'Tool';
+  return OPENCODE_TOOL_NAME_ALIASES[toolName.toLowerCase()] ?? toolName;
+};
+
+const parseOpenCodeToolInput = (value: unknown): unknown => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+};
+
+/**
+ * Adapts OpenCode's lowercase tool names and evolving input field names to the
+ * canonical shapes consumed by the shared chat tool renderers.
+ */
+const normalizeOpenCodeTool = (
+  rawToolName: unknown,
+  rawInput: unknown,
+): { toolName: string; toolInput: unknown } => {
+  const toolName = normalizeOpenCodeToolName(rawToolName);
+  const parsedInput = parseOpenCodeToolInput(rawInput);
+  const input = readObjectRecord(parsedInput);
+  if (!input) {
+    return { toolName, toolInput: parsedInput ?? {} };
+  }
+
+  const normalized: AnyRecord = { ...input };
+  if (toolName === 'Read' || toolName === 'Edit' || toolName === 'Write') {
+    const filePath = input.file_path
+      ?? input.filePath
+      ?? input.path
+      ?? input.file
+      ?? input.filename;
+    if (typeof filePath === 'string' && filePath.trim()) {
+      normalized.file_path = filePath;
+    }
+  }
+
+  if (toolName === 'Edit') {
+    const oldString = input.old_string ?? input.oldString ?? input.old;
+    const newString = input.new_string ?? input.newString ?? input.new;
+    if (typeof oldString === 'string') {
+      normalized.old_string = oldString;
+    }
+    if (typeof newString === 'string') {
+      normalized.new_string = newString;
+    }
+  }
+
+  return { toolName, toolInput: normalized };
+};
+
 const extractText = (value: unknown): string => {
   if (typeof value === 'string') {
     return unwrapJsonStringLiteral(value);
@@ -84,7 +158,10 @@ const isUserTextEcho = (raw: AnyRecord): boolean => {
     || hasUserRole(raw.part);
 };
 
-const buildTokenUsage = (totals: OpenCodeTokenTotals | undefined): AnyRecord | undefined => {
+const buildTokenUsage = (
+  totals: OpenCodeTokenTotals | undefined,
+  windowTokens?: number,
+): AnyRecord | undefined => {
   if (!totals) {
     return undefined;
   }
@@ -98,12 +175,9 @@ const buildTokenUsage = (totals: OpenCodeTokenTotals | undefined): AnyRecord | u
     + totals.cacheReadTokens
     + totals.cacheWriteTokens;
 
-  if (used <= 0) {
-    return undefined;
-  }
-
   return {
     used,
+    ...(windowTokens === undefined ? {} : { windowTokens }),
     inputTokens: displayInputTokens,
     outputTokens,
     breakdown: {
@@ -112,6 +186,14 @@ const buildTokenUsage = (totals: OpenCodeTokenTotals | undefined): AnyRecord | u
     },
   };
 };
+
+const readPositiveContextWindow = (value: unknown): number | undefined => (
+  typeof value === 'number'
+  && Number.isSafeInteger(value)
+  && value > 0
+    ? value
+    : undefined
+);
 
 const readOpenCodeSessionColumnTokenUsage = (
   db: Database.Database,
@@ -139,13 +221,23 @@ const readOpenCodeSessionColumnTokenUsage = (
     return undefined;
   }
 
-  return buildTokenUsage({
+  const totals = {
     inputTokens: Number(row.inputTokens ?? 0),
     outputTokens: Number(row.outputTokens ?? 0),
     reasoningTokens: Number(row.reasoningTokens ?? 0),
     cacheReadTokens: Number(row.cacheReadTokens ?? 0),
     cacheWriteTokens: Number(row.cacheWriteTokens ?? 0),
-  });
+  };
+  const used = totals.inputTokens
+    + totals.outputTokens
+    + totals.reasoningTokens
+    + totals.cacheReadTokens
+    + totals.cacheWriteTokens;
+
+  return buildTokenUsage(
+    totals,
+    readOpenCodeLatestAssistantWindowTokens(db, sessionId, used === 0),
+  );
 };
 
 /**
@@ -162,13 +254,19 @@ const aggregateOpenCodeSessionTokenUsage = (
     return sessionColumnUsage;
   }
 
-  const rows = db.prepare('SELECT data FROM message WHERE session_id = ?').all(sessionId) as { data: string }[];
+  let rows: { data: string }[];
+  try {
+    rows = db.prepare('SELECT data FROM message WHERE session_id = ?').all(sessionId) as { data: string }[];
+  } catch {
+    return undefined;
+  }
 
   let inputTokens = 0;
   let outputTokens = 0;
   let reasoningTokens = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
+  let hasAssistantTokenRecord = false;
 
   for (const row of rows) {
     const info = readJsonRecord(row.data);
@@ -180,6 +278,7 @@ const aggregateOpenCodeSessionTokenUsage = (
     if (!tokens) {
       continue;
     }
+    hasAssistantTokenRecord = true;
 
     inputTokens += Number(tokens.input ?? 0);
     outputTokens += Number(tokens.output ?? 0);
@@ -189,16 +288,53 @@ const aggregateOpenCodeSessionTokenUsage = (
     cacheWriteTokens += Number(cache?.write ?? 0);
   }
 
-  return buildTokenUsage({
+  if (!hasAssistantTokenRecord) {
+    return undefined;
+  }
+
+  const totals = {
     inputTokens,
     outputTokens,
     reasoningTokens,
     cacheReadTokens,
     cacheWriteTokens,
-  });
+  };
+  const used = inputTokens + outputTokens + reasoningTokens + cacheReadTokens + cacheWriteTokens;
+
+  return buildTokenUsage(
+    totals,
+    readOpenCodeLatestAssistantWindowTokens(db, sessionId, used === 0),
+  );
 };
 
 export class OpenCodeSessionsProvider implements IProviderSessions {
+  constructor(
+    private readonly models?: Pick<IProviderModels, 'getCurrentActiveModel' | 'getContextWindowForModel'>,
+  ) {}
+
+  private async attachContextWindow(
+    tokenUsage: AnyRecord | undefined,
+    providerSessionId: string,
+  ): Promise<AnyRecord | undefined> {
+    if (!tokenUsage || !this.models?.getContextWindowForModel) {
+      return tokenUsage;
+    }
+
+    try {
+      const activeModel = await this.models.getCurrentActiveModel(providerSessionId);
+      const contextWindow = readPositiveContextWindow(
+        await this.models.getContextWindowForModel(activeModel.model),
+      );
+      return contextWindow === undefined
+        ? tokenUsage
+        : { ...tokenUsage, total: contextWindow };
+    } catch {
+      // Context metadata is supplemental; preserve history and current usage
+      // when active-model or model-limit discovery is unavailable.
+      return tokenUsage;
+    }
+  }
+
   /**
    * Normalizes live `opencode run --format json` events into frontend messages.
    */
@@ -208,11 +344,20 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
       return [];
     }
 
+    // `opencode run --format json` wraps the actual text/reasoning/tool value
+    // in `part`. Keep root-field support for older OpenCode releases.
+    const part = readObjectRecord(raw.part);
     const type = readOptionalString(raw.type) ?? readOptionalString(raw.event);
-    const eventSessionId = readOptionalString(raw.sessionID) ?? readOptionalString(raw.sessionId) ?? sessionId;
+    const eventSessionId = readOptionalString(raw.sessionID)
+      ?? readOptionalString(raw.sessionId)
+      ?? readOptionalString(part?.sessionID)
+      ?? readOptionalString(part?.sessionId)
+      ?? sessionId;
     const timestamp = normalizeProviderTimestamp(raw.time ?? raw.timestamp);
     const baseId = readOptionalString(raw.id)
       ?? readOptionalString(raw.messageID)
+      ?? readOptionalString(part?.id)
+      ?? readOptionalString(part?.messageID)
       ?? generateMessageId('opencode');
 
     if (type === 'text') {
@@ -222,7 +367,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
         return [];
       }
 
-      const content = extractText(raw.text ?? raw.delta ?? raw.message);
+      const content = extractText(raw.text ?? raw.delta ?? part ?? raw.message);
       if (!content.trim()) {
         return [];
       }
@@ -238,7 +383,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
     }
 
     if (type === 'reasoning') {
-      const content = extractText(raw.text ?? raw.delta ?? raw.message);
+      const content = extractText(raw.text ?? raw.delta ?? part ?? raw.message);
       if (!content.trim()) {
         return [];
       }
@@ -254,23 +399,38 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
     }
 
     if (type === 'tool_use') {
-      const toolName = readOptionalString(raw.tool) ?? readOptionalString(raw.name) ?? 'Tool';
-      const toolId = readOptionalString(raw.callID) ?? readOptionalString(raw.toolCallId) ?? baseId;
+      const toolPart = part ?? raw;
+      const state = readObjectRecord(toolPart.state) ?? readObjectRecord(raw.state) ?? {};
+      const normalizedTool = normalizeOpenCodeTool(
+        toolPart.tool ?? toolPart.name ?? raw.tool ?? raw.name,
+        state.input ?? toolPart.input ?? raw.input ?? raw.arguments ?? {},
+      );
+      const toolId = readOptionalString(toolPart.callID)
+        ?? readOptionalString(toolPart.toolCallId)
+        ?? readOptionalString(raw.callID)
+        ?? readOptionalString(raw.toolCallId)
+        ?? baseId;
       const toolMessage = createNormalizedMessage({
         id: baseId,
         sessionId: eventSessionId,
         timestamp,
         provider: PROVIDER,
         kind: 'tool_use',
-        toolName,
-        toolInput: raw.input ?? raw.arguments ?? {},
+        toolName: normalizedTool.toolName,
+        toolInput: normalizedTool.toolInput,
         toolId,
       });
 
-      if (raw.output !== undefined || raw.error !== undefined) {
+      const status = readOptionalString(state.status);
+      if (
+        status === 'completed'
+        || status === 'error'
+        || raw.output !== undefined
+        || raw.error !== undefined
+      ) {
         toolMessage.toolResult = {
-          content: formatToolContent(raw.output ?? raw.error),
-          isError: raw.error !== undefined,
+          content: formatToolContent(state.output ?? state.error ?? raw.output ?? raw.error),
+          isError: status === 'error' || raw.error !== undefined,
         };
       }
 
@@ -339,7 +499,10 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
       `).all(providerSessionId) as OpenCodeHistoryRow[];
 
       const normalized = this.normalizeHistoryRows(rows, sessionId);
-      const tokenUsage = aggregateOpenCodeSessionTokenUsage(db, providerSessionId);
+      const tokenUsage = await this.attachContextWindow(
+        aggregateOpenCodeSessionTokenUsage(db, providerSessionId),
+        providerSessionId,
+      );
 
       const normalizedOffset = Math.max(0, offset);
       const normalizedLimit = limit === null ? null : Math.max(0, limit);
@@ -448,14 +611,18 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
       if (partType === 'tool') {
         const state = readObjectRecord(partData.state) ?? {};
         const status = readOptionalString(state.status);
+        const normalizedTool = normalizeOpenCodeTool(
+          partData.tool ?? partData.name,
+          state.input ?? partData.input ?? {},
+        );
         const toolMessage = createNormalizedMessage({
           id: baseId,
           sessionId,
           timestamp,
           provider: PROVIDER,
           kind: 'tool_use',
-          toolName: readOptionalString(partData.tool) ?? 'Tool',
-          toolInput: state.input ?? partData.input ?? {},
+          toolName: normalizedTool.toolName,
+          toolInput: normalizedTool.toolInput,
           toolId: readOptionalString(partData.callID) ?? row.part_id,
         });
 

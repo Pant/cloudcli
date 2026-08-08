@@ -16,9 +16,12 @@ import type {
   ProviderAvailableAgent,
   ProviderAgentListOptions,
   ProviderAgentDefinition,
+  ProviderAgentPreferencesPatch,
+  ProviderAgentPreferencesResult,
   ProviderRuntimeContext,
   ProviderRuntimePermissionGateway,
   ProviderRuntimeWriter,
+  ProviderRuntimeResult,
   UpsertProviderMcpServerInput,
   UpsertProviderAgentInput,
 } from '@/shared/types.js';
@@ -37,7 +40,7 @@ export interface IProviderRuntime {
     options: AnyRecord,
     writer: ProviderRuntimeWriter,
     context: ProviderRuntimeContext,
-  ): Promise<unknown>;
+  ): Promise<ProviderRuntimeResult | void | unknown>;
   abort(sessionId: string): boolean | Promise<boolean>;
   permissions?: ProviderRuntimePermissionGateway;
 }
@@ -77,6 +80,12 @@ export interface IProviderAgents {
   /** Creates, updates, or renames one user-global agent definition. */
   upsertAgent(input: UpsertProviderAgentInput): Promise<ProviderAgentDefinition>;
 
+  /** Partially updates durable model/reasoning preferences for an existing agent. */
+  updateAgentPreferences(
+    name: string,
+    patch: ProviderAgentPreferencesPatch,
+  ): Promise<ProviderAgentPreferencesResult>;
+
   /** Removes one user-global agent definition without touching project files. */
   removeAgent(name: string): Promise<{ removed: boolean; provider: LLMProvider; name: string }>;
 }
@@ -108,6 +117,13 @@ export interface IProviderModels {
    * provider-specific lookup finds nothing.
    */
   getCurrentActiveModel(sessionId?: string): Promise<ProviderCurrentActiveModel>;
+
+  /**
+   * Resolves provider-discovered context metadata for a model id when the
+   * provider exposes it. Providers without model context metadata may omit
+   * this capability and callers must treat an undefined result as unavailable.
+   */
+  getContextWindowForModel?(modelId: string | null | undefined): Promise<number | undefined>;
 }
 
 // ---------------------------
@@ -203,5 +219,5 @@ export interface IProviderSessionSynchronizer {
   /**
    * Parses and upserts one provider artifact file without running a full scan.
    */
-  synchronizeFile(filePath: string): Promise<string | null>;
+  synchronizeFile(filePath: string): Promise<string | string[] | null>;
 }

@@ -1,4 +1,5 @@
 import type { Project } from '../../../types/app';
+import type { RepositoryDiscoveryState } from '../utils/repositoryUtils';
 
 export type GitPanelView = 'changes' | 'history' | 'branches' | 'worktrees';
 export type FileStatusCode = 'M' | 'A' | 'D' | 'U';
@@ -35,6 +36,10 @@ export type GitStatusResponse = {
   details?: string;
   /** True when the project directory is not a git repository — the UI offers `git init`. */
   notGitRepository?: boolean;
+};
+
+export type GitRepositoriesResponse = GitApiErrorResponse & {
+  repositories?: string[];
 };
 
 export type GitRemoteStatus = {
@@ -83,6 +88,13 @@ export type UseGitPanelControllerOptions = {
 };
 
 export type GitPanelController = {
+  repositories: string[];
+  activeRepository: string | null;
+  isDiscoveringRepositories: boolean;
+  repositoryDiscoveryState: RepositoryDiscoveryState;
+  repositoryDiscoveryError: string | null;
+  selectRepository: (repository: string) => void;
+  discoverRepositories: () => Promise<string[]>;
   gitStatus: GitStatusResponse | null;
   gitDiff: GitDiffMap;
   isLoading: boolean;

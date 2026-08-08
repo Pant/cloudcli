@@ -1,4 +1,4 @@
-import fsSync, { promises as fs } from 'node:fs';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 

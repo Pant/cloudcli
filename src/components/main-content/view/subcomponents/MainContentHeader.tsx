@@ -1,5 +1,9 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
+import { RefreshCw } from 'lucide-react';
+
 import type { MainContentHeaderProps } from '../../types/types';
+import { Button } from '../../../../shared/view/ui';
+
 import MobileMenuButton from './MobileMenuButton';
 import MainContentTabSwitcher from './MainContentTabSwitcher';
 import MainContentTitle from './MainContentTitle';
@@ -47,25 +51,38 @@ export default function MainContentHeader({
           />
         </div>
 
-        <div className="relative min-w-0 flex-shrink overflow-hidden sm:flex-shrink-0">
-          {canScrollLeft && (
-            <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-6 bg-gradient-to-r from-background to-transparent" />
-          )}
-          <div
-            ref={scrollRef}
-            onScroll={updateScrollState}
-            className="scrollbar-hide overflow-x-auto"
-          >
-            <MainContentTabSwitcher
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              shouldShowTasksTab={shouldShowTasksTab}
-              shouldShowBrowserTab={shouldShowBrowserTab}
-            />
+        <div className="flex min-w-0 flex-shrink items-center">
+          <div className="relative min-w-0 flex-shrink overflow-hidden sm:flex-shrink-0">
+            {canScrollLeft && (
+              <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-6 bg-gradient-to-r from-background to-transparent" />
+            )}
+            <div
+              ref={scrollRef}
+              onScroll={updateScrollState}
+              className="scrollbar-hide overflow-x-auto"
+            >
+              <MainContentTabSwitcher
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                shouldShowTasksTab={shouldShowTasksTab}
+                shouldShowBrowserTab={shouldShowBrowserTab}
+              />
+            </div>
+            {canScrollRight && (
+              <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
+            )}
           </div>
-          {canScrollRight && (
-            <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
-          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-1 h-7 w-7 flex-shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+            onClick={() => window.location.reload()}
+            aria-label="Reload page"
+            title="Reload page"
+          >
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
         </div>
       </div>
     </div>

@@ -1,23 +1,8 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+
 import { api } from '../utils/api';
 
-const TasksSettingsContext = createContext({
-  tasksEnabled: true,
-  setTasksEnabled: () => {},
-  toggleTasksEnabled: () => {},
-  isTaskMasterInstalled: null,
-  isTaskMasterReady: null,
-  installationStatus: null,
-  isCheckingInstallation: true
-});
-
-export const useTasksSettings = () => {
-  const context = useContext(TasksSettingsContext);
-  if (!context) {
-    throw new Error('useTasksSettings must be used within a TasksSettingsProvider');
-  }
-  return context;
-};
+import TasksSettingsContext from './tasksSettingsContext';
 
 export const TasksSettingsProvider = ({ children }) => {
   const [tasksEnabled, setTasksEnabled] = useState(() => {
@@ -91,5 +76,3 @@ export const TasksSettingsProvider = ({ children }) => {
     </TasksSettingsContext.Provider>
   );
 };
-
-export default TasksSettingsContext;

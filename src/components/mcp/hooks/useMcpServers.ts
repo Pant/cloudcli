@@ -118,8 +118,29 @@ const normalizeServer = (
     // (see createProjectTargets) so this still carries the new identifier.
     projectName: project?.name || server.projectName,
     projectDisplayName: project?.displayName || server.projectDisplayName,
+    enabled: typeof server.enabled === 'boolean' ? server.enabled : undefined,
   };
 };
+
+export const createMcpTogglePayload = (
+  server: ProviderMcpServer,
+  enabled: boolean,
+): UpsertProviderMcpServerPayload => ({
+  name: server.name,
+  scope: server.scope,
+  transport: server.transport,
+  workspacePath: server.workspacePath,
+  command: server.command,
+  args: server.args,
+  env: server.env,
+  cwd: server.cwd,
+  url: server.url,
+  headers: server.headers,
+  envVars: server.envVars,
+  bearerTokenEnvVar: server.bearerTokenEnvVar,
+  envHttpHeaders: server.envHttpHeaders,
+  enabled,
+});
 
 const createProjectTargets = (projects: McpProject[]): ProjectTarget[] => {
   const seen = new Set<string>();
@@ -295,6 +316,8 @@ export function useMcpServers({ selectedProvider, currentProjects }: UseMcpServe
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [pendingToggleIds, setPendingToggleIds] = useState<Set<string>>(() => new Set());
   const [saveStatus, setSaveStatus] = useState<'success' | 'error' | null>(null);
   const [isLoadingProjectScopes, setIsLoadingProjectScopes] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -498,6 +521,32 @@ export function useMcpServers({ selectedProvider, currentProjects }: UseMcpServe
     [cacheKey, refreshServers, selectedProvider],
   );
 
+  const toggleServerEnabled = useCallback(
+    async (server: ProviderMcpServer, enabled: boolean) => {
+      const serverId = getServerIdentity(server);
+      if (pendingToggleIds.has(serverId)) {
+        return;
+      }
+
+      setToggleError(null);
+      setPendingToggleIds((current) => new Set(current).add(serverId));
+      try {
+        await saveProviderServer(selectedProvider, createMcpTogglePayload(server, enabled));
+        mcpServersCache.delete(cacheKey);
+        await refreshServers({ force: true });
+      } catch (error) {
+        setToggleError(getErrorMessage(error));
+      } finally {
+        setPendingToggleIds((current) => {
+          const next = new Set(current);
+          next.delete(serverId);
+          return next;
+        });
+      }
+    },
+    [cacheKey, pendingToggleIds, refreshServers, selectedProvider],
+  );
+
   useEffect(() => {
     void refreshServers();
   }, [refreshServers]);
@@ -507,6 +556,8 @@ export function useMcpServers({ selectedProvider, currentProjects }: UseMcpServe
     setIsGlobalFormOpen(false);
     setEditingServer(null);
     setDeleteError(null);
+    setToggleError(null);
+    setPendingToggleIds(new Set());
     setSaveStatus(null);
   }, [selectedProvider]);
 
@@ -525,6 +576,8 @@ export function useMcpServers({ selectedProvider, currentProjects }: UseMcpServe
     isLoadingProjectScopes,
     loadError,
     deleteError,
+    toggleError,
+    pendingToggleIds,
     saveStatus,
     isFormOpen,
     isGlobalFormOpen,
@@ -536,6 +589,7 @@ export function useMcpServers({ selectedProvider, currentProjects }: UseMcpServe
     submitForm,
     submitGlobalForm,
     deleteServer,
+    toggleServerEnabled,
     refreshServers,
   };
 }

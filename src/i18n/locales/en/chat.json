@@ -147,7 +147,11 @@
     "effortDefault": "Default",
     "loadingModels": "Loading models…",
     "modelMenu": "Select model and reasoning effort",
-    "permissionHeading": "How should {{provider}} actions be approved?"
+    "permissionHeading": "How should {{provider}} actions be approved?",
+    "preferenceFeedback": {
+      "model": "Agent model updated successfully.",
+      "reasoning": "Agent reasoning updated successfully."
+    }
   },
   "providerSelection": {
     "title": "Choose Your AI Assistant",
@@ -247,5 +251,54 @@
   },
   "tasks": {
     "nextTaskPrompt": "Start the next task"
+  },
+  "appointments": {
+    "eyebrow": "Project appointments",
+    "title": "Schedule a prompt",
+    "subtitle": "Run this prompt later or manage schedules for this project.",
+    "close": "Close appointment modal",
+    "open": "Schedule or manage prompts",
+    "footer": "Appointments are stored for this project and survive browser closure.",
+    "currentPrompt": "Current prompt",
+    "noPrompt": "No prompt text. Attach a file to create an appointment.",
+    "attachments": "{{count}} attachment(s) will be included.",
+    "attachmentPrompt": "Appointment with attachments",
+    "exactLabel": "Local date and time",
+    "timerAmount": "Duration",
+    "timerUnit": "Unit",
+    "units": { "minutes": "Minutes", "hours": "Hours", "days": "Days" },
+    "active": "Active appointment",
+    "draft": "Draft appointment",
+    "activeHelp": "Draft appointments remain saved but will not run.",
+    "activeSwitch": "Set appointment active",
+    "schedule": "Schedule prompt",
+    "scheduling": "Scheduling…",
+    "listHeading": "Project appointments",
+    "loading": "Loading appointments…",
+    "empty": "No appointments are scheduled for this project.",
+    "trigger": {
+      "heading": "Choose a trigger",
+      "exact": { "title": "Exact date & time", "description": "Choose a future local date and time." },
+      "timer": { "title": "Timer", "description": "Run after a duration from now." },
+      "project_idle": { "title": "After project tasks finish", "description": "Run after the project remains idle." },
+      "queue": { "title": "Queue", "description": "Add to the ordered pipeline and run when the project is idle." }
+    },
+    "review": {
+      "title": "Project restart needs your review",
+      "description": "The server restarted, so it cannot safely know whether earlier project tasks finished. Choose a future time or make this appointment a draft.",
+      "postponeDate": "New future date and time"
+    },
+    "pipeline": {
+      "heading": "Prompt pipeline",
+      "help": "Queue prompts run in this saved order. Use the buttons to change their position.",
+      "position": "Position {{position}} of {{total}}",
+      "moveUp": "Move position {{position}} up",
+      "moveDown": "Move position {{position}} down",
+      "saving": "Saving pipeline order…",
+      "reorderFailed": "Unable to save the pipeline order. The server order has been kept.",
+      "dispatchFailed": "Unable to dispatch the appointment now."
+    },
+    "actions": { "postpone": "Postpone", "makeDraft": "Make draft", "activate": "Activate", "cancel": "Cancel", "dispatchNow": "Dispatch now", "dispatching": "Dispatching…" },
+    "validation": { "promptRequired": "Enter a prompt or attach a file before scheduling.", "managementFailed": "Unable to update the appointment." }
   }
 }

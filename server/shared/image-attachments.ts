@@ -33,6 +33,28 @@ export type ImageAttachmentDescriptor = {
 /** Provider-neutral descriptor used for both image and non-image chat attachments. */
 export type ChatAttachmentDescriptor = ImageAttachmentDescriptor;
 
+/**
+ * Revalidates untrusted or persisted attachment descriptors against the global
+ * upload store. Immediate websocket sends and scheduled appointments use this
+ * same boundary so only direct asset-store children reach provider runtimes.
+ */
+export function filterAttachmentsToUploadStore(
+  attachments: unknown,
+  assetsRootOverride?: string,
+): ChatAttachmentDescriptor[] {
+  const assetsRoot = path.resolve(assetsRootOverride ?? getGlobalImageAssetsDir());
+  return normalizeAttachmentDescriptors(attachments).filter((descriptor) => {
+    const resolved = path.resolve(assetsRoot, descriptor.path);
+    const relative = path.relative(assetsRoot, resolved);
+    const isDirectChild = relative.length > 0 && !relative.startsWith('..') &&
+      !path.isAbsolute(relative) && !relative.includes(path.sep) && !relative.includes('/');
+    if (!isDirectChild) {
+      console.warn(`[Chat] Dropping attachment outside the upload store: ${descriptor.path}`);
+    }
+    return isDirectChild;
+  });
+}
+
 /** Media types the Claude Messages API accepts for base64 image blocks. */
 const CLAUDE_IMAGE_MEDIA_TYPES = new Set([
   'image/jpeg',

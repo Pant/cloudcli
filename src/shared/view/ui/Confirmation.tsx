@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { cn } from '../../../lib/utils';
+
 import { Alert } from './Alert';
 import { Button } from './Button';
 
@@ -135,5 +136,3 @@ export const ConfirmationAction: React.FC<ConfirmationActionProps> = ({
   <Button className="h-8 px-3 text-sm" variant={variant} type="button" {...props} />
 );
 ConfirmationAction.displayName = 'ConfirmationAction';
-
-export { useConfirmation };

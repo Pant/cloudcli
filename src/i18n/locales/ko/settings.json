@@ -112,7 +112,35 @@
     "browser": "브라우저",
     "notifications": "알림",
     "plugins": "플러그인",
+    "cache": "캐시",
     "about": "정보"
+  },
+  "cache": {
+    "title": "캐시",
+    "description": "이 계정의 로컬에 캐시된 세션 기록을 관리합니다.",
+    "statsTitle": "캐시된 기록",
+    "statsDescription": "이 계정의 로컬 기록만 집계됩니다. 다른 계정과 서버 기록은 보존됩니다.",
+    "sessionCountLabel": "캐시된 세션",
+    "messageCountLabel": "캐시된 메시지",
+    "loading": "캐시 통계를 불러오는 중...",
+    "loadError": "캐시 통계를 불러올 수 없습니다.",
+    "syncSectionTitle": "기록 동기화",
+    "syncDescription": "이 계정에서 사용할 수 있는 모든 세션 기록을 가져옵니다. 기록은 나중에 자동으로 다시 캐시될 수 있습니다.",
+    "syncButton": "모든 기록 동기화",
+    "syncPending": "기록 동기화 중...",
+    "syncSuccess": "{{eligible}}개 기록 중 {{succeeded}}개를 동기화했습니다.",
+    "syncPartial": "{{failed}}개 기록이 실패한 상태로 동기화가 완료되었습니다 ({{eligible}}개 중 {{succeeded}}개 성공).",
+    "syncError": "모든 기록을 동기화할 수 없습니다.",
+    "clearSectionTitle": "로컬 기록 지우기",
+    "clearDescription": "이 계정의 로컬에 캐시된 기록만 삭제합니다. 다른 계정과 서버 기록은 보존됩니다.",
+    "clearButton": "이 계정의 캐시 지우기",
+    "clearPending": "캐시 지우는 중...",
+    "clearSuccess": "이 계정의 로컬 캐시를 지웠습니다. 기록은 나중에 다시 캐시될 수 있습니다.",
+    "clearError": "이 계정의 캐시를 지울 수 없습니다.",
+    "confirmationTitle": "이 계정의 로컬 기록을 지울까요?",
+    "confirmationDescription": "이 계정의 로컬에 캐시된 세션 기록만 삭제됩니다. 다른 계정과 서버 기록은 보존되며 기록은 나중에 다시 캐시될 수 있습니다.",
+    "cancel": "취소",
+    "confirm": "캐시 지우기"
   },
   "notifications": {
     "title": "알림",
@@ -472,7 +500,13 @@
     },
     "managed": {
       "badge": "관리됨",
-      "hint": "CloudCLI가 관리합니다."
+      "hint": "CloudCLI가 관리합니다.",
+      "enabled": "활성화됨",
+      "disabled": "비활성화됨",
+      "saving": "저장 중…",
+      "enable": "관리형 MCP 서버 활성화",
+      "disable": "관리형 MCP 서버 비활성화",
+      "saveFailed": "관리형 MCP 서버 상태를 저장하지 못했습니다."
     },
     "help": {
       "title": "Codex MCP 정보",

@@ -9,7 +9,11 @@ import { AppError } from '@/shared/utils.js';
 
 type SessionSummary = {
   id: string;
+  /** Canonical app id, null for roots, or omitted while the native parent is unresolved. */
+  parentSessionId?: string | null;
   provider: string;
+  model: string | null;
+  agent: string | null;
   summary: string;
   messageCount: number;
   lastActivity: string;
@@ -18,6 +22,8 @@ type SessionSummary = {
 type SessionRepositoryRow = {
   provider: string;
   session_id: string;
+  model?: string | null;
+  agent?: string | null;
   custom_name?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
@@ -33,6 +39,9 @@ export type ProjectListItem = {
   sessionMeta: {
     hasMore: boolean;
     total: number;
+    rootTotal: number;
+    rootOffset: number;
+    nextOffset: number;
   };
 };
 
@@ -62,6 +71,9 @@ type ProjectSessionsPageResult = {
   sessions: SessionSummary[];
   total: number;
   hasMore: boolean;
+  rootTotal: number;
+  rootOffset: number;
+  nextOffset: number;
 };
 
 export type ProjectSessionsPageApiView = {
@@ -70,6 +82,9 @@ export type ProjectSessionsPageApiView = {
   sessionMeta: {
     hasMore: boolean;
     total: number;
+    rootTotal: number;
+    rootOffset: number;
+    nextOffset: number;
   };
 };
 
@@ -117,23 +132,50 @@ function normalizeSessionPagination(options: SessionPaginationOptions = {}): { l
   };
 }
 
-function mapSessionRowToSummary(row: SessionRepositoryRow): SessionSummary {
-  return {
+function mapSessionRowToSummary(
+  row: SessionRepositoryRow,
+  canonicalParentSessionId?: string | null,
+): SessionSummary {
+  const summary: SessionSummary = {
     id: row.session_id,
     provider: row.provider,
+    model: row.model?.trim() || null,
+    agent: row.agent?.trim() || null,
     summary: row.custom_name || '',
     messageCount: 0,
     lastActivity: row.updated_at ?? row.created_at ?? new Date().toISOString(),
   };
+
+  if (canonicalParentSessionId !== undefined) {
+    summary.parentSessionId = canonicalParentSessionId;
+  }
+
+  return summary;
 }
 
 function readProjectSessionsIncludingArchived(projectPath: string): ProjectSessionsPageResult {
   const rows = sessionsDb.getSessionsByProjectPathIncludingArchived(projectPath) as SessionRepositoryRow[];
+  const parentResolutions = sessionsDb.getSessionParentResolutions(rows.map((row) => row.session_id));
+  const rowIds = new Set(rows.map((row) => row.session_id));
 
   return {
-    sessions: rows.map(mapSessionRowToSummary),
+    sessions: rows.map((row) => {
+      const resolution = parentResolutions.get(row.session_id);
+      const parentId = resolution?.parentSessionId;
+      return mapSessionRowToSummary(
+        row,
+        resolution?.kind === 'resolved' && rowIds.has(parentId ?? '')
+          ? parentId
+          : resolution?.kind === 'root'
+            ? null
+            : undefined,
+      );
+    }),
     total: rows.length,
     hasMore: false,
+    rootTotal: rows.length,
+    rootOffset: 0,
+    nextOffset: rows.length,
   };
 }
 
@@ -145,17 +187,33 @@ function readProjectSessionsPageByPath(
   options: SessionPaginationOptions = {},
 ): ProjectSessionsPageResult {
   const pagination = normalizeSessionPagination(options);
-  const rows = sessionsDb.getSessionsByProjectPathPage(
+  const page = sessionsDb.getSessionsByProjectPathPage(
     projectPath,
     pagination.limit,
     pagination.offset,
-  ) as SessionRepositoryRow[];
-  const total = sessionsDb.countSessionsByProjectPath(projectPath);
+  );
+  const rows = page.rows as SessionRepositoryRow[];
+  const parentResolutions = sessionsDb.getSessionParentResolutions(rows.map((row) => row.session_id));
+  const rowIds = new Set(rows.map((row) => row.session_id));
 
   return {
-    sessions: rows.map(mapSessionRowToSummary),
-    total,
-    hasMore: pagination.offset + rows.length < total,
+    sessions: rows.map((row) => {
+      const resolution = parentResolutions.get(row.session_id);
+      const parentId = resolution?.parentSessionId;
+      return mapSessionRowToSummary(
+        row,
+        resolution?.kind === 'resolved' && rowIds.has(parentId ?? '')
+          ? parentId
+          : resolution?.kind === 'root'
+            ? null
+            : undefined,
+      );
+    }),
+    total: page.total,
+    hasMore: page.hasMore,
+    rootTotal: page.rootTotal,
+    rootOffset: page.rootOffset,
+    nextOffset: page.nextOffset,
   };
 }
 
@@ -227,6 +285,9 @@ export async function getProjectsWithSessions(
       sessionMeta: {
         hasMore: sessionsPage.hasMore,
         total: sessionsPage.total,
+        rootTotal: sessionsPage.rootTotal,
+        rootOffset: sessionsPage.rootOffset,
+        nextOffset: sessionsPage.nextOffset,
       },
     });
   }
@@ -280,6 +341,9 @@ export async function getArchivedProjectsWithSessions(
       sessionMeta: {
         hasMore: sessionsPage.hasMore,
         total: sessionsPage.total,
+        rootTotal: sessionsPage.rootTotal,
+        rootOffset: sessionsPage.rootOffset,
+        nextOffset: sessionsPage.nextOffset,
       },
     });
   }
@@ -309,6 +373,9 @@ export async function getProjectSessionsPage(
     sessionMeta: {
       hasMore: sessionsPage.hasMore,
       total: sessionsPage.total,
+      rootTotal: sessionsPage.rootTotal,
+      rootOffset: sessionsPage.rootOffset,
+      nextOffset: sessionsPage.nextOffset,
     },
   };
 }

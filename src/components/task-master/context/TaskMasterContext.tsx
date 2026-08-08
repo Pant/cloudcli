@@ -1,8 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../../../utils/api';
-import { useAuth } from '../../auth/context/AuthContext';
-import { useWebSocket } from '../../../contexts/WebSocketContext';
+import { useWebSocket } from '../../../contexts/useWebSocket';
+import { useAuth } from '../../auth/context/authContextContract';
 import type {
   TaskMasterContextError,
   TaskMasterContextValue,
@@ -14,7 +14,7 @@ import type {
   TaskMasterWebSocketMessage,
 } from '../types';
 
-const TaskMasterContext = createContext<TaskMasterContextValue | null>(null);
+import TaskMasterContext from './taskMasterContextContract';
 
 function createTaskMasterError(context: string, error: unknown): TaskMasterContextError {
   const message = error instanceof Error ? error.message : `Failed to ${context}`;
@@ -47,14 +47,6 @@ function isTaskMasterMessage(
   }
 
   return message.type.startsWith('taskmaster-');
-}
-
-export function useTaskMaster() {
-  const context = useContext(TaskMasterContext);
-  if (!context) {
-    throw new Error('useTaskMaster must be used within a TaskMasterProvider');
-  }
-  return context;
 }
 
 export function TaskMasterProvider({ children }: { children: React.ReactNode }) {
@@ -402,5 +394,3 @@ export function TaskMasterProvider({ children }: { children: React.ReactNode }) 
 
   return <TaskMasterContext.Provider value={contextValue}>{children}</TaskMasterContext.Provider>;
 }
-
-export default TaskMasterContext;

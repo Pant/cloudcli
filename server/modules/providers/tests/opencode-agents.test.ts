@@ -96,6 +96,7 @@ test('OpenCode runtime agents hide disabled/hidden entries and sort custom agent
           disable: name === 'explore',
           description: name === 'reviewer' ? 'Reviews changes' : undefined,
           model: name === 'reviewer' ? { providerID: 'openai', modelID: 'gpt-5' } : undefined,
+          options: name === 'reviewer' ? { reasoningEffort: 'high' } : undefined,
         });
       },
     );
@@ -105,11 +106,52 @@ test('OpenCode runtime agents hide disabled/hidden entries and sort custom agent
     assert.equal(receivedWorkspacePath, '/workspace/project');
     assert.deepEqual(detailsWorkspacePaths, Array(4).fill('/workspace/project'));
     assert.deepEqual(agents, [
-      { name: 'reviewer', mode: 'all', description: 'Reviews changes', model: 'openai/gpt-5' },
-      { name: 'build', mode: 'primary', description: undefined, model: undefined },
+      { name: 'reviewer', mode: 'all', description: 'Reviews changes', model: 'openai/gpt-5', reasoningEffort: 'high' },
+      { name: 'build', mode: 'primary', description: undefined, model: undefined, reasoningEffort: undefined },
     ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode agent preference patches preserve unrelated config and clear default reasoning', { concurrency: false }, async () => {
+  const previousProvider = process.env.CLOUDCLI_OPENCODE_PROVIDER_ID;
+  process.env.CLOUDCLI_OPENCODE_PROVIDER_ID = 'cloudcli-openai';
+  try {
+    await withTempConfig(async (directory, provider) => {
+      const configPath = path.join(directory, 'opencode.json');
+      await writeFile(configPath, JSON.stringify({
+        $schema: 'schema', mcp: { docs: { enabled: true } },
+        agent: {
+          code: { description: 'Code', prompt: 'Keep', permission: { bash: 'ask' }, model: 'old/model', reasoningEffort: 'low', custom: 7 },
+          other: { description: 'Other', model: 'other/model' },
+        },
+      }), 'utf8');
+
+      assert.deepEqual(await provider.updateAgentPreferences('code', { model: 'gpt-new' }), {
+        provider: 'opencode', name: 'code', model: 'cloudcli-openai/gpt-new', reasoningEffort: 'low',
+      });
+      assert.deepEqual(await provider.updateAgentPreferences('code', { reasoningEffort: 'high' }), {
+        provider: 'opencode', name: 'code', model: 'cloudcli-openai/gpt-new', reasoningEffort: 'high',
+      });
+      assert.deepEqual(await provider.updateAgentPreferences('code', { model: 'openai/gpt-5', reasoningEffort: 'default' }), {
+        provider: 'opencode', name: 'code', model: 'openai/gpt-5', reasoningEffort: undefined,
+      });
+
+      const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+      assert.deepEqual(config, {
+        $schema: 'schema', mcp: { docs: { enabled: true } },
+        agent: {
+          code: { description: 'Code', prompt: 'Keep', permission: { bash: 'ask' }, model: 'openai/gpt-5', custom: 7 },
+          other: { description: 'Other', model: 'other/model' },
+        },
+      });
+      await assert.rejects(provider.updateAgentPreferences('missing', { model: 'openai/gpt-5' }), /not found or is not configurable/);
+      await assert.rejects(provider.updateAgentPreferences('code', {}), /At least one/);
+    });
+  } finally {
+    if (previousProvider === undefined) delete process.env.CLOUDCLI_OPENCODE_PROVIDER_ID;
+    else process.env.CLOUDCLI_OPENCODE_PROVIDER_ID = previousProvider;
   }
 });
 
@@ -186,6 +228,35 @@ test('OpenCode agent writes preserve MCP configuration and support rename and de
   });
 });
 
+test('OpenCode agent writes qualify bare models with the CloudCLI provider', { concurrency: false }, async () => {
+  const previousProvider = process.env.CLOUDCLI_OPENCODE_PROVIDER_ID;
+  process.env.CLOUDCLI_OPENCODE_PROVIDER_ID = 'cloudcli-openai';
+
+  try {
+    await withTempConfig(async (directory, provider) => {
+      const saved = await provider.upsertAgent({
+        name: 'code',
+        description: 'Writes code',
+        mode: 'subagent',
+        model: 'gpt-5.6-luna',
+        options: {},
+      });
+
+      assert.equal(saved.model, 'cloudcli-openai/gpt-5.6-luna');
+      const config = JSON.parse(
+        await readFile(path.join(directory, 'opencode.json'), 'utf8'),
+      ) as Record<string, any>;
+      assert.equal(config.agent.code.model, 'cloudcli-openai/gpt-5.6-luna');
+    });
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.CLOUDCLI_OPENCODE_PROVIDER_ID;
+    } else {
+      process.env.CLOUDCLI_OPENCODE_PROVIDER_ID = previousProvider;
+    }
+  }
+});
+
 test('OpenCode agent validation rejects invalid documented fields and rename collisions', async () => {
   await withTempConfig(async (_directory, provider) => {
     await assert.rejects(
@@ -216,6 +287,16 @@ test('OpenCode agent validation rejects invalid documented fields and rename col
         options: {},
       }),
       /permission\.bash pattern values/,
+    );
+    await assert.rejects(
+      provider.upsertAgent({
+        name: 'bad-model',
+        description: 'Invalid model reference',
+        mode: 'subagent',
+        model: 'provider/',
+        options: {},
+      }),
+      /model must use provider\/model-id format/,
     );
 
     await provider.upsertAgent({ name: 'one', description: 'One', mode: 'all', options: {} });

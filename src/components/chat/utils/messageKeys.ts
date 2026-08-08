@@ -10,6 +10,12 @@ const toMessageKeyPart = (value: unknown): string | null => {
 };
 
 export const getIntrinsicMessageKey = (message: ChatMessage): string | null => {
+  const normalizedId = toMessageKeyPart(message.id);
+  if (normalizedId) {
+    const generation = toMessageKeyPart(message.generation);
+    const suffix = toMessageKeyPart(message.renderKeySuffix);
+    return ['message', normalizedId, generation && `g${generation}`, suffix].filter(Boolean).join('-');
+  }
   const candidates = [
     message.id,
     message.messageId,

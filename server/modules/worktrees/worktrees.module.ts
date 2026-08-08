@@ -11,7 +11,7 @@ import type {
   WorktreeProjectGateway,
   WorktreeServices,
 } from '@/shared/types.js';
-import { AppError } from '@/shared/utils.js';
+import { AppError, resolveWorkspaceRelativePath } from '@/shared/utils.js';
 import { createWorktree } from '@/modules/worktrees/services/worktree-create.service.js';
 import { createAndOpenWorktree } from '@/modules/worktrees/services/worktree-create-and-open.service.js';
 import { runGitCommand } from '@/modules/worktrees/services/worktree-git.service.js';
@@ -75,7 +75,7 @@ const open: WorktreeServices['open'] = (input) => openWorktreeAsProject(input, {
  * concrete adapters with the independently testable workflow functions.
  */
 const worktreeServices: WorktreeServices = {
-  resolveProjectPath(projectId) {
+  async resolveProjectPath(projectId, repository) {
     const projectPath = worktreeProjects.getProjectPathById(projectId);
     if (!projectPath) {
       throw new AppError(`Unable to resolve project path for "${projectId}"`, {
@@ -84,7 +84,15 @@ const worktreeServices: WorktreeServices = {
       });
     }
 
-    return projectPath;
+    const resolved = await resolveWorkspaceRelativePath(projectPath, repository);
+    if (repository !== undefined) {
+      try {
+        await access(`${resolved.path}/.git`);
+      } catch {
+        throw new AppError('Selected path is not a Git repository', { code: 'INVALID_REPOSITORY', statusCode: 400 });
+      }
+    }
+    return resolved.path;
   },
   list: (input) => listWorktrees(input, {
     runGit: runGitCommand,

@@ -59,6 +59,9 @@ function createService(providers: IProvider[]) {
     async resolveResumeModel(_provider, _sessionId, requestedModel) {
       return requestedModel?.trim() || undefined;
     },
+    async resolveOpenCodeContextWindow(modelId) {
+      return modelId === 'openai/known-context' ? 128_000 : undefined;
+    },
     async getProviderModels() {
       return {
         models: { OPTIONS: [], DEFAULT: 'default-model' },
@@ -113,6 +116,18 @@ test('dispatches runs and aborts through the runtime owned by providerRegistry',
     ['run', 'hello', { model: 'sonnet' }, writer],
     ['abort', 'session-1'],
   ]);
+});
+
+test('supplies OpenCode context metadata through the runtime service boundary', async () => {
+  const runtime = createRuntime({
+    async run(_command, _options, _writer, context) {
+      assert.equal(await context.resolveContextWindow('openai/known-context'), 128_000);
+      assert.equal(await context.resolveContextWindow('openai/unknown-context'), undefined);
+    },
+  });
+  const service = createService([createProvider('opencode', runtime)]);
+
+  await service.run('opencode', 'hello', {}, { send() {} });
 });
 
 test('routes permission decisions through provider-owned runtime capabilities', () => {

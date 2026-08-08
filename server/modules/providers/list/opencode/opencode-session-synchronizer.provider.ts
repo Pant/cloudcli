@@ -21,11 +21,13 @@ type OpenCodeSessionRow = {
   time_created: number | null;
   time_updated: number | null;
   worktree: string | null;
+  agent: string | null;
+  parent_id: string | null | undefined;
 };
 
 type SynchronizeRowsResult = {
   processed: number;
-  firstSessionId: string | null;
+  sessionIds: string[];
 };
 
 /**
@@ -45,19 +47,26 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
   /**
    * Handles watcher changes for opencode.db.
    */
-  async synchronizeFile(filePath: string): Promise<string | null> {
+  async synchronizeFile(filePath: string): Promise<string | string[] | null> {
     if (path.basename(filePath) !== 'opencode.db') {
       return null;
     }
 
-    const result = this.synchronizeRows(undefined, 1);
-    return result.firstSessionId;
+    const result = this.synchronizeRows(undefined, undefined, true);
+    if (result.sessionIds.length === 0) {
+      return null;
+    }
+    return result.sessionIds.length === 1 ? result.sessionIds[0] : result.sessionIds;
   }
 
-  private synchronizeRows(since?: Date, limit?: number): SynchronizeRowsResult {
+  private synchronizeRows(
+    since?: Date,
+    limit?: number,
+    changedOnly = false,
+  ): SynchronizeRowsResult {
     const dbPath = getOpenCodeDatabasePath();
     if (!fsSync.existsSync(dbPath)) {
-      return { processed: 0, firstSessionId: null };
+      return { processed: 0, sessionIds: [] };
     }
 
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -65,6 +74,14 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
       const sinceMillis = since?.getTime() ?? null;
       const limitClause = limit ? 'LIMIT ?' : '';
       const params = limit ? [sinceMillis, sinceMillis, limit] : [sinceMillis, sinceMillis];
+      const sessionColumns = db.prepare('PRAGMA table_info(session)').all() as Array<{ name: string }>;
+      const agentExpression = sessionColumns.some((column) => column.name === 'agent')
+        ? 's.agent'
+        : 'NULL';
+      const parentExpression = sessionColumns.some((column) => column.name === 'parent_id')
+        ? 's.parent_id'
+        : 'NULL';
+      const hasParentIdColumn = sessionColumns.some((column) => column.name === 'parent_id');
       const rows = db.prepare(`
         SELECT
           s.id AS id,
@@ -72,6 +89,8 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
           s.title AS title,
           s.time_created AS time_created,
           s.time_updated AS time_updated,
+          ${agentExpression} AS agent,
+          ${parentExpression} AS parent_id,
           p.worktree AS worktree
         FROM session s
         LEFT JOIN project p ON p.id = s.project_id
@@ -82,46 +101,52 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
       `).all(...params) as OpenCodeSessionRow[];
 
       let processed = 0;
-      let firstSessionId: string | null = null;
+      const sessionIds: string[] = [];
       for (const row of rows) {
-        const indexedSessionId = this.upsertSession(db, row);
-        if (!indexedSessionId) {
+        const indexedSessionIds = this.upsertSession(db, row, changedOnly, hasParentIdColumn);
+        if (indexedSessionIds.length === 0) {
           continue;
         }
 
-        if (!firstSessionId) {
-          firstSessionId = indexedSessionId;
-        }
+        sessionIds.push(...indexedSessionIds);
         processed += 1;
       }
 
-      return { processed, firstSessionId };
+      return { processed, sessionIds: Array.from(new Set(sessionIds)) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn('[OpenCodeProvider] Failed to synchronize sessions:', message);
-      return { processed: 0, firstSessionId: null };
+      return { processed: 0, sessionIds: [] };
     } finally {
       db.close();
     }
   }
 
-  private upsertSession(db: Database.Database, row: OpenCodeSessionRow): string | null {
+  private upsertSession(
+    db: Database.Database,
+    row: OpenCodeSessionRow,
+    changedOnly: boolean,
+    hasParentIdColumn: boolean,
+  ): string[] {
     const sessionId = readOptionalString(row.id);
     const projectPath = readOptionalString(row.directory) ?? readOptionalString(row.worktree);
     if (!sessionId || !projectPath) {
-      return null;
+      return [];
     }
 
     const fallbackTitle = 'Untitled OpenCode Session';
-    const pendingAppSession = sessionsDb.getSessionByProviderSessionId(sessionId)
-      ?? sessionsDb.getSessionById(sessionId)
-      ?? sessionsDb.findLatestPendingAppSession(this.provider, projectPath);
+    const pendingAppSession = row.parent_id == null
+      ? sessionsDb.getSessionByProviderSessionId(sessionId)
+        ?? sessionsDb.getSessionById(sessionId)
+        ?? sessionsDb.findLatestPendingAppSession(this.provider, projectPath)
+      : null;
+    let affectedSessionIds: string[] = [];
     if (pendingAppSession && !pendingAppSession.provider_session_id) {
       // Slow networks can let the sqlite watcher index opencode.db before the
       // runtime reports its provider id back through the websocket mapping.
       // Bind that id to the fresh app row first so the watcher does not create
       // a temporary provider-id sidebar entry for the same session.
-      sessionsDb.assignProviderSessionId(pendingAppSession.session_id, sessionId);
+      affectedSessionIds = sessionsDb.assignProviderSessionId(pendingAppSession.session_id, sessionId);
     }
 
     // App-created sessions are keyed by an app id, so disk-discovered provider
@@ -150,11 +175,27 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
       nextName = readOptionalString(row.title) ?? this.readFirstUserText(db, sessionId);
     }
 
+    const parentSessionId = !hasParentIdColumn
+      ? undefined
+      : row.parent_id === null
+        ? null
+        : readOptionalString(row.parent_id) ?? null;
+    if (changedOnly && existingSession && !this.hasMaterialChanges(
+      existingSession,
+      projectPath,
+      row,
+      parentSessionId,
+      normalizeSessionName(nextName, fallbackTitle),
+    )) {
+      return affectedSessionIds;
+    }
+
     // OpenCode stores every session in one shared sqlite database, so jsonl_path
     // must stay null to avoid deleting opencode.db when one app session is removed.
     // Return the canonical stored row id so watcher-triggered sidebar updates
     // stay on the app session once provider_session_id has already been mapped.
-    return sessionsDb.createSession(
+    const unresolvedChildSessionIds = sessionsDb.getUnresolvedChildrenForProviderParent(this.provider, sessionId);
+    const indexedSessionId = sessionsDb.createSession(
       sessionId,
       this.provider,
       projectPath,
@@ -162,7 +203,34 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
       normalizeProviderTimestamp(row.time_created),
       normalizeProviderTimestamp(row.time_updated ?? row.time_created),
       null,
+      readOptionalString(row.agent) ?? null,
+      parentSessionId,
     );
+    const newlyResolvedChildren = unresolvedChildSessionIds.filter((childSessionId) => (
+      childSessionId !== indexedSessionId
+      && sessionsDb.getSessionParentResolution(childSessionId).kind === 'resolved'
+    ));
+    return Array.from(new Set([
+      ...affectedSessionIds,
+      indexedSessionId,
+      ...newlyResolvedChildren,
+    ]));
+  }
+
+  private hasMaterialChanges(
+    existingSession: NonNullable<ReturnType<typeof sessionsDb.getSessionById>>,
+    projectPath: string,
+    row: OpenCodeSessionRow,
+    parentSessionId: string | null | undefined,
+    nextName: string,
+  ): boolean {
+    const normalizedUpdatedAt = normalizeProviderTimestamp(row.time_updated ?? row.time_created);
+    return existingSession.provider !== this.provider
+      || existingSession.project_path !== projectPath
+      || existingSession.custom_name !== nextName
+      || (row.agent !== null && existingSession.agent !== readOptionalString(row.agent))
+      || (parentSessionId !== undefined && existingSession.provider_parent_session_id !== parentSessionId)
+      || existingSession.updated_at !== normalizedUpdatedAt;
   }
 
   private readFirstUserText(db: Database.Database, sessionId: string): string | undefined {

@@ -3,6 +3,12 @@ import type { FitAddon } from '@xterm/addon-fit';
 import type { Terminal } from '@xterm/xterm';
 
 import type { Project, ProjectSession } from '../../../types/app';
+import type { MobileTerminalModifiers } from '../utils/terminalShortcutKeys';
+
+export type MobileModifierInputConfig = {
+  mobileModifiers: MobileTerminalModifiers;
+  clearMobileModifiers: () => void;
+};
 
 export type ShellInitMessage = {
   type: 'init';
@@ -42,10 +48,12 @@ export type UseShellRuntimeOptions = {
   initialCommand: string | null | undefined;
   isPlainShell: boolean;
   minimal: boolean;
+  isActive: boolean;
   autoConnect: boolean;
   isRestarting: boolean;
   onProcessComplete?: ((exitCode: number) => void) | null;
   onOutputRef?: MutableRefObject<(() => void) | null>;
+  mobileModifierInput: MobileModifierInputConfig;
 };
 
 export type ShellSharedRefs = {
@@ -60,7 +68,7 @@ export type ShellSharedRefs = {
 };
 
 export type UseShellRuntimeResult = {
-  terminalContainerRef: RefObject<HTMLDivElement>;
+  terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
   wsRef: MutableRefObject<WebSocket | null>;
   isConnected: boolean;

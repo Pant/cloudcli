@@ -22,7 +22,7 @@ function createFakeServices(overrides: Partial<WorktreeServices> = {}): Worktree
   };
 
   return {
-    resolveProjectPath: () => {
+    resolveProjectPath: async () => {
       throw new Error('Unexpected project resolution');
     },
     list: unused,
@@ -67,8 +67,9 @@ async function withWorktreesServer(
 test('create route parses input and invokes the create-and-open application service', async () => {
   const createInputs: CreateWorktreeInput[] = [];
   const services = createFakeServices({
-    resolveProjectPath: (projectId) => {
+    resolveProjectPath: async (projectId, repository) => {
       assert.equal(projectId, 'project-1');
+      assert.equal(repository, undefined);
       return '/workspace/repo';
     },
     createAndOpen: async (input) => {
@@ -120,7 +121,7 @@ test('create route parses input and invokes the create-and-open application serv
 test('create route rejects missing branch before calling a mutation service', async () => {
   let createCalled = false;
   const services = createFakeServices({
-    resolveProjectPath: () => '/workspace/repo',
+    resolveProjectPath: async () => '/workspace/repo',
     createAndOpen: async () => {
       createCalled = true;
       throw new Error('create should not run for invalid input');
@@ -146,7 +147,7 @@ test('merge and remove routes do not coerce string booleans to true', async () =
   const mergeInputs: Array<{ squash?: boolean; removeAfterMerge?: boolean }> = [];
   const removeInputs: Array<{ force?: boolean; deleteBranch?: boolean }> = [];
   const services = createFakeServices({
-    resolveProjectPath: () => '/workspace/repo',
+    resolveProjectPath: async () => '/workspace/repo',
     merge: async (input) => {
       mergeInputs.push(input);
       return {
@@ -196,4 +197,20 @@ test('merge and remove routes do not coerce string booleans to true', async () =
   assert.equal(mergeInputs[0].removeAfterMerge, false);
   assert.equal(removeInputs[0].force, false);
   assert.equal(removeInputs[0].deleteBranch, false);
+});
+
+test('routes forward optional repository selectors', async () => {
+  const resolutions: Array<[string, string | undefined]> = [];
+  const services = createFakeServices({
+    resolveProjectPath: async (projectId, repository) => {
+      resolutions.push([projectId, repository]);
+      return '/workspace/repo/nested';
+    },
+    list: async () => ({ repositoryRoot: '/workspace/repo/nested', baseBranch: 'main', worktrees: [] }),
+  });
+  await withWorktreesServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/worktrees?project=project-1&repository=nested`);
+    assert.equal(response.status, 200);
+  });
+  assert.deepEqual(resolutions, [['project-1', 'nested']]);
 });
