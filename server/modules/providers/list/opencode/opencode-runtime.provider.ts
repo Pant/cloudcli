@@ -112,6 +112,13 @@ const exitedOpenCodeProcesses = new Map<string, OpenCodeRuntimeDiagnostic>();
 const OPENCODE_ABORT_GRACE_MS = 2_000;
 const OPENCODE_FALLBACK_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
 
+function validOpenCodeModelId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  const separator = normalized.indexOf('/');
+  return separator > 0 && separator < normalized.length - 1 ? normalized : undefined;
+}
+
 /**
  * Maps the UI permission mode onto OpenCode's non-interactive controls.
  *
@@ -368,6 +375,10 @@ export async function spawnOpenCode(
     };
 
     void context.resolveResumeModel(sessionId, model).then(async (resolvedModel) => {
+      // A malformed native retry can invert provider/model into `model/`. When
+      // the canonical requested session model is available, prefer it rather
+      // than forwarding an empty component to `opencode run --model`.
+      const runnableModel = validOpenCodeModelId(resolvedModel) ?? validOpenCodeModelId(model);
       let effortModels: ProviderModelsDefinition | null = null;
       try {
         effortModels = await context.getProviderModels();
@@ -377,9 +388,9 @@ export async function spawnOpenCode(
 
       // Resolve supplemental metadata while the CLI is running so a slow
       // provider catalog lookup does not unnecessarily delay run completion.
-      const contextWindowPromise = context.resolveContextWindow(resolvedModel).catch(() => undefined);
+      const contextWindowPromise = context.resolveContextWindow(runnableModel).catch(() => undefined);
 
-      const resolvedEffort = resolveOpenCodeEffort(resolvedModel, effort, effortModels);
+      const resolvedEffort = resolveOpenCodeEffort(runnableModel, effort, effortModels);
       const args = ['run', '--format', 'json'];
       // OpenCode's `run` command owns workspace selection through `--dir`.
       // Relying on the child-process cwd alone is not enough on Linux, where
@@ -388,8 +399,8 @@ export async function spawnOpenCode(
       if (providerSessionId) {
         args.push('--session', providerSessionId);
       }
-      if (resolvedModel) {
-        args.push('--model', resolvedModel);
+      if (runnableModel) {
+        args.push('--model', runnableModel);
       }
       if (resolvedEffort) {
         args.push('--variant', resolvedEffort);

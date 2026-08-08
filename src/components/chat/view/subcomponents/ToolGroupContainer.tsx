@@ -132,6 +132,7 @@ export default function ToolGroupContainer({
               key={getMessageKey(message)}
               message={message}
               messageKey={getMessageKey(message)}
+              ownsMessageAnchor={false}
               prevMessage={index > 0 ? group.messages[index - 1] : prevMessage}
               createDiff={createDiff}
               onFileOpen={onFileOpen}

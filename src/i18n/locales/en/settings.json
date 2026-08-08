@@ -113,6 +113,7 @@
     "notifications": "Notifications",
     "plugins": "Plugins",
     "cache": "Cache",
+    "dockerManagement": "Docker Management",
     "about": "About"
   },
   "cache": {
@@ -141,6 +142,36 @@
     "confirmationDescription": "This removes locally cached session histories for this account only. Other accounts and server histories are preserved, and histories may be cached again later.",
     "cancel": "Cancel",
     "confirm": "Clear cache"
+  },
+  "dockerManagement": {
+    "title": "Docker Management",
+    "description": "Request Docker build, restart, and shutdown operations through CloudCLI.",
+    "actionsTitle": "Management actions",
+    "actionsDescription": "CloudCLI reports only whether the manager accepted each request.",
+    "build": {
+      "label": "Build",
+      "description": "Request a new Docker image build.",
+      "action": "Build",
+      "pending": "Requesting build...",
+      "accepted": "Build request accepted.",
+      "error": "Build request was not accepted. Try again later."
+    },
+    "restart": {
+      "label": "Restart",
+      "description": "Restart the Docker services. The CloudCLI connection may briefly drop.",
+      "action": "Restart",
+      "pending": "Requesting restart...",
+      "accepted": "Restart request accepted. CloudCLI may disconnect briefly.",
+      "error": "Restart request was not accepted. Try again later."
+    },
+    "down": {
+      "label": "Stop stack",
+      "description": "Stop and remove the Docker stack. CloudCLI will become unavailable until the stack is started externally.",
+      "action": "Stop stack",
+      "pending": "Requesting shutdown...",
+      "accepted": "Shutdown accepted. CloudCLI will become unavailable until started externally.",
+      "error": "Shutdown request was not accepted. Try again later."
+    }
   },
   "notifications": {
     "title": "Notifications",

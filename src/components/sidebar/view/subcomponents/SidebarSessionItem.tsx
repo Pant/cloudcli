@@ -36,8 +36,7 @@ type SidebarSessionItemProps = {
   onStartEditingSession: (sessionId: string, initialName: string) => void;
   onCancelEditingSession: () => void;
   onSaveEditingSession: (projectName: string, sessionId: string, summary: string, provider: LLMProvider) => void;
-  onProjectSelect: (project: Project) => void;
-  onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
+  onSessionSelect: (session: SessionWithProvider, project: Project) => void;
   onDeleteSession: (
     projectName: string,
     sessionId: string,
@@ -108,7 +107,6 @@ export default function SidebarSessionItem({
   onStartEditingSession,
   onCancelEditingSession,
   onSaveEditingSession,
-  onProjectSelect,
   onSessionSelect,
   onDeleteSession,
   t,
@@ -201,8 +199,7 @@ export default function SidebarSessionItem({
   // Sessions are owned by a project identified by `projectId` (DB primary key)
   // after the projectName → projectId migration.
   const selectAndToggleSession = () => {
-    onProjectSelect(project);
-    onSessionSelect(session, project.projectId);
+    onSessionSelect(session, project);
     if (rowInteractionPolicy.togglesOnRowClick) {
       onToggleSessionBranch(session.id);
     }

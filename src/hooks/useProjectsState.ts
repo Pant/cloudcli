@@ -68,12 +68,34 @@ type NewSessionIntentActions = {
   closeSidebar?: () => void;
 };
 
+type SessionSelectionIntentActions = {
+  selectProject: (project: Project) => void;
+  selectSession: (session: ProjectSession) => void;
+  clearAttention: (sessionId: string) => void;
+  showChat?: () => void;
+  navigateToSession: (sessionId: string) => void;
+  closeSidebar?: () => void;
+};
+
 export const applyNewSessionIntent = (project: Project, actions: NewSessionIntentActions) => {
   actions.selectProject(project);
   actions.clearSession();
   actions.showChat();
   actions.triggerReset();
   actions.navigateHome();
+  actions.closeSidebar?.();
+};
+
+export const applySessionSelectionIntent = (
+  project: Project,
+  session: ProjectSession,
+  actions: SessionSelectionIntentActions,
+) => {
+  actions.clearAttention(session.id);
+  actions.selectProject(project);
+  actions.selectSession(session);
+  actions.showChat?.();
+  actions.navigateToSession(session.id);
   actions.closeSidebar?.();
 };
 
@@ -832,28 +854,27 @@ export function useProjectsState({
   );
 
   const handleSessionSelect = useCallback(
-    (session: ProjectSession) => {
-      clearSessionAttention(session.id);
-      setSelectedSession(session);
-
-      if (activeTab === 'tasks' || activeTab === 'browser') {
-        setActiveTab('chat');
+    (session: ProjectSession, project?: Project) => {
+      if (!project) {
+        clearSessionAttention(session.id);
+        setSelectedSession(session);
+        if (activeTab === 'tasks' || activeTab === 'browser') setActiveTab('chat');
+        navigate(`/session/${session.id}`);
+        return;
       }
-
-      if (isMobile) {
-        // Sessions are tagged with the owning project's DB `projectId` when
-        // picked from the sidebar (see useSidebarController); compare against
-        // the current selection's `projectId` so we know whether to collapse
-        // the sidebar after navigation.
-        const sessionProjectId = session.__projectId;
-        const currentProjectId = selectedProject?.projectId;
-
-        if (sessionProjectId !== currentProjectId) {
-          setSidebarOpen(false);
-        }
-      }
-
-      navigate(`/session/${session.id}`);
+      const selectedSessionWithProject = { ...session, __projectId: project.projectId };
+      applySessionSelectionIntent(project, selectedSessionWithProject, {
+        clearAttention: clearSessionAttention,
+        selectProject: setSelectedProject,
+        selectSession: setSelectedSession,
+        showChat: activeTab === 'tasks' || activeTab === 'browser'
+          ? () => setActiveTab('chat')
+          : undefined,
+        navigateToSession: (selectedSessionId) => navigate(`/session/${selectedSessionId}`),
+        closeSidebar: isMobile && project.projectId !== selectedProject?.projectId
+          ? () => setSidebarOpen(false)
+          : undefined,
+      });
     },
     [activeTab, clearSessionAttention, isMobile, navigate, selectedProject?.projectId],
   );

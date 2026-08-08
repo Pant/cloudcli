@@ -146,7 +146,13 @@ export const chatRunLifecycleService = {
     return { sessionId: input.sessionId, provider, generation: state.generation };
   },
 
-  async restart(input: RestartRunInput) { return this.start({ ...input, command: 'Continue' }); },
+  async restart(input: RestartRunInput) {
+    const session = sessionsDb.getSessionById(input.sessionId);
+    const options = session?.provider === 'opencode' && session.model?.trim()
+      ? { ...(input.options ?? {}), model: session.model.trim() }
+      : input.options;
+    return this.start({ ...input, options, command: 'Continue' });
+  },
 
   async manualStart(sessionId: string) { return this.restart({ sessionId }); },
 

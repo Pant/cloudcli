@@ -20,6 +20,7 @@ const TasksSettingsTab = lazy(() => import('../view/tabs/tasks-settings/TasksSet
 const PluginSettingsTab = lazy(() => import('../../plugins/view/PluginSettingsTab'));
 const AboutTab = lazy(() => import('../view/tabs/AboutTab'));
 const CacheSettingsTab = lazy(() => import('../view/tabs/CacheSettingsTab'));
+const DockerManagementSettingsTab = lazy(() => import('../view/tabs/DockerManagementSettingsTab'));
 
 type DesktopNotificationsState = {
   enabled: boolean;
@@ -219,6 +220,8 @@ function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents'
               {activeTab === 'plugins' && <PluginSettingsTab />}
 
               {activeTab === 'cache' && <CacheSettingsTab />}
+
+              {activeTab === 'docker-management' && <DockerManagementSettingsTab />}
 
               {activeTab === 'about' && <AboutTab />}
             </div>

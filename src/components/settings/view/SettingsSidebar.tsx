@@ -1,4 +1,4 @@
-import { Bell, Bot, Database, GitBranch, Info, Key, ListChecks, Mic, MonitorPlay, Palette, Puzzle } from 'lucide-react';
+import { Bell, Bot, Container, Database, GitBranch, Info, Key, ListChecks, Mic, MonitorPlay, Palette, Puzzle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '../../../lib/utils';
@@ -27,6 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'plugins', labelKey: 'mainTabs.plugins', icon: Puzzle },
   { id: 'notifications', labelKey: 'mainTabs.notifications', icon: Bell },
   { id: 'cache', labelKey: 'mainTabs.cache', icon: Database },
+  { id: 'docker-management', labelKey: 'mainTabs.dockerManagement', icon: Container },
   { id: 'about', labelKey: 'mainTabs.about', icon: Info },
 ];
 

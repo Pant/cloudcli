@@ -51,6 +51,7 @@ export default function Shell({
 }: ShellProps) {
   const { t } = useTranslation('chat');
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isExtraKeyboardExpanded, setIsExtraKeyboardExpanded] = useState(true);
   const [cliPromptOptions, setCliPromptOptions] = useState<CliPromptOption[] | null>(null);
   const [mobileModifiers, setMobileModifiers] = useState<MobileTerminalModifiers>(
     EMPTY_MOBILE_TERMINAL_MODIFIERS,
@@ -259,7 +260,10 @@ export default function Shell({
   if (minimal) {
     return (
       <>
-        <ShellMinimalView terminalContainerRef={terminalContainerRef} />
+        <ShellMinimalView
+          terminalContainerRef={terminalContainerRef}
+          isExtraKeyboardExpanded={isExtraKeyboardExpanded}
+        />
         <TerminalShortcutsPanel
           wsRef={wsRef}
           terminalRef={terminalRef}
@@ -267,6 +271,8 @@ export default function Shell({
           mobileModifiers={mobileModifiers}
           onToggleModifier={toggleMobileModifier}
           onClearModifiers={clearMobileModifiers}
+          isExpanded={isExtraKeyboardExpanded}
+          onExpandedChange={setIsExtraKeyboardExpanded}
           bottomOffset="bottom-0"
         />
       </>
@@ -315,7 +321,7 @@ export default function Shell({
       <div className="relative flex-1 overflow-hidden p-2">
         <div
           ref={terminalContainerRef}
-          className="h-full w-full focus:outline-none"
+          className={`${isExtraKeyboardExpanded ? 'h-[calc(100%-5rem)]' : 'h-full'} w-full focus:outline-none`}
           style={{ outline: 'none' }}
         />
 
@@ -373,6 +379,8 @@ export default function Shell({
         mobileModifiers={mobileModifiers}
         onToggleModifier={toggleMobileModifier}
         onClearModifiers={clearMobileModifiers}
+        isExpanded={isExtraKeyboardExpanded}
+        onExpandedChange={setIsExtraKeyboardExpanded}
       />
 
     </div>

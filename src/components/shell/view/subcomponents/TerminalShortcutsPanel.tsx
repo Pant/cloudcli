@@ -1,4 +1,4 @@
-import { type MutableRefObject, useCallback, useState } from 'react';
+import { type MutableRefObject, useCallback } from 'react';
 import { ArrowDown, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUp, Clipboard } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Terminal } from '@xterm/xterm';
@@ -18,6 +18,8 @@ type Props = {
   mobileModifiers: MobileTerminalModifiers;
   onToggleModifier: (modifier: MobileTerminalModifier) => void;
   onClearModifiers: () => void;
+  isExpanded: boolean;
+  onExpandedChange: (isExpanded: boolean) => void;
   bottomOffset?: string;
 };
 
@@ -34,10 +36,10 @@ const DIRECTION_ICONS: Record<string, typeof ArrowUp> = {
 
 export default function TerminalShortcutsPanel({
   wsRef, terminalRef, isConnected, mobileModifiers, onToggleModifier, onClearModifiers,
+  isExpanded, onExpandedChange,
   bottomOffset = 'bottom-0',
 }: Props) {
   const { t } = useTranslation('settings');
-  const [isExpanded, setIsExpanded] = useState(true);
   const sendInput = useCallback((data: string) => {
     sendSocketMessage(wsRef.current, { type: 'input', data });
   }, [wsRef]);
@@ -53,7 +55,7 @@ export default function TerminalShortcutsPanel({
   return (
     <div className={`pointer-events-none fixed inset-x-0 ${bottomOffset} z-20 px-2`}>
       {isExpanded ? <div className="pointer-events-auto grid grid-flow-col grid-rows-2 items-center gap-1 overflow-x-auto rounded-lg border border-gray-700/80 bg-gray-900/95 px-1.5 py-1.5 shadow-lg backdrop-blur-sm [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <button type="button" onPointerDown={preventFocusSteal} onClick={() => setIsExpanded(false)}
+        <button type="button" onPointerDown={preventFocusSteal} onClick={() => onExpandedChange(false)}
           className={KEY_BTN} title="Hide extra keyboard" aria-label="Hide extra keyboard" aria-expanded={isExpanded}>
           Hide
         </button>
@@ -88,7 +90,7 @@ export default function TerminalShortcutsPanel({
           <ArrowDownToLine className="h-4 w-4" />
         </button>
       </div> : <div className="flex justify-end">
-        <button type="button" onPointerDown={preventFocusSteal} onClick={() => setIsExpanded(true)}
+        <button type="button" onPointerDown={preventFocusSteal} onClick={() => onExpandedChange(true)}
           className={`${KEY_BTN} pointer-events-auto border-gray-700/80 bg-gray-900/95 shadow-lg backdrop-blur-sm`}
           title="Show extra keyboard" aria-label="Show extra keyboard" aria-expanded={isExpanded}>
           Show

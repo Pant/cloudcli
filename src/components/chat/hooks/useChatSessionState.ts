@@ -17,8 +17,16 @@ import {
   advanceViewportSettle,
   chooseViewportSnapshot,
   isSelectionCurrent,
+  shouldApplyViewportRevision,
   type SavedViewport,
 } from './sessionViewport';
+import {
+  createSessionIdentity,
+  resolveCommittedSessionIdentity,
+  stabilizeSessionIdentity,
+  shouldAdoptCanonicalSelection,
+  type CommittedSessionIdentity,
+} from './sessionSelection';
 
 const INITIAL_VISIBLE_MESSAGES = 100;
 const LOCAL_REVEAL_CHUNK = 100;
@@ -113,7 +121,28 @@ export function useChatSessionState({
   connectionEpoch,
   sessionStore,
 }: UseChatSessionStateArgs) {
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(selectedSession?.id || null);
+  const [draftIdentity, setDraftIdentity] = useState<CommittedSessionIdentity | null>(null);
+  const selectedSessionId = selectedSession?.id ?? null;
+  const selectedProjectId = selectedProject?.projectId ?? null;
+  const selectedIdentity = useMemo(() => selectedSessionId && selectedProjectId
+    ? createSessionIdentity('selected', selectedSessionId, selectedProjectId)
+    : null, [selectedProjectId, selectedSessionId]);
+  const previousCommittedIdentityRef = useRef<CommittedSessionIdentity | null>(null);
+  const committedIdentity = useMemo(() => {
+    const resolved = resolveCommittedSessionIdentity({
+      selectedSessionId,
+      projectId: selectedProjectId,
+      draft: draftIdentity,
+    });
+    const stable = stabilizeSessionIdentity(previousCommittedIdentityRef.current, resolved);
+    previousCommittedIdentityRef.current = stable;
+    return stable;
+  }, [draftIdentity, selectedProjectId, selectedSessionId]);
+  const currentSessionId = committedIdentity?.sessionId ?? null;
+  const establishDraftSession = useCallback((sessionId: string) => {
+    if (!selectedProject?.projectId) return;
+    setDraftIdentity(createSessionIdentity('draft', sessionId, selectedProject.projectId));
+  }, [selectedProject?.projectId]);
   const [isLoadingSessionMessages, setIsLoadingSessionMessages] = useState(false);
   const sessionMessageLoadingOwnerRef = useRef(createSessionMessageLoadingOwner());
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
@@ -136,6 +165,7 @@ export function useChatSessionState({
   const [visibleMessageCount, setVisibleMessageCount] = useState(INITIAL_VISIBLE_MESSAGES);
   const [allMessagesLoaded, setAllMessagesLoaded] = useState(false);
   const [viewHiddenCount, setViewHiddenCount] = useState(0);
+  const [viewStateIdentityKey, setViewStateIdentityKey] = useState<string | null>(committedIdentity?.key ?? null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [searchTarget, setSearchTarget] = useState<{ timestamp?: string; uuid?: string; snippet?: string } | null>(null);
@@ -254,7 +284,7 @@ export function useChatSessionState({
     sessionMessageLoadingOwnerRef.current.invalidate();
     setIsLoadingSessionMessages(false);
     tokenBudgetSessionRef.current = null;
-    setCurrentSessionId(null);
+    setDraftIdentity(null);
     setPendingUserMessage(null);
     messagesOffsetRef.current = 0;
     setHasMoreMessages(false);
@@ -278,7 +308,9 @@ export function useChatSessionState({
   /*  Derive processing state for the viewed session                  */
   /* ---------------------------------------------------------------- */
 
-  const activeSessionId = selectedSession?.id || currentSessionId || null;
+  const activeSessionId = committedIdentity?.sessionId ?? null;
+  const activeIdentityKey = committedIdentity?.key ?? null;
+  selectionKeyRef.current = activeIdentityKey;
 
   // The activity indicator always reflects the latest status of the session
   // being viewed — never stale local UI state from the last time it was
@@ -287,11 +319,6 @@ export function useChatSessionState({
   const sessionActivity = (activeSessionId && processingSessions?.get(activeSessionId)) || null;
   const isProcessing = sessionActivity !== null;
   const canAbortSession = isProcessing && sessionActivity.canInterrupt;
-
-  // Ref mirror so effects can read the latest map without re-running on
-  // every activity transition.
-  const processingSessionsRef = useRef(processingSessions);
-  processingSessionsRef.current = processingSessions;
 
   /* ---------------------------------------------------------------- */
   /*  Derive chatMessages from the store                              */
@@ -305,6 +332,10 @@ export function useChatSessionState({
     prevActiveForStoreRef.current = activeSessionId;
     sessionStore.setActiveSession(activeSessionId);
   }
+
+  useEffect(() => {
+    if (shouldAdoptCanonicalSelection(draftIdentity, selectedIdentity)) setDraftIdentity(null);
+  }, [draftIdentity, selectedIdentity]);
 
   useEffect(() => {
     if (!pendingUserMessage) {
@@ -479,9 +510,7 @@ export function useChatSessionState({
       const saved = currentViewportRef.current;
       if (saved) savedViewportsRef.current.set(previousKey, saved);
     }
-    selectionKeyRef.current = selectedSession?.id && selectedProject?.projectId
-      ? `${selectedSession.id}:${selectedProject.projectId}`
-      : null;
+    selectionKeyRef.current = activeIdentityKey;
     pendingScrollRestoreRef.current = selectionKeyRef.current
       ? savedViewportsRef.current.get(selectionKeyRef.current) ?? null
       : null;
@@ -493,7 +522,7 @@ export function useChatSessionState({
     topLoadLockRef.current = false;
     setIsUserScrolledUp(false);
     return cancelViewportSettle;
-  }, [cancelViewportSettle, captureViewport, selectedProject?.projectId, selectedSession?.id]);
+  }, [activeIdentityKey, cancelViewportSettle, captureViewport]);
 
   // Initial scroll to bottom — robust to lazy content reflow.
   // The previous implementation fired one scrollToBottom() at +200ms and
@@ -525,26 +554,24 @@ export function useChatSessionState({
     const revision = storeSnapshot?.revision ?? -1;
     const previous = previousRevisionRef.current;
     previousRevisionRef.current = { key: selectionKey, revision };
-    if (!selectionKey || previous.key !== selectionKey || previous.revision === revision || searchScrollActiveRef.current) return;
+    if (previous.key !== selectionKey || !shouldApplyViewportRevision({
+      expectedIdentityKey: selectionKey,
+      currentIdentityKey: activeIdentityKey,
+      previousRevision: previous.revision,
+      nextRevision: revision,
+      searchActive: searchScrollActiveRef.current,
+    })) return;
     const saved = currentViewportRef.current;
-    if (saved) startViewportSettle(saved.mode === 'bottom' ? { mode: 'bottom', bottomDistance: 0 } : saved, selectionKey);
-  }, [startViewportSettle, storeSnapshot?.revision]);
+    if (saved && selectionKey) startViewportSettle(saved.mode === 'bottom' ? { mode: 'bottom', bottomDistance: 0 } : saved, selectionKey);
+  }, [activeIdentityKey, startViewportSettle, storeSnapshot?.revision]);
 
   // Main session loading effect — store-based
   useEffect(() => {
-    if (!selectedSession || !selectedProject) {
+    if (!committedIdentity || !selectedProjectId) {
       sessionMessageLoadingOwnerRef.current.invalidate();
       setIsLoadingSessionMessages(false);
-      // A freshly created session can be mid-run before the router has a
-      // canonical selectedSession (the URL effect synthesizes one on the
-      // next render). Keep the active view intact instead of wiping it.
-      if (currentSessionId && processingSessionsRef.current?.has(currentSessionId)) {
-        return;
-      }
-
       resetStreamingState();
       tokenBudgetSessionRef.current = null;
-      setCurrentSessionId(null);
       messagesOffsetRef.current = 0;
       setHasMoreMessages(false);
       setTotalMessages(0);
@@ -553,10 +580,11 @@ export function useChatSessionState({
       return;
     }
 
-    const selectedSessionId = selectedSession.id;
-    const sessionKey = `${selectedSessionId}:${selectedProject.projectId}`;
+    const selectedSessionId = committedIdentity.sessionId;
+    const sessionKey = committedIdentity.key;
     selectionKeyRef.current = sessionKey;
     tokenBudgetSessionRef.current = selectedSessionId;
+    setViewStateIdentityKey(sessionKey);
 
     const subscribeToSelectedSession = () => {
       if (!ws) {
@@ -588,7 +616,7 @@ export function useChatSessionState({
       return;
     }
 
-    const sessionChanged = currentSessionId !== selectedSessionId;
+    const sessionChanged = lastLoadedSessionKeyRef.current !== sessionKey;
     if (sessionChanged) {
       resetStreamingState();
     }
@@ -607,8 +635,6 @@ export function useChatSessionState({
       setTokenBudget(null);
     }
 
-    setCurrentSessionId(selectedSessionId);
-
     // Subscribe to the session's live run (if any): the ack reconciles the
     // processing indicator, re-attaches a mid-flight stream to this socket,
     // and replays any live events missed since `lastSeq`. Recording the send
@@ -619,10 +645,10 @@ export function useChatSessionState({
     lastLoadedSessionKeyRef.current = sessionKey;
 
     // Fetch from server → store updates → chatMessages re-derives automatically
-    const loadingToken = sessionMessageLoadingOwnerRef.current.begin();
+    const loadingToken = sessionMessageLoadingOwnerRef.current.begin(sessionKey);
     setIsLoadingSessionMessages(true);
     sessionStore.fetchFromServer(selectedSessionId).then(slot => {
-      if (selectionKeyRef.current !== sessionKey || !sessionMessageLoadingOwnerRef.current.isCurrent(loadingToken)) return;
+       if (selectionKeyRef.current !== sessionKey || !sessionMessageLoadingOwnerRef.current.isCurrent(loadingToken, sessionKey)) return;
       if (slot) {
         // Ordinary opens always request the complete transcript.
         const hasAuthoritativeHistory = slot.fetchedAt > 0;
@@ -643,15 +669,13 @@ export function useChatSessionState({
       }
       setIsLoadingSessionMessages(false);
     }).catch(() => {
-      if (selectionKeyRef.current !== sessionKey || !sessionMessageLoadingOwnerRef.current.isCurrent(loadingToken)) return;
+      if (selectionKeyRef.current !== sessionKey || !sessionMessageLoadingOwnerRef.current.isCurrent(loadingToken, sessionKey)) return;
       setIsLoadingSessionMessages(false);
     });
   }, [
     resetStreamingState,
-    selectedProject,
-    currentSessionId,
-    selectedSession,
-    selectedSession?.id,
+    selectedProjectId,
+    committedIdentity,
     sendMessage,
     statusCheckSentAtRef,
     connectionEpoch,
@@ -662,9 +686,9 @@ export function useChatSessionState({
 
   // External message update (e.g. WebSocket reconnect, background refresh)
   useEffect(() => {
-    if (!externalMessageUpdate || !selectedSession || !selectedProject) return;
-    const requestKey = `${selectedSession.id}:${selectedProject.projectId}`;
-    const sessionId = selectedSession.id;
+    if (!externalMessageUpdate || !committedIdentity || !selectedProjectId) return;
+    const requestKey = committedIdentity.key;
+    const sessionId = committedIdentity.sessionId;
     const saved = currentViewportRef.current ?? captureViewport();
     if (saved) currentViewportRef.current = saved;
 
@@ -685,8 +709,8 @@ export function useChatSessionState({
   }, [
     externalMessageUpdate,
     captureViewport,
-    selectedProject,
-    selectedSession,
+    selectedProjectId,
+    committedIdentity,
     sessionStore,
     startViewportSettle,
     isProcessing,
@@ -812,13 +836,13 @@ export function useChatSessionState({
 
   // Initial token usage fetch for providers with file-backed usage data.
   useEffect(() => {
-    if (!selectedSession?.id) {
+    if (!committedIdentity) {
       setTokenBudget(null);
       return;
     }
     const fetchInitialTokenUsage = async () => {
-      const requestSessionId = selectedSession.id;
-      const requestKey = selectionKeyRef.current;
+      const requestSessionId = committedIdentity.sessionId;
+      const requestKey = committedIdentity.key;
       try {
         // The provider module resolves storage and provider details from the session id.
         const url = `/api/providers/sessions/${encodeURIComponent(requestSessionId)}/token-usage`;
@@ -834,12 +858,15 @@ export function useChatSessionState({
       }
     };
     fetchInitialTokenUsage();
-  }, [selectedSession?.id, setTokenBudget]);
+  }, [committedIdentity, setTokenBudget]);
 
+  const committedVisibleMessageCount = viewStateIdentityKey === activeIdentityKey
+    ? visibleMessageCount
+    : INITIAL_VISIBLE_MESSAGES;
   const visibleMessages = useMemo(() => {
-    if (chatMessages.length <= visibleMessageCount) return chatMessages;
-    return chatMessages.slice(-visibleMessageCount);
-  }, [chatMessages, visibleMessageCount]);
+    if (chatMessages.length <= committedVisibleMessageCount) return chatMessages;
+    return chatMessages.slice(-committedVisibleMessageCount);
+  }, [chatMessages, committedVisibleMessageCount]);
 
   useEffect(() => {
     if (!scrollContainerRef.current || chatMessages.length === 0) return;
@@ -885,16 +912,16 @@ export function useChatSessionState({
     isProcessing,
     canAbortSession,
     currentSessionId,
-    setCurrentSessionId,
-    isLoadingSessionMessages,
+    establishDraftSession,
+    isLoadingSessionMessages: viewStateIdentityKey === activeIdentityKey ? isLoadingSessionMessages : false,
     isLoadingMoreMessages: false,
-    hasMoreMessages,
-    totalMessages,
+    hasMoreMessages: viewStateIdentityKey === activeIdentityKey ? hasMoreMessages : false,
+    totalMessages: viewStateIdentityKey === activeIdentityKey ? totalMessages : chatMessages.length,
     isUserScrolledUp,
     setIsUserScrolledUp,
-    tokenBudget,
+    tokenBudget: viewStateIdentityKey === activeIdentityKey ? tokenBudget : null,
     setTokenBudget,
-    visibleMessageCount,
+    visibleMessageCount: committedVisibleMessageCount,
     visibleMessages,
     loadEarlierMessages,
     loadAllMessages,

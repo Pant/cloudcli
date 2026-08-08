@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { LLMProvider } from '../../../types/app';
 import type { ProviderAuthStatus } from '../../provider-auth/types';
 
-export type SettingsMainTab = 'agents' | 'appearance' | 'git' | 'api' | 'voice' | 'tasks' | 'browser' | 'notifications' | 'plugins' | 'cache' | 'about';
+export type SettingsMainTab = 'agents' | 'appearance' | 'git' | 'api' | 'voice' | 'tasks' | 'browser' | 'notifications' | 'plugins' | 'cache' | 'docker-management' | 'about';
 export type AgentProvider = LLMProvider;
 export type AgentCategory = 'account' | 'permissions' | 'mcp' | 'skills' | 'agent-config';
 export type ProjectSortOrder = 'name' | 'date';

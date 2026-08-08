@@ -61,3 +61,15 @@ export function advanceViewportSettle(
 export function isSelectionCurrent(expected: string | null, current: string | null): boolean {
   return expected !== null && expected === current;
 }
+
+export function shouldApplyViewportRevision(options: {
+  expectedIdentityKey: string | null;
+  currentIdentityKey: string | null;
+  previousRevision: number;
+  nextRevision: number;
+  searchActive: boolean;
+}): boolean {
+  return isSelectionCurrent(options.expectedIdentityKey, options.currentIdentityKey)
+    && options.previousRevision !== options.nextRevision
+    && !options.searchActive;
+}

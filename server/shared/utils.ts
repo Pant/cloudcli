@@ -193,7 +193,6 @@ export const FORBIDDEN_WORKSPACE_PATHS = [
   '/lib',
   '/lib64',
   '/opt',
-  '/tmp',
   '/run',
   // Windows
   'C:\\Windows',
@@ -311,13 +310,7 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
     const absolutePath = path.resolve(normalizedRequestedPath);
     const normalizedPath = normalizeProjectPath(absolutePath);
 
-    const usesPosixTemporaryRoot = process.platform !== 'win32'
-      && isPathWithin(normalizedPath, '/tmp');
-
-    if (
-      (FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath) && !usesPosixTemporaryRoot)
-      || normalizedPath === '/'
-    ) {
+    if (FORBIDDEN_WORKSPACE_PATHS.includes(normalizedPath)) {
       return {
         valid: false,
         error: 'Cannot use system-critical directories as workspace locations',
@@ -330,10 +323,6 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
         normalizedPath === normalizedForbiddenPath
         || normalizedPath.startsWith(`${normalizedForbiddenPath}${path.sep}`)
       ) {
-        if (normalizedForbiddenPath === '/tmp' && usesPosixTemporaryRoot) {
-          continue;
-        }
-
         // Allow specific user-writable folders under /var.
         if (
           normalizedForbiddenPath === '/var'
@@ -361,9 +350,6 @@ export async function validateWorkspacePath(requestedPath: string): Promise<Work
     for (const forbiddenPath of FORBIDDEN_WORKSPACE_PATHS) {
       const normalizedForbiddenPath = normalizeProjectPath(forbiddenPath);
       if (!isPathWithin(resolvedPath, normalizedForbiddenPath)) {
-        continue;
-      }
-      if (normalizedForbiddenPath === '/tmp' && isTemporaryWorkspacePath) {
         continue;
       }
       if (

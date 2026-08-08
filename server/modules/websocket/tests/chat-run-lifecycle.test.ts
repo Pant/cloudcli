@@ -87,6 +87,26 @@ test('detached manual child restart sends Continue and buffers replay until atta
   });
 });
 
+test('OpenCode retry preserves the canonical session model over malformed retry options', async () => {
+  await withDatabase(async () => {
+    sessionsDb.createSession('ses_01e8a163affeaSq1fJklN5TdER', 'opencode', '/workspace/retry');
+    sessionsDb.setSessionModel('ses_01e8a163affeaSq1fJklN5TdER', 'cloudcli-openai/gpt-5.6-sol');
+    const originalRun = providerRuntimeService.run;
+    providerRuntimeService.run = async (provider, command, options) => {
+      assert.equal(provider, 'opencode');
+      assert.equal(command, 'Continue');
+      assert.equal(options.model, 'cloudcli-openai/gpt-5.6-sol');
+    };
+    try {
+      await chatRunLifecycleService.restart({
+        sessionId: 'ses_01e8a163affeaSq1fJklN5TdER',
+        options: { model: 'gpt-5.6-sol/' },
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally { providerRuntimeService.run = originalRun; }
+  });
+});
+
 test('manual stop is durable before a failed abort and late completion cannot clear it', async () => {
   await withDatabase(async () => {
     sessionsDb.createAppSession('stop-run', 'opencode', '/workspace/stop');

@@ -7,6 +7,7 @@ type Dependencies = Parameters<typeof createSettingsService>[0];
 
 function dependencies(overrides: Partial<Dependencies> = {}): Dependencies {
   return {
+    dockerManagement: { trigger: async () => undefined },
     apiKeys: { list: () => [], create: () => ({}), remove: () => false, toggle: () => false },
     credentials: { list: () => [], create: () => ({}), remove: () => false, toggle: () => false },
     notifications: {
@@ -29,6 +30,18 @@ test('listApiKeys redacts secret values through the service boundary', () => {
     },
   }));
   assert.equal(service.listApiKeys(1).apiKeys[0]?.api_key, '1234567890...');
+});
+
+test('delegates fixed Docker management workflows', async () => {
+  const actions: string[] = [];
+  const service = createSettingsService(dependencies({
+    dockerManagement: { trigger: async (action) => { actions.push(action); } },
+  }));
+
+  assert.deepEqual(await service.triggerDockerBuild(), { success: true, accepted: true });
+  assert.deepEqual(await service.triggerDockerRestart(), { success: true, accepted: true });
+  assert.deepEqual(await service.triggerDockerDown(), { success: true, accepted: true });
+  assert.deepEqual(actions, ['build', 'restart', 'down']);
 });
 
 test('subscribeToPush persists the subscription and enables Web Push', () => {

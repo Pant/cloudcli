@@ -1,26 +1,27 @@
 export interface SessionMessageLoadToken {
   readonly generation: number;
+  readonly identityKey: string;
 }
 
 export interface SessionMessageLoadingOwner {
-  begin: () => SessionMessageLoadToken;
+  begin: (identityKey: string) => SessionMessageLoadToken;
   invalidate: () => void;
-  isCurrent: (token: SessionMessageLoadToken) => boolean;
+  isCurrent: (token: SessionMessageLoadToken, identityKey: string) => boolean;
 }
 
 export function createSessionMessageLoadingOwner(): SessionMessageLoadingOwner {
   let generation = 0;
 
   return {
-    begin() {
+    begin(identityKey) {
       generation += 1;
-      return { generation };
+      return { generation, identityKey };
     },
     invalidate() {
       generation += 1;
     },
-    isCurrent(token) {
-      return token.generation === generation;
+    isCurrent(token, identityKey) {
+      return token.generation === generation && token.identityKey === identityKey;
     },
   };
 }

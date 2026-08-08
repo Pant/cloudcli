@@ -6,6 +6,9 @@ type NotificationPreferences = Record<string, unknown> & {
 };
 
 type SettingsDependencies = {
+  dockerManagement: {
+    trigger(action: 'build' | 'restart' | 'down'): Promise<void>;
+  };
   apiKeys: {
     list(userId: number): ApiKeyRow[];
     create(userId: number, keyName: string): unknown;
@@ -54,6 +57,18 @@ function assertFound(found: boolean, resourceName: string, code: string): void {
 /** Creates settings workflows with repositories and notification effects injected. */
 export function createSettingsService(dependencies: SettingsDependencies) {
   return {
+    async triggerDockerBuild() {
+      await dependencies.dockerManagement.trigger('build');
+      return { success: true, accepted: true };
+    },
+    async triggerDockerRestart() {
+      await dependencies.dockerManagement.trigger('restart');
+      return { success: true, accepted: true };
+    },
+    async triggerDockerDown() {
+      await dependencies.dockerManagement.trigger('down');
+      return { success: true, accepted: true };
+    },
     listApiKeys(userId: number) {
       const apiKeys = dependencies.apiKeys.list(userId).map((key) => ({
         ...key,

@@ -5,6 +5,7 @@ import {
   advanceViewportSettle,
   chooseViewportSnapshot,
   isSelectionCurrent,
+  shouldApplyViewportRevision,
   shouldPinViewport,
   VIEWPORT_SETTLE_MAX_FRAMES,
 } from './sessionViewport';
@@ -13,6 +14,12 @@ test('saves near-bottom views by bottom distance', () => {
   assert.deepEqual(chooseViewportSnapshot({ scrollTop: 955, scrollHeight: 1200, clientHeight: 220 }, null), {
     mode: 'bottom', bottomDistance: 25,
   });
+});
+
+test('viewport revisions are fenced across rapid exact-identity switches', () => {
+  assert.equal(shouldApplyViewportRevision({ expectedIdentityKey: 'selected:a:p', currentIdentityKey: 'selected:b:p', previousRevision: 1, nextRevision: 2, searchActive: false }), false);
+  assert.equal(shouldApplyViewportRevision({ expectedIdentityKey: 'selected:b:p', currentIdentityKey: 'selected:b:p', previousRevision: 1, nextRevision: 2, searchActive: false }), true);
+  assert.equal(shouldApplyViewportRevision({ expectedIdentityKey: 'selected:b:p', currentIdentityKey: 'selected:b:p', previousRevision: 2, nextRevision: 2, searchActive: false }), false);
 });
 
 test('settling stops after stable measurements or the frame bound', () => {

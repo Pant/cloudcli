@@ -47,7 +47,7 @@ export type SidebarProps = {
   onStartSession: (sessionId: string) => Promise<void>;
   attentionSessionIds: ReadonlySet<string>;
   onProjectSelect: (project: Project) => void;
-  onSessionSelect: (session: ProjectSession) => void;
+  onSessionSelect: (session: ProjectSession, project?: Project) => void;
   onNewSession: (project: Project) => void;
   onSessionDelete?: (sessionId: string) => void;
   onLoadMoreSessions?: (projectId: string) => Promise<void> | void;

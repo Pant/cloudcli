@@ -1,3 +1,5 @@
+import { promises as fs } from 'node:fs';
+
 import {
   apiKeysDb,
   credentialsDb,
@@ -10,10 +12,22 @@ import {
   notifyUserIfEnabled,
 } from '@/modules/notifications/index.js';
 
+import { createDockerManagementService } from './docker-management.service.js';
 import { createSettingsRouter } from './settings.routes.js';
 import { createSettingsService } from './settings.service.js';
 
+const dockerManagement = createDockerManagementService({
+  baseUrl: process.env.DOCKER_MANAGEMENT_API_URL ?? 'https://management.code.pantelis.ninja',
+  credentialsFile: process.env.DOCKER_MANAGEMENT_API_CREDENTIALS_FILE,
+  username: process.env.DOCKER_MANAGEMENT_API_USERNAME,
+  password: process.env.DOCKER_MANAGEMENT_API_PASSWORD,
+  timeoutMs: Number(process.env.DOCKER_MANAGEMENT_API_TIMEOUT_MS ?? 10_000),
+  fetch,
+  readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
+});
+
 const settingsService = createSettingsService({
+  dockerManagement,
   apiKeys: {
     list: (userId) => apiKeysDb.getApiKeys(userId),
     create: (userId, keyName) => apiKeysDb.createApiKey(userId, keyName),

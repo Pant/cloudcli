@@ -96,7 +96,7 @@ type UseSidebarControllerArgs = {
   t: TFunction;
   onRefresh: () => Promise<void> | void;
   onProjectSelect: (project: Project) => void;
-  onSessionSelect: (session: ProjectSession) => void;
+  onSessionSelect: (session: ProjectSession, project?: Project) => void;
   onSessionDelete?: (sessionId: string) => void;
   onLoadMoreSessions?: (projectId: string) => Promise<void> | void;
   // `projectId` is the DB-assigned identifier; callbacks use that post-migration.
@@ -528,10 +528,8 @@ export function useSidebarController({
   }, [collapsedSessionIdsByProject]);
 
   const handleSessionClick = useCallback(
-    (session: SessionWithProvider, projectId: string) => {
-      // Tag the session with its owning projectId so downstream handlers
-      // can correlate it with the selectedProject in the app state.
-      onSessionSelect({ ...session, __projectId: projectId });
+    (session: SessionWithProvider, project: Project) => {
+      onSessionSelect(session, project);
     },
     [onSessionSelect],
   );
@@ -894,11 +892,11 @@ export function useSidebarController({
     // come from the normal sidebar list, while archived-project sessions resolve
     // through the archive payload loaded by this controller.
     if (matchingProject) {
-      handleProjectSelect(matchingProject);
+      onSessionSelect(sessionPayload, matchingProject);
+    } else {
+      onSessionSelect(sessionPayload);
     }
-
-    onSessionSelect(sessionPayload);
-  }, [archivedProjects, handleProjectSelect, onSessionSelect, projects]);
+  }, [archivedProjects, onSessionSelect, projects]);
 
   const restoreArchivedProject = useCallback(async (projectId: string) => {
     try {

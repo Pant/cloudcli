@@ -47,6 +47,7 @@ type MessageComponentProps = {
   messageIndex: number;
   onSubmitQuestionForm: QuestionFormSubmitHandler;
   messageKey?: string;
+  ownsMessageAnchor?: boolean;
 };
 
 type InteractiveOption = {
@@ -79,7 +80,7 @@ function getSegmentedAssistantCopyText(
     .trim();
 }
 
-const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider, transcriptMessages, messageIndex, onSubmitQuestionForm, messageKey }: MessageComponentProps) => {
+const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider, transcriptMessages, messageIndex, onSubmitQuestionForm, messageKey, ownsMessageAnchor = true }: MessageComponentProps) => {
   const { t } = useTranslation('chat');
   const isGrouped = prevMessage && prevMessage.type === message.type &&
     ((prevMessage.type === 'assistant') ||
@@ -127,8 +128,8 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
   return (
     <div
       ref={messageRef}
-      data-message-timestamp={message.timestamp || undefined}
-      data-message-key={messageKey}
+      data-message-timestamp={ownsMessageAnchor ? message.timestamp || undefined : undefined}
+      data-message-key={ownsMessageAnchor ? messageKey : undefined}
       className={`chat-message ${message.type} ${isGrouped ? 'grouped' : ''} ${message.type === 'user' ? 'flex justify-end px-3 sm:px-0' : 'px-3 sm:px-0'}`}
     >
       {message.type === 'user' ? (

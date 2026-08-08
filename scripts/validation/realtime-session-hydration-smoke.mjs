@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { chatRunRegistry } from '../../server/modules/websocket/services/chat-run-registry.service.ts';
 import {
@@ -9,8 +10,14 @@ import {
   advanceViewportSettle,
   chooseViewportSnapshot,
   shouldPinViewport,
+  shouldApplyViewportRevision,
 } from '../../src/components/chat/hooks/sessionViewport.ts';
 import { normalizedToChatMessages } from '../../src/components/chat/hooks/useChatMessages.ts';
+import {
+  createSessionIdentity,
+  isCommittedIdentityCurrent,
+  resolveCommittedSessionIdentity,
+} from '../../src/components/chat/hooks/sessionSelection.ts';
 
 const connection = () => ({ readyState: 1, sent: [], send(payload) { this.sent.push(JSON.parse(payload)); } });
 const event = (sessionId, kind, content = '') => ({
@@ -120,6 +127,76 @@ assert.equal(shouldPinViewport({ saved: savedB, searchActive: false, firstOpen: 
 let settle = { frame: 0, stableFrames: 0, lastMeasurement: null };
 for (const measurement of [10, 10, 10, 10]) ({ state: settle } = advanceViewportSettle(settle, measurement));
 assert.equal(advanceViewportSettle(settle, 10).done, true);
+
+// Reproduce the rapid A -> transient null -> B -> A selection sequence. The
+// committed identity is the render boundary: null cannot expose A, and a stale
+// completion captured for A cannot mutate B.
+const selectedA = createSessionIdentity('selected', 'session-a', 'project');
+const selectedB = createSessionIdentity('selected', 'session-b', 'project');
+const resolveSelection = (selectedSessionId) => resolveCommittedSessionIdentity({
+  selectedSessionId,
+  projectId: 'project',
+  draft: null,
+});
+assert.equal(resolveSelection('session-a').key, selectedA.key);
+assert.equal(resolveSelection(null), null);
+assert.equal(resolveSelection('session-b').key, selectedB.key);
+assert.equal(isCommittedIdentityCurrent(selectedA, selectedB), false);
+
+// Simultaneous updates and stream growth remain owned by their session slots.
+const slots = new Map([
+  ['session-a', { rows: ['a-older'], stream: '' }],
+  ['session-b', { rows: ['b-older'], stream: '' }],
+]);
+slots.get('session-a').rows.push('a-concurrent');
+slots.get('session-a').stream += 'a-growing';
+slots.get('session-b').rows.push('b-concurrent');
+slots.get('session-b').stream += 'b-growing';
+const visibleRows = (identity) => identity
+  ? [...slots.get(identity.sessionId).rows, slots.get(identity.sessionId).stream]
+  : [];
+assert.deepEqual(visibleRows(selectedB), ['b-older', 'b-concurrent', 'b-growing']);
+assert.deepEqual(visibleRows(null), []);
+
+let selectedView = selectedB;
+const staleFetchIdentity = selectedA;
+const staleFetchRows = ['a-stale-fetch'];
+if (isCommittedIdentityCurrent(staleFetchIdentity, selectedView)) {
+  slots.get(staleFetchIdentity.sessionId).rows = staleFetchRows;
+}
+assert.deepEqual(visibleRows(selectedView), ['b-older', 'b-concurrent', 'b-growing']);
+assert.deepEqual(slots.get('session-a').rows, ['a-older', 'a-concurrent']);
+
+// Returning to A restores A's own anchor after its latest background update;
+// B's revision cannot trigger viewport work while A is selected.
+selectedView = resolveSelection('session-a');
+assert.deepEqual(visibleRows(selectedView), ['a-older', 'a-concurrent', 'a-growing']);
+assert.deepEqual(savedA, { mode: 'anchor', key: 'stable-message-id', offset: 17 });
+assert.equal(shouldApplyViewportRevision({
+  expectedIdentityKey: selectedB.key,
+  currentIdentityKey: selectedView.key,
+  previousRevision: 1,
+  nextRevision: 2,
+  searchActive: false,
+}), false);
+assert.equal(shouldApplyViewportRevision({
+  expectedIdentityKey: selectedA.key,
+  currentIdentityKey: selectedView.key,
+  previousRevision: 1,
+  nextRevision: 2,
+  searchActive: false,
+}), true);
+
+// Dynamic rows must expose actual normal-flow geometry to viewport anchoring.
+const css = await readFile(new URL('../../src/index.css', import.meta.url), 'utf8');
+const chatMessageRules = [...css.matchAll(/\.chat-message\s*\{([^}]*)\}/g)].map((match) => match[1]);
+assert.ok(chatMessageRules.length > 0);
+for (const rule of chatMessageRules) {
+  assert.doesNotMatch(rule, /content-visibility\s*:/);
+  assert.doesNotMatch(rule, /contain-intrinsic-size\s*:/);
+  assert.doesNotMatch(rule, /contain\s*:\s*[^;]*(?:layout|paint)/);
+}
+assert.doesNotMatch(css, /\.chat-message[^{}]*\{[^}]*contain-intrinsic-size\s*:/s);
 
 chatRunRegistry.clearAll();
 console.log('realtime/session hydration smoke passed');

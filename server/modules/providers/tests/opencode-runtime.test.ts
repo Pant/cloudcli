@@ -290,6 +290,41 @@ test('pending app sessions launch fresh with the exact queued prompt', async () 
   }
 });
 
+test('resumed OpenCode runs recover the canonical model when retry metadata is malformed', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-retry-model-'));
+  const argsCapturePath = path.join(tempRoot, 'opencode-retry-args.json');
+  const pathKey = findEnvKey('PATH');
+  const previousPath = process.env[pathKey];
+  const previousArgsCapture = process.env.OPENCODE_ARGS_CAPTURE;
+  try {
+    await createFakeOpenCodeExecutable(tempRoot);
+    process.env[pathKey] = `${tempRoot}${path.delimiter}${previousPath || ''}`;
+    process.env.OPENCODE_ARGS_CAPTURE = argsCapturePath;
+    await opencodeRuntime.run('Continue', {
+      cwd: tempRoot,
+      sessionId: 'affected-app-session',
+      model: 'cloudcli-openai/gpt-5.6-sol',
+    }, { userId: null, send() {} }, {
+      ...runtimeContext,
+      resolveProviderSessionId: () => 'ses_01e8a163affeaSq1fJklN5TdER',
+      resolveResumeModel: async () => 'gpt-5.6-sol/',
+    });
+
+    const capture = JSON.parse(await readFile(argsCapturePath, 'utf8')) as AnyRecord;
+    const modelIndex = capture.args.indexOf('--model');
+    assert.notEqual(modelIndex, -1);
+    assert.equal(capture.args[modelIndex + 1], 'cloudcli-openai/gpt-5.6-sol');
+    assert.equal(capture.args[capture.args.length - 1], 'Continue');
+    assert.equal(capture.args.includes('gpt-5.6-sol/'), false);
+  } finally {
+    if (previousPath === undefined) delete process.env[pathKey];
+    else process.env[pathKey] = previousPath;
+    if (previousArgsCapture === undefined) delete process.env.OPENCODE_ARGS_CAPTURE;
+    else process.env.OPENCODE_ARGS_CAPTURE = previousArgsCapture;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('runtime diagnostics distinguish missing and exited processes without exposing handles', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-diagnostics-'));
   const pathKey = findEnvKey('PATH');

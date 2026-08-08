@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Project, ProjectSession } from '../types/app';
 
-import { applyNewSessionIntent } from './useProjectsState';
+import { applyNewSessionIntent, applySessionSelectionIntent } from './useProjectsState';
 
 test('one New Session callback clears an existing session and opens a clean draft for the clicked project', () => {
   const clickedProject = {
@@ -39,4 +39,29 @@ test('one New Session callback clears an existing session and opens a clean draf
   assert.equal(resetTrigger, 5);
   assert.equal(url, '/');
   assert.equal(mobileSidebarOpen, false);
+});
+
+test('one session selection atomically establishes its project and session before one target navigation', () => {
+  const project = { projectId: 'project-2', displayName: 'Project 2', fullPath: '/tmp/project-2', sessions: [] } satisfies Project;
+  const session = { id: 'session-2', summary: 'Session 2' } satisfies ProjectSession;
+  const transitions: string[] = [];
+
+  applySessionSelectionIntent(project, session, {
+    clearAttention: (id) => transitions.push(`attention:${id}`),
+    selectProject: (selected) => transitions.push(`project:${selected.projectId}`),
+    selectSession: (selected) => transitions.push(`session:${selected.id}`),
+    showChat: () => transitions.push('tab:chat'),
+    navigateToSession: (id) => transitions.push(`navigate:/session/${id}`),
+    closeSidebar: () => transitions.push('sidebar:closed'),
+  });
+
+  assert.deepEqual(transitions, [
+    'attention:session-2',
+    'project:project-2',
+    'session:session-2',
+    'tab:chat',
+    'navigate:/session/session-2',
+    'sidebar:closed',
+  ]);
+  assert.equal(transitions.filter((transition) => transition.startsWith('navigate:')).length, 1);
 });

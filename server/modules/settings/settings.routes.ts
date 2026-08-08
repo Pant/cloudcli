@@ -22,6 +22,16 @@ export function createSettingsRouter(
       try { res.json(await operation(req)); } catch (error) { next(error); }
     };
 
+  router.post('/docker-management/build', async (req, res, next) => {
+    try { res.status(202).json(await service.triggerDockerBuild()); } catch (error) { next(error); }
+  });
+  router.post('/docker-management/restart', async (req, res, next) => {
+    try { res.status(202).json(await service.triggerDockerRestart()); } catch (error) { next(error); }
+  });
+  router.post('/docker-management/down', async (req, res, next) => {
+    try { res.status(202).json(await service.triggerDockerDown()); } catch (error) { next(error); }
+  });
+
   router.get('/api-keys', respond((req) => service.listApiKeys(userId(req))));
   router.post('/api-keys', respond((req) => service.createApiKey(userId(req), req.body?.keyName)));
   router.delete('/api-keys/:keyId', respond((req) => service.deleteApiKey(userId(req), Number(req.params.keyId))));

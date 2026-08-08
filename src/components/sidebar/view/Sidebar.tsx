@@ -292,16 +292,15 @@ function Sidebar({
                 ...searchTarget,
               };
               if (project) {
-                handleProjectSelect(project);
                 const sessions = getProjectSessions(project);
                 const existing = sessions.find(s => s.id === sessionId);
                 if (existing) {
-                  handleSessionClick({ ...existing, ...searchTarget }, project.projectId);
+                  handleSessionClick({ ...existing, ...searchTarget }, project);
                 } else {
-                  handleSessionClick(sessionObj, project.projectId);
+                  handleSessionClick(sessionObj, project);
                 }
               } else {
-                handleSessionClick(sessionObj, projectId ?? '');
+                onSessionSelect(sessionObj);
               }
             }}
             onRefresh={() => {

@@ -37,7 +37,7 @@ type SidebarProjectItemProps = {
   onCancelEditingProject: () => void;
   onSaveProjectName: (projectName: string) => void;
   onDeleteProject: (project: Project) => void;
-  onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
+  onSessionSelect: (session: SessionWithProvider, project: Project) => void;
   onDeleteSession: (
     projectName: string,
     sessionId: string,

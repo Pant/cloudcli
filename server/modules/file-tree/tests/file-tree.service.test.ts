@@ -190,6 +190,40 @@ test('listProjectFiles builds a sorted tree and skips generated directories', as
   assert.deepEqual(sourceEntry.children?.map((entry) => entry.name), ['index.ts']);
 });
 
+test('listProjectFiles recurses into /tmp but prunes forbidden system directories', async () => {
+  if (process.platform === 'win32') return;
+
+  const projectRoot = path.parse('/tmp').root;
+  const readDirectories: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    readdir: async (directoryPath) => {
+      readDirectories.push(directoryPath);
+      if (directoryPath === projectRoot) {
+        return [
+          createDirectoryEntry('proc', true),
+          createDirectoryEntry('tmp', true),
+        ];
+      }
+      if (directoryPath === '/tmp') {
+        return [createDirectoryEntry('workspace', true)];
+      }
+      throw new Error(`Forbidden directory should not be read: ${directoryPath}`);
+    },
+    lstat: async () => createStats(true, 0o755),
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+
+  const tree = await service.listProjectFiles('project-1', { depth: 1 });
+
+  assert.deepEqual(readDirectories, [projectRoot, '/tmp']);
+  assert.equal(tree.find((entry) => entry.path === '/proc')?.children, undefined);
+  assert.deepEqual(
+    tree.find((entry) => entry.path === '/tmp')?.children?.map((entry) => entry.name),
+    ['workspace'],
+  );
+});
+
 test('listProjectFiles excludes gitignored entries only when requested', async () => {
   const projectRoot = path.resolve('file-tree-test-project');
   const cacheDirectory = path.join(projectRoot, 'cache');

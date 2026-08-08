@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import React from 'react';
@@ -175,4 +176,17 @@ test('keeps attention and recently active session markers static and distinguish
   assert.match(recentRow, /bg-green-500/);
   assert.match(recentRow, /Recently active session \(last 10 minutes\)/);
   assert.doesNotMatch(recentRow, /animate-(?:spin|pulse)/);
+});
+
+test('sidebar controls emit only atomic New Session and session-selection intents', async () => {
+  const [projectSessionsSource, sessionItemSource] = await Promise.all([
+    readFile(new URL('./SidebarProjectSessions.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('./SidebarSessionItem.tsx', import.meta.url), 'utf8'),
+  ]);
+
+  assert.match(projectSessionsSource, /onClick=\{\(\) => onNewSession\(project\)\}/);
+  assert.doesNotMatch(projectSessionsSource, /onProjectSelect\(project\);\s*onNewSession/);
+  assert.match(sessionItemSource, /onSessionSelect\(session, project\);/);
+  assert.doesNotMatch(sessionItemSource, /onProjectSelect\(project\);\s*onSessionSelect/);
+  assert.match(sessionItemSource, /event\.metaKey \|\| event\.ctrlKey \|\| event\.shiftKey \|\| event\.altKey/);
 });

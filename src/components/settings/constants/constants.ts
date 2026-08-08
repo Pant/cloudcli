@@ -3,6 +3,7 @@ import {
   Bell,
   Bot,
   Database,
+  Container,
   GitBranch,
   Info,
   KeyRound,
@@ -38,6 +39,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   { id: 'notifications', label: 'Notifications', keywords: 'notifications alerts push', icon: Bell },
   { id: 'plugins', label: 'Plugins', keywords: 'plugins extensions integrations', icon: Plug },
   { id: 'cache', label: 'Cache', keywords: 'cache histories sessions messages storage', icon: Database },
+  { id: 'docker-management', label: 'Docker Management', keywords: 'docker management build restart containers', icon: Container },
   { id: 'about', label: 'About', keywords: 'about version info', icon: Info },
 ];
 
