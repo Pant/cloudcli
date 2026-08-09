@@ -125,7 +125,7 @@
     "loading": "캐시 통계를 불러오는 중...",
     "loadError": "캐시 통계를 불러올 수 없습니다.",
     "syncSectionTitle": "기록 동기화",
-    "syncDescription": "이 계정에서 사용할 수 있는 모든 세션 기록을 가져옵니다. 기록은 나중에 자동으로 다시 캐시될 수 있습니다.",
+    "syncDescription": "세션을 열면 해당 기록이 캐시됩니다. '모든 기록 동기화'를 사용하면 이 계정에서 사용할 수 있는 모든 세션 기록이 캐시됩니다.",
     "syncButton": "모든 기록 동기화",
     "syncPending": "기록 동기화 중...",
     "syncSuccess": "{{eligible}}개 기록 중 {{succeeded}}개를 동기화했습니다.",
@@ -135,10 +135,10 @@
     "clearDescription": "이 계정의 로컬에 캐시된 기록만 삭제합니다. 다른 계정과 서버 기록은 보존됩니다.",
     "clearButton": "이 계정의 캐시 지우기",
     "clearPending": "캐시 지우는 중...",
-    "clearSuccess": "이 계정의 로컬 캐시를 지웠습니다. 기록은 나중에 다시 캐시될 수 있습니다.",
+    "clearSuccess": "이 계정의 로컬 캐시를 지웠습니다. 세션을 열거나 모든 기록을 동기화하면 해당 기록이 다시 캐시됩니다.",
     "clearError": "이 계정의 캐시를 지울 수 없습니다.",
     "confirmationTitle": "이 계정의 로컬 기록을 지울까요?",
-    "confirmationDescription": "이 계정의 로컬에 캐시된 세션 기록만 삭제됩니다. 다른 계정과 서버 기록은 보존되며 기록은 나중에 다시 캐시될 수 있습니다.",
+    "confirmationDescription": "이 계정의 로컬에 캐시된 세션 기록만 삭제됩니다. 다른 계정과 서버 기록은 보존됩니다. 세션을 열거나 모든 기록을 동기화하면 해당 기록이 다시 캐시됩니다.",
     "cancel": "취소",
     "confirm": "캐시 지우기"
   },
@@ -336,25 +336,6 @@
     "loading": "로딩 중...",
     "version": {
       "updateAvailable": "업데이트 가능: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "TaskMaster 설치 확인 중...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI가 설치되지 않았습니다",
-      "description": "작업 관리 기능을 사용하려면 TaskMaster CLI가 필요합니다. 시작하려면 설치하세요:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "GitHub에서 보기",
-      "afterInstallation": "설치 후:",
-      "steps": {
-        "restart": "이 애플리케이션을 재시작하세요",
-        "autoAvailable": "TaskMaster 기능이 자동으로 활성화됩니다",
-        "initCommand": "프로젝트 디렉토리에서 task-master init을 사용하세요"
-      }
-    },
-    "settings": {
-      "enableLabel": "TaskMaster 통합 활성화",
-      "enableDescription": "인터페이스 전체에 TaskMaster 작업, 배너 및 사이드바 표시"
     }
   },
   "agents": {
@@ -593,7 +574,7 @@
     "githubIssuesBoardPlugin": {
       "name": "GitHub 이슈 보드",
       "badge": "비공식",
-      "description": "양방향 TaskMaster 동기화와 /github-task CLI 스킬 자동 설치를 지원하는 GitHub 이슈용 칸반 보드입니다.",
+      "description": "/github-task CLI 스킬 자동 설치를 지원하는 GitHub 이슈용 칸반 보드입니다.",
       "install": "설치"
     },
     "morePlugins": "더 보기",

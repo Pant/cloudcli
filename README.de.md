@@ -61,7 +61,6 @@
 - **Git-Explorer** – Änderungen anzeigen, stagen und committen. Branches wechseln ebenfalls möglich
 - **Sitzungsverwaltung** – Gespräche fortsetzen, mehrere Sitzungen verwalten und Verlauf nachverfolgen
 - **Plugin-System** – CloudCLI mit eigenen Plugins erweitern – neue Tabs, Backend-Dienste und Integrationen hinzufügen. [Eigenes Plugin erstellen →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **TaskMaster AI Integration** *(Optional)* – Erweitertes Projektmanagement mit KI-gestützter Aufgabenplanung, PRD-Parsing und Workflow-Automatisierung
 - **Modell-Kompatibilität** – Funktioniert mit den Claude- und GPT-Modellfamilien (vollständige Liste unterstützter Modelle zur Laufzeit über `GET /api/providers/:provider/models`)
 
 
@@ -171,7 +170,7 @@ CloudCLI verfügt über ein Plugin-System, mit dem benutzerdefinierte Tabs mit e
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | Aktive Claude-Code-Sitzungen anzeigen, verwalten und beenden |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | API-Kosten anhand von Modellpreisen und Token-Nutzung berechnen, mit Unterstützung für Preisvorlagen |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | Task-Queue-Dashboard zum Anzeigen, Filtern und Starten von Agent-Aufgaben |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | Kanban-Board für GitHub Issues mit bidirektionaler TaskMaster-Synchronisierung und automatischer Installation des /github-task CLI-Skills |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | Kanban-Board für GitHub Issues mit automatischer Installation des /github-task CLI-Skills |
 
 ### Eigenes Plugin erstellen
 
@@ -245,7 +244,6 @@ Dieses Projekt ist Open Source und kann unter der GPL v3-Lizenz kostenlos genutz
 - **[Vite](https://vitejs.dev/)** - Schnelles Build-Tool und Dev-Server
 - **[Tailwind CSS](https://tailwindcss.com/)** - Utility-first CSS-Framework
 - **[CodeMirror](https://codemirror.net/)** - Erweiterter Code-Editor
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(Optional)* - KI-gestütztes Projektmanagement und Aufgabenplanung
 
 
 ### Sponsoren

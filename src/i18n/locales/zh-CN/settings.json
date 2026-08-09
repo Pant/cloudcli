@@ -125,7 +125,7 @@
     "loading": "正在加载缓存统计...",
     "loadError": "无法加载缓存统计。",
     "syncSectionTitle": "同步历史",
-    "syncDescription": "获取此账户所有可用的会话历史。历史稍后可能会再次自动缓存。",
+    "syncDescription": "打开会话时会缓存其历史。使用“同步所有历史”可缓存此账户所有可用的会话历史。",
     "syncButton": "同步所有历史",
     "syncPending": "正在同步历史...",
     "syncSuccess": "已同步 {{succeeded}} / {{eligible}} 条历史。",
@@ -135,10 +135,10 @@
     "clearDescription": "只删除此账户本地缓存的历史。其他账户和服务器历史会保留。",
     "clearButton": "清除此账户的缓存",
     "clearPending": "正在清除缓存...",
-    "clearSuccess": "此账户的本地缓存已清除。历史稍后可能会再次缓存。",
+    "clearSuccess": "此账户的本地缓存已清除。打开会话或同步所有历史时，其历史会再次缓存。",
     "clearError": "无法清除此账户的缓存。",
     "confirmationTitle": "清除此账户的本地历史？",
-    "confirmationDescription": "这只会删除此账户本地缓存的会话历史。其他账户和服务器历史会保留，历史稍后可能会再次缓存。",
+    "confirmationDescription": "这只会删除此账户本地缓存的会话历史。其他账户和服务器历史会保留。打开会话或同步所有历史时，其历史会再次缓存。",
     "cancel": "取消",
     "confirm": "清除缓存"
   },
@@ -336,25 +336,6 @@
     "loading": "加载中...",
     "version": {
       "updateAvailable": "有可用更新：v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "正在检查 TaskMaster 安装...",
-    "notInstalled": {
-      "title": "未安装 TaskMaster AI CLI",
-      "description": "需要 TaskMaster CLI 才能使用任务管理功能。安装它以开始使用：",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "在 GitHub 上查看",
-      "afterInstallation": "安装后：",
-      "steps": {
-        "restart": "重启此应用程序",
-        "autoAvailable": "TaskMaster 功能将自动可用",
-        "initCommand": "在项目目录中使用 task-master init"
-      }
-    },
-    "settings": {
-      "enableLabel": "启用 TaskMaster 集成",
-      "enableDescription": "在整个界面中显示 TaskMaster 任务、横幅和侧边栏指示器"
     }
   },
   "agents": {
@@ -593,7 +574,7 @@
     "githubIssuesBoardPlugin": {
       "name": "GitHub Issues 看板",
       "badge": "非官方",
-      "description": "GitHub Issues 看板，支持双向 TaskMaster 同步和 /github-task CLI 技能自动安装",
+      "description": "GitHub Issues 看板，支持 /github-task CLI 技能自动安装",
       "install": "安装"
     },
     "morePlugins": "更多",

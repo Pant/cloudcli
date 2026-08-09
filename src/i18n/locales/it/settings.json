@@ -106,7 +106,7 @@
     "loading": "Caricamento delle statistiche della cache...",
     "loadError": "Impossibile caricare le statistiche della cache.",
     "syncSectionTitle": "Sincronizza gli storici",
-    "syncDescription": "Recupera tutti gli storici disponibili per questo account. Gli storici possono essere memorizzati di nuovo automaticamente in seguito.",
+    "syncDescription": "L'apertura di una sessione ne memorizza lo storico. Usa «Sincronizza tutti gli storici» per memorizzare tutti gli storici disponibili per questo account.",
     "syncButton": "Sincronizza tutti gli storici",
     "syncPending": "Sincronizzazione degli storici...",
     "syncSuccess": "Sincronizzati {{succeeded}} storici su {{eligible}}.",
@@ -116,10 +116,10 @@
     "clearDescription": "Rimuovi solo gli storici memorizzati localmente per questo account. Gli altri account e gli storici sul server sono preservati.",
     "clearButton": "Cancella la cache di questo account",
     "clearPending": "Cancellazione della cache...",
-    "clearSuccess": "La cache locale di questo account è stata cancellata. Gli storici possono essere memorizzati di nuovo in seguito.",
+    "clearSuccess": "La cache locale di questo account è stata cancellata. Uno storico viene memorizzato di nuovo quando apri la relativa sessione o sincronizzi tutti gli storici.",
     "clearError": "Impossibile cancellare la cache di questo account.",
     "confirmationTitle": "Cancellare gli storici locali di questo account?",
-    "confirmationDescription": "Questa azione rimuove solo gli storici delle sessioni memorizzati localmente per questo account. Gli altri account e gli storici sul server sono preservati e gli storici possono essere memorizzati di nuovo in seguito.",
+    "confirmationDescription": "Questa azione rimuove solo gli storici delle sessioni memorizzati localmente per questo account. Gli altri account e gli storici sul server sono preservati. Uno storico viene memorizzato di nuovo quando apri la relativa sessione o sincronizzi tutti gli storici.",
     "cancel": "Annulla",
     "confirm": "Cancella cache"
   },
@@ -310,25 +310,6 @@
     "loading": "Caricamento...",
     "version": {
       "updateAvailable": "Aggiornamento disponibile: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "Verifica installazione TaskMaster...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI non installato",
-      "description": "TaskMaster CLI è necessario per usare le funzionalità di gestione attività. Installalo per iniziare:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "Vedi su GitHub",
-      "afterInstallation": "Dopo l'installazione:",
-      "steps": {
-        "restart": "Riavvia questa applicazione",
-        "autoAvailable": "Le funzionalità TaskMaster saranno automaticamente disponibili",
-        "initCommand": "Usa task-master init nella directory del tuo progetto"
-      }
-    },
-    "settings": {
-      "enableLabel": "Abilita integrazione TaskMaster",
-      "enableDescription": "Mostra attività TaskMaster, banner e indicatori nella barra laterale nell'interfaccia"
     }
   },
   "agents": {

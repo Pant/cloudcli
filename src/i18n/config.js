@@ -6,7 +6,7 @@ import { getLanguageValues, isLanguageSupported } from './languages.js';
 
 export const FALLBACK_LANGUAGE = 'en';
 export const STARTUP_NAMESPACES = ['common', 'auth', 'sidebar'];
-export const FEATURE_NAMESPACES = ['settings', 'chat', 'codeEditor', 'tasks'];
+export const FEATURE_NAMESPACES = ['settings', 'chat', 'codeEditor'];
 
 const localeModules = import.meta.glob('./locales/*/*.json');
 const pendingResources = new Map();

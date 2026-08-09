@@ -107,7 +107,7 @@
     "loading": "正在載入快取統計...",
     "loadError": "無法載入快取統計。",
     "syncSectionTitle": "同步歷史記錄",
-    "syncDescription": "取得此帳戶所有可用的工作階段歷史記錄。歷史記錄之後可能會再次自動快取。",
+    "syncDescription": "開啟工作階段時會快取其歷史記錄。使用「同步所有歷史記錄」可快取此帳戶所有可用的工作階段歷史記錄。",
     "syncButton": "同步所有歷史記錄",
     "syncPending": "正在同步歷史記錄...",
     "syncSuccess": "已同步 {{succeeded}} / {{eligible}} 筆歷史記錄。",
@@ -117,10 +117,10 @@
     "clearDescription": "只刪除此帳戶本機快取的歷史記錄。其他帳戶和伺服器歷史記錄會保留。",
     "clearButton": "清除此帳戶的快取",
     "clearPending": "正在清除快取...",
-    "clearSuccess": "此帳戶的本機快取已清除。歷史記錄之後可能會再次快取。",
+    "clearSuccess": "此帳戶的本機快取已清除。開啟工作階段或同步所有歷史記錄時，其歷史記錄會再次快取。",
     "clearError": "無法清除此帳戶的快取。",
     "confirmationTitle": "清除此帳戶的本機歷史記錄？",
-    "confirmationDescription": "這只會刪除此帳戶本機快取的工作階段歷史記錄。其他帳戶和伺服器歷史記錄會保留，歷史記錄之後可能會再次快取。",
+    "confirmationDescription": "這只會刪除此帳戶本機快取的工作階段歷史記錄。其他帳戶和伺服器歷史記錄會保留。開啟工作階段或同步所有歷史記錄時，其歷史記錄會再次快取。",
     "cancel": "取消",
     "confirm": "清除快取"
   },
@@ -311,25 +311,6 @@
     "loading": "載入中...",
     "version": {
       "updateAvailable": "有可用更新：v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "正在檢查 TaskMaster 安裝...",
-    "notInstalled": {
-      "title": "未安裝 TaskMaster AI CLI",
-      "description": "需要 TaskMaster CLI 才能使用任務管理功能。安裝它以開始使用：",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "在 GitHub 上查看",
-      "afterInstallation": "安裝後：",
-      "steps": {
-        "restart": "重新啟動此應用程式",
-        "autoAvailable": "TaskMaster 功能將自動啟用",
-        "initCommand": "在專案目錄中使用 task-master init"
-      }
-    },
-    "settings": {
-      "enableLabel": "啟用 TaskMaster 整合",
-      "enableDescription": "在整個介面中顯示 TaskMaster 任務、橫幅和側邊欄指示器"
     }
   },
   "agents": {

@@ -106,7 +106,7 @@
     "loading": "Cache-Statistiken werden geladen...",
     "loadError": "Cache-Statistiken konnten nicht geladen werden.",
     "syncSectionTitle": "Verläufe synchronisieren",
-    "syncDescription": "Rufe alle verfügbaren Sitzungsverläufe für dieses Konto ab. Verläufe können später automatisch erneut zwischengespeichert werden.",
+    "syncDescription": "Beim Öffnen einer Sitzung wird ihr Verlauf zwischengespeichert. Mit „Alle Verläufe synchronisieren“ werden alle verfügbaren Sitzungsverläufe dieses Kontos zwischengespeichert.",
     "syncButton": "Alle Verläufe synchronisieren",
     "syncPending": "Verläufe werden synchronisiert...",
     "syncSuccess": "{{succeeded}} von {{eligible}} Verläufen synchronisiert.",
@@ -116,10 +116,10 @@
     "clearDescription": "Lösche nur die lokal zwischengespeicherten Verläufe dieses Kontos. Andere Konten und Serververläufe bleiben erhalten.",
     "clearButton": "Cache dieses Kontos löschen",
     "clearPending": "Cache wird gelöscht...",
-    "clearSuccess": "Der lokale Cache dieses Kontos wurde gelöscht. Verläufe können später erneut zwischengespeichert werden.",
+    "clearSuccess": "Der lokale Cache dieses Kontos wurde gelöscht. Ein Verlauf wird erneut zwischengespeichert, wenn du seine Sitzung öffnest oder alle Verläufe synchronisierst.",
     "clearError": "Der Cache dieses Kontos konnte nicht gelöscht werden.",
     "confirmationTitle": "Lokale Verläufe dieses Kontos löschen?",
-    "confirmationDescription": "Dies entfernt nur lokal zwischengespeicherte Sitzungsverläufe dieses Kontos. Andere Konten und Serververläufe bleiben erhalten; Verläufe können später erneut zwischengespeichert werden.",
+    "confirmationDescription": "Dies entfernt nur lokal zwischengespeicherte Sitzungsverläufe dieses Kontos. Andere Konten und Serververläufe bleiben erhalten. Ein Verlauf wird erneut zwischengespeichert, wenn du seine Sitzung öffnest oder alle Verläufe synchronisierst.",
     "cancel": "Abbrechen",
     "confirm": "Cache löschen"
   },
@@ -310,25 +310,6 @@
     "loading": "Lädt...",
     "version": {
       "updateAvailable": "Update verfügbar: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "TaskMaster-Installation wird überprüft...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI nicht installiert",
-      "description": "TaskMaster CLI ist erforderlich, um Aufgabenverwaltungsfunktionen zu nutzen. Installiere es, um loszulegen:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "Auf GitHub anzeigen",
-      "afterInstallation": "Nach der Installation:",
-      "steps": {
-        "restart": "Diese Anwendung neu starten",
-        "autoAvailable": "TaskMaster-Funktionen werden automatisch verfügbar",
-        "initCommand": "task-master init in deinem Projektverzeichnis verwenden"
-      }
-    },
-    "settings": {
-      "enableLabel": "TaskMaster-Integration aktivieren",
-      "enableDescription": "TaskMaster-Aufgaben, Banner und Seitenleisten-Indikatoren in der gesamten Oberfläche anzeigen"
     }
   },
   "agents": {

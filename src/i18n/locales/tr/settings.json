@@ -107,7 +107,7 @@
     "loading": "Önbellek istatistikleri yükleniyor...",
     "loadError": "Önbellek istatistikleri yüklenemedi.",
     "syncSectionTitle": "Geçmişleri eşitle",
-    "syncDescription": "Bu hesap için kullanılabilir tüm oturum geçmişlerini al. Geçmişler daha sonra otomatik olarak yeniden önbelleğe alınabilir.",
+    "syncDescription": "Bir oturum açıldığında geçmişi önbelleğe alınır. Bu hesaptaki tüm kullanılabilir oturum geçmişlerini önbelleğe almak için 'Tüm geçmişleri eşitle' seçeneğini kullanın.",
     "syncButton": "Tüm geçmişleri eşitle",
     "syncPending": "Geçmişler eşitleniyor...",
     "syncSuccess": "{{eligible}} geçmişten {{succeeded}} tanesi eşitlendi.",
@@ -117,10 +117,10 @@
     "clearDescription": "Yalnızca bu hesabın yerel önbelleğe alınmış geçmişlerini kaldır. Diğer hesaplar ve sunucu geçmişleri korunur.",
     "clearButton": "Bu hesabın önbelleğini temizle",
     "clearPending": "Önbellek temizleniyor...",
-    "clearSuccess": "Bu hesabın yerel önbelleği temizlendi. Geçmişler daha sonra yeniden önbelleğe alınabilir.",
+    "clearSuccess": "Bu hesabın yerel önbelleği temizlendi. Bir geçmiş, oturumunu açtığınızda veya tüm geçmişleri eşitlediğinizde yeniden önbelleğe alınır.",
     "clearError": "Bu hesabın önbelleği temizlenemedi.",
     "confirmationTitle": "Bu hesabın yerel geçmişleri temizlensin mi?",
-    "confirmationDescription": "Bu işlem yalnızca bu hesabın yerel önbelleğe alınmış oturum geçmişlerini kaldırır. Diğer hesaplar ve sunucu geçmişleri korunur; geçmişler daha sonra yeniden önbelleğe alınabilir.",
+    "confirmationDescription": "Bu işlem yalnızca bu hesabın yerel önbelleğe alınmış oturum geçmişlerini kaldırır. Diğer hesaplar ve sunucu geçmişleri korunur. Bir geçmiş, oturumunu açtığınızda veya tüm geçmişleri eşitlediğinizde yeniden önbelleğe alınır.",
     "cancel": "İptal",
     "confirm": "Önbelleği temizle"
   },
@@ -311,25 +311,6 @@
     "loading": "Yükleniyor...",
     "version": {
       "updateAvailable": "Güncelleme mevcut: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "TaskMaster kurulumu kontrol ediliyor...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI Kurulu Değil",
-      "description": "Görev yönetim özelliklerini kullanmak için TaskMaster CLI gereklidir. Başlamak için kur:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "GitHub'da Görüntüle",
-      "afterInstallation": "Kurulumdan sonra:",
-      "steps": {
-        "restart": "Bu uygulamayı yeniden başlat",
-        "autoAvailable": "TaskMaster özellikleri otomatik olarak kullanılabilir hale gelecek",
-        "initCommand": "Proje dizininde task-master init komutunu kullan"
-      }
-    },
-    "settings": {
-      "enableLabel": "TaskMaster Entegrasyonunu Etkinleştir",
-      "enableDescription": "TaskMaster görevlerini, banner'larını ve kenar çubuğu göstergelerini arayüz genelinde göster"
     }
   },
   "agents": {

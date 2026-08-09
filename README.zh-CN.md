@@ -59,7 +59,6 @@
 - **Git 浏览器** - 查看、暂存并提交更改，还可切换分支
 - **会话管理** - 恢复对话、管理多个会话并跟踪历史记录
 - **插件系统** - 通过自定义选项卡、后端服务与集成扩展 CloudCLI。 [开始构建 →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **TaskMaster AI 集成** *(可选)* - 结合 AI 任务规划、PRD 分析与工作流自动化，实现高级项目管理
 - **模型兼容性** - 支持 Claude、GPT 模型家族（完整支持列表可通过 `GET /api/providers/:provider/models` 接口获取）
 
 ## 快速开始
@@ -165,7 +164,7 @@ CloudCLI 配备插件系统，允许你添加带自定义前端 UI 和可选 Nod
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | 查看、管理并终止活动的 Claude Code 会话 |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | 根据模型价格和 token 用量计算 API 成本，并支持模型价格预设 |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | 用于查看、筛选和启动代理任务的任务队列仪表板 |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | 用于 GitHub Issues 的看板，支持 TaskMaster 双向同步和 /github-task CLI 技能自动安装 |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | 用于 GitHub Issues 的看板，支持 /github-task CLI 技能自动安装 |
 
 ### 自行构建
 
@@ -238,7 +237,6 @@ GNU 通用公共许可证 v3.0 - 详见 [LICENSE](LICENSE) 文件。
 - **[Vite](https://vitejs.dev/)** - 快速构建工具与开发服务器
 - **[Tailwind CSS](https://tailwindcss.com/)** - 实用先行 CSS 框架
 - **[CodeMirror](https://codemirror.net/)** - 高级代码编辑器
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(可选)* - AI 驱动的项目管理与任务规划
 
 ### 赞助商
 - [Siteboon - AI powered website builder](https://siteboon.ai)

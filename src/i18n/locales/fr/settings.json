@@ -106,7 +106,7 @@
     "loading": "Chargement des statistiques du cache...",
     "loadError": "Impossible de charger les statistiques du cache.",
     "syncSectionTitle": "Synchroniser les historiques",
-    "syncDescription": "Récupérez tous les historiques disponibles pour ce compte. Les historiques peuvent être remis en cache automatiquement plus tard.",
+    "syncDescription": "L'ouverture d'une session met son historique en cache. Utilisez « Synchroniser tous les historiques » pour mettre en cache tous les historiques disponibles de ce compte.",
     "syncButton": "Synchroniser tous les historiques",
     "syncPending": "Synchronisation des historiques...",
     "syncSuccess": "{{succeeded}} historiques sur {{eligible}} synchronisés.",
@@ -116,10 +116,10 @@
     "clearDescription": "Supprimez uniquement les historiques mis en cache localement pour ce compte. Les autres comptes et les historiques du serveur sont préservés.",
     "clearButton": "Effacer le cache de ce compte",
     "clearPending": "Effacement du cache...",
-    "clearSuccess": "Le cache local de ce compte a été effacé. Les historiques pourront être remis en cache plus tard.",
+    "clearSuccess": "Le cache local de ce compte a été effacé. Un historique est remis en cache lorsque vous ouvrez sa session ou synchronisez tous les historiques.",
     "clearError": "Impossible d'effacer le cache de ce compte.",
     "confirmationTitle": "Effacer les historiques locaux de ce compte ?",
-    "confirmationDescription": "Cette action supprime uniquement les historiques de session mis en cache localement pour ce compte. Les autres comptes et les historiques du serveur sont préservés, et les historiques pourront être remis en cache plus tard.",
+    "confirmationDescription": "Cette action supprime uniquement les historiques de session mis en cache localement pour ce compte. Les autres comptes et les historiques du serveur sont préservés. Un historique est remis en cache lorsque vous ouvrez sa session ou synchronisez tous les historiques.",
     "cancel": "Annuler",
     "confirm": "Effacer le cache"
   },
@@ -310,25 +310,6 @@
     "loading": "Chargement...",
     "version": {
       "updateAvailable": "Mise à jour disponible : v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "Vérification de l'installation TaskMaster...",
-    "notInstalled": {
-      "title": "CLI TaskMaster AI non installé",
-      "description": "Le CLI TaskMaster est requis pour utiliser les fonctionnalités de gestion des tâches. Installez-le pour commencer :",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "Voir sur GitHub",
-      "afterInstallation": "Après l'installation :",
-      "steps": {
-        "restart": "Redémarrez cette application",
-        "autoAvailable": "Les fonctionnalités TaskMaster deviendront automatiquement disponibles",
-        "initCommand": "Utilisez task-master init dans votre répertoire de projet"
-      }
-    },
-    "settings": {
-      "enableLabel": "Activer l'intégration TaskMaster",
-      "enableDescription": "Afficher les tâches TaskMaster, les bannières et les indicateurs dans la barre latérale"
     }
   },
   "agents": {
@@ -567,7 +548,7 @@
     "githubIssuesBoardPlugin": {
       "name": "Tableau des issues GitHub",
       "badge": "non officiel",
-      "description": "Tableau Kanban pour les issues GitHub avec synchronisation bidirectionnelle TaskMaster et installation automatique de la compétence CLI /github-task",
+      "description": "Tableau Kanban pour les issues GitHub avec installation automatique de la compétence CLI /github-task",
       "install": "Installer"
     },
     "morePlugins": "Plus",

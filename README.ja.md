@@ -165,7 +165,7 @@ CloudCLI にはプラグインシステムがあり、独自のフロントエ�
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | アクティブな Claude Code セッションを表示、管理、終了 |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | モデル価格とトークン使用量から API コストを計算し、モデル価格プリセットにも対応 |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | エージェントタスクを表示、フィルタリング、起動するためのタスクキューダッシュボード |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | GitHub Issues 用の Kanban ボード。TaskMaster との双方向同期と /github-task CLI スキルの自動インストールに対応 |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | GitHub Issues 用の Kanban ボード。/github-task CLI スキルの自動インストールに対応 |
 
 ### 自作する
 
@@ -238,7 +238,6 @@ GNU General Public License v3.0 - 詳細は [LICENSE](LICENSE) ファイルを�
 - **[Vite](https://vitejs.dev/)** - 高速ビルドツールと開発サーバー
 - **[Tailwind CSS](https://tailwindcss.com/)** - ユーティリティファーストの CSS フレームワーク
 - **[CodeMirror](https://codemirror.net/)** - 高度なコードエディタ
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(オプション)* - AI を活用したプロジェクト管理とタスク計画
 
 ## スポンサー
 - [Siteboon - AI を活用したウェブサイトビルダー](https://siteboon.ai)

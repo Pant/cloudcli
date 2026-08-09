@@ -5,7 +5,7 @@ import test from 'node:test';
 import { getLanguageValues } from './languages.js';
 
 const localeRoot = new URL('./locales/', import.meta.url);
-const expectedNamespaces = ['auth', 'chat', 'codeEditor', 'common', 'settings', 'sidebar', 'tasks'];
+const expectedNamespaces = ['auth', 'chat', 'codeEditor', 'common', 'settings', 'sidebar'];
 
 test('every selectable language, including French, has every lazy namespace', async () => {
   const languages = getLanguageValues();

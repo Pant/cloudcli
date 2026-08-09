@@ -59,7 +59,6 @@
 - **Git 탐색기** - 변경 사항 보기, 스테이징 및 커밋. 브랜치 전환 기능 포함
 - **세션 관리** - 대화를 재개하고, 여러 세션을 관리하며 기록을 추적
 - **플러그인 시스템** - 커스텀 탭, 백엔드 서비스, 통합을 추가하여 CloudCLI 확장. [직접 빌드 →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **TaskMaster AI 통합** *(선택사항)* - AI 중심의 작업 계획, PRD 파싱, 워크플로 자동화를 통한 고급 프로젝트 관리
 - **모델 호환성** - Claude, GPT 모델 계열에서 작동 (`GET /api/providers/:provider/models` API에서 전체 지원 모델 확인)
 
 ## 빠른 시작
@@ -165,7 +164,7 @@ CloudCLI는 커스텀 탭과 선택적 Node.js 백엔드가 포함된 플러그�
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | 활성 Claude Code 세션을 보고, 관리하고, 종료 |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | 모델 가격과 토큰 사용량으로 API 비용을 계산하고 모델 가격 프리셋을 지원 |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | 에이전트 작업을 보고, 필터링하고, 실행하는 작업 큐 대시보드 |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | GitHub Issues용 Kanban 보드. TaskMaster 양방향 동기화와 /github-task CLI 스킬 자동 설치 지원 |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | GitHub Issues용 Kanban 보드. /github-task CLI 스킬 자동 설치 지원 |
 
 ### 직접 만들기
 
@@ -238,7 +237,6 @@ GNU General Public License v3.0 - 자세한 내용은 [LICENSE](LICENSE) 파일 
 - **[Vite](https://vitejs.dev/)** - 빠른 빌드 도구 및 개발 서버
 - **[Tailwind CSS](https://tailwindcss.com/)** - 유틸리티 우선 CSS 프레임워크
 - **[CodeMirror](https://codemirror.net/)** - 고급 코드 에디터
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(선택사항)* - AI 기반 프로젝트 관리 및 작업 계획
 
 ### 스폰서
 - [Siteboon - AI powered website builder](https://siteboon.ai)

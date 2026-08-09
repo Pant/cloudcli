@@ -61,7 +61,6 @@
 - **Git Gezgini** — Değişikliklerini görüntüle, staging'e ekle ve commit'le. Dallar arası geçiş de yapabilirsin
 - **Oturum Yönetimi** — Konuşmalara devam et, birden fazla oturumu yönet ve geçmişi takip et
 - **Eklenti Sistemi** — CloudCLI'ı özel eklentilerle genişlet: yeni sekmeler, arka uç servisleri ve entegrasyonlar ekle. [Kendi eklentini yaz →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **TaskMaster AI Entegrasyonu** *(İsteğe Bağlı)* — AI destekli görev planlama, PRD ayrıştırma ve iş akışı otomasyonu ile gelişmiş proje yönetimi
 - **Model Uyumluluğu** — Claude ve GPT model aileleriyle çalışır (desteklenen tüm modeller için `GET /api/providers/:provider/models` API'sine bak)
 
 
@@ -170,7 +169,7 @@ CloudCLI, kendi frontend UI'sı ve isteğe bağlı Node.js arka ucu olan özel s
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | Aktif Claude Code oturumlarını görüntülemeni, yönetmeni ve sonlandırmanı sağlar |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | Model fiyatları ve token kullanımından API maliyetlerini hesaplar; model fiyatı hazır ayarlarını destekler |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | Ajan görevlerini görüntülemek, filtrelemek ve başlatmak için görev kuyruğu paneli |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | GitHub Issues için Kanban panosu; çift yönlü TaskMaster senkronizasyonu ve /github-task CLI becerisi otomatik kurulumu içerir |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | GitHub Issues için Kanban panosu; /github-task CLI becerisi otomatik kurulumu içerir |
 
 ### Kendi Eklentini Yaz
 
@@ -246,7 +245,6 @@ CloudCLI UI — (https://cloudcli.ai).
 - **[Vite](https://vitejs.dev/)** — Hızlı derleme aracı ve geliştirme sunucusu
 - **[Tailwind CSS](https://tailwindcss.com/)** — Utility-first CSS framework
 - **[CodeMirror](https://codemirror.net/)** — Gelişmiş kod editörü
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(İsteğe Bağlı)* — AI destekli proje yönetimi ve görev planlama
 
 
 ### Sponsorlar

@@ -59,7 +59,6 @@
 - **Git 瀏覽器** — 檢視、暫存並提交變更，還可切換分支
 - **工作階段管理** — 恢復對話、管理多個工作階段並追蹤歷史紀錄
 - **外掛系統** — 透過自訂分頁、後端服務與整合來擴充 CloudCLI。[開始建構 →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **TaskMaster AI 整合** *(選用)* — 結合 AI 任務規劃、PRD 分析與工作流程自動化，實現進階專案管理
 - **模型相容性** — 支援 Claude、GPT 模型家族（完整支援列表可透過 `GET /api/providers/:provider/models` 介面取得）
 
 ## 快速開始
@@ -165,7 +164,7 @@ CloudCLI 配備外掛系統，允許你新增帶有自訂前端 UI 和選用 Nod
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | 檢視、管理並終止作用中的 Claude Code 工作階段 |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | 根據模型價格與 token 用量計算 API 成本，並支援模型價格預設 |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | 用於檢視、篩選和啟動代理任務的任務佇列儀表板 |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | 用於 GitHub Issues 的看板，支援 TaskMaster 雙向同步和 /github-task CLI 技能自動安裝 |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | 用於 GitHub Issues 的看板，支援 /github-task CLI 技能自動安裝 |
 
 ### 自行建構
 
@@ -238,7 +237,6 @@ GNU 通用公共授權條款 v3.0 — 詳見 [LICENSE](LICENSE) 檔案。
 - **[Vite](https://vitejs.dev/)** — 快速建構工具與開發伺服器
 - **[Tailwind CSS](https://tailwindcss.com/)** — 實用優先 CSS 框架
 - **[CodeMirror](https://codemirror.net/)** — 進階程式碼編輯器
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(選用)* — AI 驅動的專案管理與任務規劃
 
 ### 贊助商
 - [Siteboon - AI powered website builder](https://siteboon.ai)

@@ -106,7 +106,7 @@
     "loading": "キャッシュ統計を読み込み中...",
     "loadError": "キャッシュ統計を読み込めません。",
     "syncSectionTitle": "履歴を同期",
-    "syncDescription": "このアカウントで利用可能なすべてのセッション履歴を取得します。履歴は後で自動的に再キャッシュされる場合があります。",
+    "syncDescription": "セッションを開くと、その履歴がキャッシュされます。「すべての履歴を同期」を使用すると、このアカウントで利用可能なすべてのセッション履歴がキャッシュされます。",
     "syncButton": "すべての履歴を同期",
     "syncPending": "履歴を同期中...",
     "syncSuccess": "{{eligible}} 件中 {{succeeded}} 件の履歴を同期しました。",
@@ -116,10 +116,10 @@
     "clearDescription": "このアカウントのローカルにキャッシュされた履歴のみを削除します。他のアカウントとサーバー上の履歴は保持されます。",
     "clearButton": "このアカウントのキャッシュを消去",
     "clearPending": "キャッシュを消去中...",
-    "clearSuccess": "このアカウントのローカルキャッシュを消去しました。履歴は後で再びキャッシュされる場合があります。",
+    "clearSuccess": "このアカウントのローカルキャッシュを消去しました。履歴は、そのセッションを開くか、すべての履歴を同期すると再びキャッシュされます。",
     "clearError": "このアカウントのキャッシュを消去できません。",
     "confirmationTitle": "このアカウントのローカル履歴を消去しますか？",
-    "confirmationDescription": "このアカウントのローカルにキャッシュされたセッション履歴のみを削除します。他のアカウントとサーバー上の履歴は保持され、履歴は後で再びキャッシュされる場合があります。",
+    "confirmationDescription": "このアカウントのローカルにキャッシュされたセッション履歴のみを削除します。他のアカウントとサーバー上の履歴は保持されます。履歴は、そのセッションを開くか、すべての履歴を同期すると再びキャッシュされます。",
     "cancel": "キャンセル",
     "confirm": "キャッシュを消去"
   },
@@ -310,25 +310,6 @@
     "loading": "読み込み中...",
     "version": {
       "updateAvailable": "アップデートあり: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "TaskMasterのインストールを確認しています...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLIがインストールされていません",
-      "description": "タスク管理機能を使用するにはTaskMaster CLIが必要です。以下のコマンドでインストールしてください:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "GitHubで見る",
-      "afterInstallation": "インストール後:",
-      "steps": {
-        "restart": "このアプリケーションを再起動してください",
-        "autoAvailable": "TaskMaster機能が自動的に利用可能になります",
-        "initCommand": "プロジェクトディレクトリで task-master init を実行してください"
-      }
-    },
-    "settings": {
-      "enableLabel": "TaskMaster統合を有効にする",
-      "enableDescription": "インターフェース全体でTaskMasterのタスク、バナー、サイドバーインジケータを表示します"
     }
   },
   "agents": {

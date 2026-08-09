@@ -126,7 +126,7 @@
     "loading": "Loading cache statistics...",
     "loadError": "Unable to load cache statistics.",
     "syncSectionTitle": "Synchronize histories",
-    "syncDescription": "Fetch all available session histories for this account. Histories may be cached again automatically later.",
+    "syncDescription": "Opening a session caches its history. Use Sync all histories to cache every available session history for this account.",
     "syncButton": "Sync all histories",
     "syncPending": "Syncing histories...",
     "syncSuccess": "Synchronized {{succeeded}} of {{eligible}} histories.",
@@ -136,10 +136,10 @@
     "clearDescription": "Remove only this account's locally cached histories. Other accounts and server histories are preserved.",
     "clearButton": "Clear this account's cache",
     "clearPending": "Clearing cache...",
-    "clearSuccess": "This account's local cache was cleared. Histories may be cached again later.",
+    "clearSuccess": "This account's local cache was cleared. A history is cached again when you open its session or use Sync all histories.",
     "clearError": "Unable to clear this account's cache.",
     "confirmationTitle": "Clear this account's local histories?",
-    "confirmationDescription": "This removes locally cached session histories for this account only. Other accounts and server histories are preserved, and histories may be cached again later.",
+    "confirmationDescription": "This removes locally cached session histories for this account only. Other accounts and server histories are preserved. A history is cached again when you open its session or use Sync all histories.",
     "cancel": "Cancel",
     "confirm": "Clear cache"
   },
@@ -367,25 +367,6 @@
     "loading": "Loading...",
     "version": {
       "updateAvailable": "Update available: v{{version}}"
-    }
-  },
-  "tasks": {
-    "checking": "Checking TaskMaster installation...",
-    "notInstalled": {
-      "title": "TaskMaster AI CLI Not Installed",
-      "description": "TaskMaster CLI is required to use task management features. Install it to get started:",
-      "installCommand": "npm install -g task-master-ai",
-      "viewOnGitHub": "View on GitHub",
-      "afterInstallation": "After installation:",
-      "steps": {
-        "restart": "Restart this application",
-        "autoAvailable": "TaskMaster features will automatically become available",
-        "initCommand": "Use task-master init in your project directory"
-      }
-    },
-    "settings": {
-      "enableLabel": "Enable TaskMaster Integration",
-      "enableDescription": "Show TaskMaster tasks, banners, and sidebar indicators across the interface"
     }
   },
   "agents": {
@@ -624,7 +605,7 @@
     "githubIssuesBoardPlugin": {
       "name": "GitHub Issues Board",
       "badge": "unofficial",
-      "description": "Kanban board for GitHub Issues with bidirectional TaskMaster sync and /github-task CLI skill auto-install",
+      "description": "Kanban board for GitHub Issues with /github-task CLI skill auto-install",
       "install": "Install"
     },
     "claudeUsagePlugin": {

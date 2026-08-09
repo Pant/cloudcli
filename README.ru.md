@@ -61,7 +61,6 @@
 - **Git Explorer** - просмотр, stage и commit изменений. Также можно переключать ветки
 - **Управление сессиями** - возобновляйте диалоги, управляйте несколькими сессиями и отслеживайте историю
 - **Система плагинов** - расширяйте CloudCLI кастомными плагинами — добавляйте новые вкладки, бэкенд-сервисы и интеграции. [Создать свой →](https://github.com/cloudcli-ai/cloudcli-plugin-starter)
-- **Интеграция с TaskMaster AI** *(опционально)* - продвинутое управление проектами с планированием задач на базе AI, разбором PRD и автоматизацией workflow
 - **Совместимость с моделями** - работает с семействами моделей Claude и GPT (полный список поддерживаемых моделей доступен через `GET /api/providers/:provider/models`)
 
 
@@ -171,7 +170,7 @@ CloudCLI UI — это open source UI-слой, на котором постро
 | **[Sessions](https://github.com/strykereye2/cloudcli-plugin-session-manager)** | Просмотр, управление и завершение активных сессий Claude Code |
 | **[Token Cost Calculator](https://github.com/NightmareAway/cloudcli-plugin-token-cost-calculator)** | Расчёт стоимости API по ценам моделей и использованию токенов, с поддержкой пресетов цен |
 | **[Task Queue](https://github.com/TadMSTR/cloudcli-plugin-task-queue)** | Дашборд очереди задач для просмотра, фильтрации и запуска агентских задач |
-| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | Kanban-доска для GitHub Issues с двусторонней синхронизацией TaskMaster и автоустановкой CLI-навыка /github-task |
+| **[GitHub Issues Board](https://github.com/szmidtpiotr/claude-github-issue)** | Kanban-доска для GitHub Issues с автоустановкой CLI-навыка /github-task |
 
 ### Создать свой
 
@@ -245,7 +244,6 @@ GNU General Public License v3.0 - подробности в файле [LICENSE]
 - **[Vite](https://vitejs.dev/)** - быстрый инструмент сборки и dev-сервер
 - **[Tailwind CSS](https://tailwindcss.com/)** - utility-first CSS framework
 - **[CodeMirror](https://codemirror.net/)** - продвинутый редактор кода
-- **[TaskMaster AI](https://github.com/eyaltoledano/claude-task-master)** *(опционально)* - AI-управление проектами и планирование задач
 
 
 ### Спонсоры
