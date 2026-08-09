@@ -26,7 +26,7 @@ export interface ToolDisplayConfig {
     // Collapsible config
     title?: string | ((input: any) => string);
     defaultOpen?: boolean;
-    contentType?: 'diff' | 'markdown' | 'file-list' | 'todo-list' | 'text' | 'task' | 'question-answer';
+    contentType?: 'diff' | 'patch' | 'markdown' | 'file-list' | 'todo-list' | 'text' | 'task' | 'question-answer';
     getContentProps?: (input: any, helpers?: any) => any;
     actionButton?: 'file-button' | 'none';
   };
@@ -156,20 +156,17 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   ApplyPatch: {
     input: {
       type: 'collapsible',
-      title: (input) => {
-        const filename = input.file_path?.split('/').pop() || input.file_path || 'file';
-        return `${filename}`;
-      },
+      title: 'Apply patch',
       defaultOpen: false,
-      contentType: 'diff',
+      contentType: 'patch',
       actionButton: 'none',
-      getContentProps: (input) => ({
-        oldContent: input.old_string,
-        newContent: input.new_string,
-        filePath: input.file_path,
-        badge: 'Patch',
-        badgeColor: 'gray'
-      })
+      getContentProps: (input) => {
+        if (typeof input === 'string') return { patchText: input };
+        if (!input || typeof input !== 'object') return { patchText: '' };
+        const patchText = [input.patchText, input.patch, input.diff, input.content]
+          .find((value) => typeof value === 'string');
+        return { patchText: typeof patchText === 'string' ? patchText : '' };
+      }
     },
     result: {
       hideOnSuccess: true

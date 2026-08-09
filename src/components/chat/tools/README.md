@@ -2,7 +2,7 @@
 
 ## Overview
 
-Config-driven architecture for rendering tool executions in chat. All tool display behavior is defined in `toolConfigs.ts` — no scattered conditionals. Two base display patterns: **OneLineDisplay** for compact tools, **CollapsibleDisplay** for tools with expandable content.
+Config-driven architecture for rendering tool executions in chat. Tool behavior is defined in `toolConfigs.ts`, with specialized renderers selected by `contentType`. The base patterns are **OneLineDisplay** and **CollapsibleDisplay**; Bash uses a dedicated combined card so full multiline commands remain visible and wrapping-safe.
 
 Non-error tool results route through `ToolRenderer` with `mode="result"` (single source of truth). Error results are handled inline in `MessageComponent` with a red error box.
 
@@ -105,7 +105,8 @@ Specialized components for different content types, rendered as children of `Col
 
 | contentType | Component | Used by |
 |---|---|---|
-| `diff` | `DiffViewer` | Edit, Write, ApplyPatch |
+| `diff` | `ToolDiffViewer` | Edit, Write |
+| `patch` | `ApplyPatchDisplay` | ApplyPatch (per-file add/update/delete/move boxes) |
 | `markdown` | `MarkdownContent` | ExitPlanMode |
 | `file-list` | `FileListContent` | Grep/Glob results |
 | `todo-list` | `TodoListContent` | TodoWrite, TodoRead |
@@ -171,7 +172,7 @@ interface ToolDisplayConfig {
     // Collapsible
     title?: string | ((input) => string);
     defaultOpen?: boolean;
-    contentType?: 'diff' | 'markdown' | 'file-list' | 'todo-list' | 'text' | 'task';
+    contentType?: 'diff' | 'patch' | 'markdown' | 'file-list' | 'todo-list' | 'text' | 'task';
     getContentProps?: (input, helpers?) => any;
     actionButton?: 'none';
   };
@@ -195,11 +196,11 @@ interface ToolDisplayConfig {
 
 | Tool | Input | Result | Notes |
 |------|-------|--------|-------|
-| Bash | terminal one-line | hide success | Dark command pill, green accent |
+| Bash | multiline command card | hide success | Full wrapping command; expandable output |
 | Read | one-line (open-file) | hidden | Shows filename, clicks to open |
 | Edit | collapsible (diff) | hide success | Amber border, clickable filename |
 | Write | collapsible (diff) | hide success | "New" badge on diff |
-| ApplyPatch | collapsible (diff) | hide success | "Patch" badge on diff |
+| ApplyPatch | collapsible (patch) | hide success | Per-file UI; accepts patchText/patch/diff/content |
 | Grep | one-line (jump) | collapsible file-list | Collapsed by default |
 | Glob | one-line (jump) | collapsible file-list | Collapsed by default |
 | TodoWrite | collapsible (todo-list) | success message | |

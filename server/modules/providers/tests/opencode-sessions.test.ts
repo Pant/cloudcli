@@ -8,7 +8,7 @@ import Database from 'better-sqlite3';
 
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { OpenCodeSessionSynchronizer } from '@/modules/providers/list/opencode/opencode-session-synchronizer.provider.js';
-import { OpenCodeSessionsProvider } from '@/modules/providers/list/opencode/opencode-sessions.provider.js';
+import { extractCompletedOpenCodeTask, OpenCodeSessionsProvider } from '@/modules/providers/list/opencode/opencode-sessions.provider.js';
 import { getProjectSessionsPage } from '@/modules/projects/index.js';
 import { appendImagesInputTag } from '@/shared/image-attachments.js';
 
@@ -638,6 +638,44 @@ test('OpenCode sessions provider unwraps current JSON events and canonicalizes t
     part: { id: 'part-text-live', type: 'text', text: 'nested response' },
   }, null);
   assert.equal(text[0]?.content, 'nested response');
+});
+
+test('OpenCode completed Task extractor accepts aliases and rejects non-success updates', () => {
+  const completed = {
+    type: 'tool_use',
+    part: { id: 'part-task', tool: 'task', callID: 'call-task', state: { status: 'completed', input: { description: 'Review authentication' }, output: 'done' } },
+  };
+  assert.deepEqual(extractCompletedOpenCodeTask(completed), { taskId: 'call-task', summary: 'Review authentication' });
+  assert.deepEqual(extractCompletedOpenCodeTask({ ...completed, part: { ...completed.part, tool: 'TASK' } }), { taskId: 'call-task', summary: 'Review authentication' });
+  for (const status of ['running', 'error', 'cancelled']) {
+    assert.equal(extractCompletedOpenCodeTask({ ...completed, part: { ...completed.part, state: { ...completed.part.state, status } } }), null);
+  }
+  assert.equal(extractCompletedOpenCodeTask({ ...completed, part: { ...completed.part, tool: 'bash' } }), null);
+  assert.equal(extractCompletedOpenCodeTask({ ...completed, part: { ...completed.part, callID: undefined, id: undefined } }), null);
+});
+
+test('OpenCode sessions provider canonicalizes apply-patch names and preserves raw patch envelopes', () => {
+  const provider = new OpenCodeSessionsProvider();
+  const patchEnvelope = '*** Begin Patch\n*** Update File: src/provider.ts\n@@\n-old\n+new\n*** End Patch';
+  const cases = [
+    { tool: 'apply_patch', input: { patchText: patchEnvelope } },
+    { tool: 'apply_patch', input: { patch: patchEnvelope } },
+    { tool: 'apply-patch', input: { diff: patchEnvelope } },
+    { tool: 'ApplyPatch', input: patchEnvelope },
+    { tool: 'APPLYPATCH', input: JSON.stringify({ content: patchEnvelope }) },
+  ];
+
+  for (const [index, testCase] of cases.entries()) {
+    const normalized = provider.normalizeMessage({
+      type: 'tool_use',
+      id: `patch-${index}`,
+      tool: testCase.tool,
+      input: testCase.input,
+    }, 'open-session-live');
+
+    assert.equal(normalized[0]?.toolName, 'ApplyPatch');
+    assert.equal((normalized[0]?.toolInput as { patch?: string }).patch, patchEnvelope);
+  }
 });
 
 test('OpenCode sessions provider reads sqlite history and token usage', { concurrency: false }, async () => {

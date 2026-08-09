@@ -1,7 +1,8 @@
 export interface DiffLine {
   type: 'added' | 'removed';
   content: string;
-  lineNum: number;
+  oldLine: number | null;
+  newLine: number | null;
 }
 
 export type DiffCalculator = (oldStr: string, newStr: string) => DiffLine[];
@@ -42,22 +43,22 @@ export const calculateDiff = (oldStr: string, newStr: string): DiffLine[] => {
     }
 
     if (lcsTable[oldIndex + 1][newIndex] >= lcsTable[oldIndex][newIndex + 1]) {
-      diffLines.push({ type: 'removed', content: oldLine, lineNum: oldIndex + 1 });
+      diffLines.push({ type: 'removed', content: oldLine, oldLine: oldIndex + 1, newLine: null });
       oldIndex += 1;
       continue;
     }
 
-    diffLines.push({ type: 'added', content: newLine, lineNum: newIndex + 1 });
+    diffLines.push({ type: 'added', content: newLine, oldLine: null, newLine: newIndex + 1 });
     newIndex += 1;
   }
 
   while (oldIndex < oldLines.length) {
-    diffLines.push({ type: 'removed', content: oldLines[oldIndex], lineNum: oldIndex + 1 });
+    diffLines.push({ type: 'removed', content: oldLines[oldIndex], oldLine: oldIndex + 1, newLine: null });
     oldIndex += 1;
   }
 
   while (newIndex < newLines.length) {
-    diffLines.push({ type: 'added', content: newLines[newIndex], lineNum: newIndex + 1 });
+    diffLines.push({ type: 'added', content: newLines[newIndex], oldLine: null, newLine: newIndex + 1 });
     newIndex += 1;
   }
 

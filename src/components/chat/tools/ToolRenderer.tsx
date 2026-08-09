@@ -13,6 +13,7 @@ import { ToolStatusBadge } from './components/ToolStatusBadge';
 import type { ToolStatus } from './components/ToolStatusBadge';
 
 const ToolDiffViewer = lazy(() => import('./components/ToolDiffViewer').then((module) => ({ default: module.ToolDiffViewer })));
+const ApplyPatchDisplay = lazy(() => import('./components/ApplyPatchDisplay').then((module) => ({ default: module.ApplyPatchDisplay })));
 const MarkdownContent = lazy(() => import('./components/ContentRenderers/MarkdownContent').then((module) => ({ default: module.MarkdownContent })));
 const TodoListContent = lazy(() => import('./components/ContentRenderers/TodoListContent').then((module) => ({ default: module.TodoListContent })));
 const TaskListContent = lazy(() => import('./components/ContentRenderers/TaskListContent').then((module) => ({ default: module.TaskListContent })));
@@ -31,7 +32,8 @@ function LazyToolFamily({ children }: { children: React.ReactNode }) {
 type DiffLine = {
   type: string;
   content: string;
-  lineNum: number;
+  oldLine: number | null;
+  newLine: number | null;
 };
 
 interface ToolRendererProps {
@@ -263,6 +265,10 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
             </LazyToolFamily>
           );
         }
+        break;
+
+      case 'patch':
+        contentComponent = <LazyToolFamily><ApplyPatchDisplay patchText={contentProps.patchText || ''} /></LazyToolFamily>;
         break;
 
       case 'markdown':

@@ -22,6 +22,9 @@ import { readOpenCodeLatestAssistantWindowTokens } from './opencode-token-usage.
 const PROVIDER = 'opencode';
 
 const OPENCODE_TOOL_NAME_ALIASES: Record<string, string> = {
+  apply_patch: 'ApplyPatch',
+  'apply-patch': 'ApplyPatch',
+  applypatch: 'ApplyPatch',
   bash: 'Bash',
   edit: 'Edit',
   glob: 'Glob',
@@ -51,6 +54,28 @@ type OpenCodeTokenTotals = {
   cacheReadTokens: number;
   cacheWriteTokens: number;
 };
+
+export type CompletedOpenCodeTask = { taskId: string; summary: string | null };
+
+/** The OpenCode runtime uses this provider-local classifier for successful Task tool updates. */
+export function extractCompletedOpenCodeTask(rawMessage: unknown): CompletedOpenCodeTask | null {
+  const raw = readObjectRecord(rawMessage);
+  if (!raw) return null;
+  const part = readObjectRecord(raw.part);
+  const type = readOptionalString(raw.type) ?? readOptionalString(raw.event);
+  if (type !== 'tool_use' && type !== 'tool') return null;
+  const toolPart = part ?? raw;
+  if (normalizeOpenCodeToolName(toolPart.tool ?? toolPart.name ?? raw.tool ?? raw.name) !== 'Task') return null;
+  const state = readObjectRecord(toolPart.state) ?? readObjectRecord(raw.state);
+  if (readOptionalString(state?.status)?.toLowerCase() !== 'completed' || state?.error != null || raw.error != null) return null;
+  const taskId = readOptionalString(toolPart.callID) ?? readOptionalString(toolPart.toolCallId)
+    ?? readOptionalString(raw.callID) ?? readOptionalString(raw.toolCallId) ?? readOptionalString(toolPart.id);
+  if (!taskId) return null;
+  const input = readObjectRecord(parseOpenCodeToolInput(state?.input ?? toolPart.input ?? raw.input));
+  const summary = readOptionalString(input?.description) ?? readOptionalString(input?.prompt)
+    ?? readOptionalString(state?.title) ?? null;
+  return { taskId, summary };
+}
 
 const openOpenCodeDatabase = (): Database.Database | null => {
   const dbPath = getOpenCodeDatabasePath();
@@ -106,6 +131,9 @@ const normalizeOpenCodeTool = (
   const parsedInput = parseOpenCodeToolInput(rawInput);
   const input = readObjectRecord(parsedInput);
   if (!input) {
+    if (toolName === 'ApplyPatch' && typeof parsedInput === 'string') {
+      return { toolName, toolInput: { patch: parsedInput } };
+    }
     return { toolName, toolInput: parsedInput ?? {} };
   }
 
@@ -129,6 +157,13 @@ const normalizeOpenCodeTool = (
     }
     if (typeof newString === 'string') {
       normalized.new_string = newString;
+    }
+  }
+
+  if (toolName === 'ApplyPatch') {
+    const patch = input.patchText ?? input.patch ?? input.diff ?? input.content;
+    if (typeof patch === 'string') {
+      normalized.patch = patch;
     }
   }
 

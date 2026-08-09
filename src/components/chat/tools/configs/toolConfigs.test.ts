@@ -17,6 +17,23 @@ function getSearchDisplay(toolName: (typeof searchTools)[number], result: unknow
   };
 }
 
+test('ApplyPatch routes supported payload aliases to patch content', () => {
+  const config = TOOL_CONFIGS.ApplyPatch.input;
+  assert.equal(config.contentType, 'patch');
+  assert.equal(config.getContentProps?.({ patchText: 'patchText value' }).patchText, 'patchText value');
+  assert.equal(config.getContentProps?.({ patch: 'patch value' }).patchText, 'patch value');
+  assert.equal(config.getContentProps?.({ diff: 'diff value' }).patchText, 'diff value');
+  assert.equal(config.getContentProps?.({ content: 'content value' }).patchText, 'content value');
+  assert.equal(config.getContentProps?.('raw patch').patchText, 'raw patch');
+});
+
+test('ApplyPatch ignores non-string payload aliases safely', () => {
+  const getContentProps = TOOL_CONFIGS.ApplyPatch.input.getContentProps;
+  assert.equal(getContentProps?.({ patchText: { invalid: true }, patch: 'valid patch' }).patchText, 'valid patch');
+  assert.equal(getContentProps?.({ patch: 42 }).patchText, '');
+  assert.equal(getContentProps?.(null).patchText, '');
+});
+
 for (const toolName of searchTools) {
   test(`${toolName} keeps Claude-style metadata results visible`, () => {
     assert.deepEqual(

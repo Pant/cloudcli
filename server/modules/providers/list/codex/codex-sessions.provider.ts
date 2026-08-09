@@ -561,29 +561,11 @@ async function getCodexSessionMessages(
           }
 
           if (toolName === 'apply_patch') {
-            const fileMatch = String(input).match(/\*\*\* Update File: (.+)/);
-            const filePath = fileMatch ? fileMatch[1].trim() : 'unknown';
-            const lines = String(input).split('\n');
-            const oldLines: string[] = [];
-            const newLines: string[] = [];
-
-            for (const lineContent of lines) {
-              if (lineContent.startsWith('-') && !lineContent.startsWith('---')) {
-                oldLines.push(lineContent.slice(1));
-              } else if (lineContent.startsWith('+') && !lineContent.startsWith('+++')) {
-                newLines.push(lineContent.slice(1));
-              }
-            }
-
             messages.push({
               type: 'tool_use',
               timestamp: entry.timestamp,
-              toolName: 'Edit',
-              toolInput: JSON.stringify({
-                file_path: filePath,
-                old_string: oldLines.join('\n'),
-                new_string: newLines.join('\n'),
-              }),
+              toolName: 'ApplyPatch',
+              toolInput: JSON.stringify({ patchText: String(input) }),
               toolCallId: entry.payload.call_id,
             });
           } else {

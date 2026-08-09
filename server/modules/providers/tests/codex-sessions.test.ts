@@ -190,3 +190,56 @@ test('Codex history renders Promise.all shell wrappers as Bash activity', { conc
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('Codex history preserves complete custom apply_patch envelopes', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'codex-patch-history-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  await mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+
+  try {
+    const providerSessionId = 'codex-patch-1';
+    const transcriptPath = await writeCodexTranscript(tempRoot, providerSessionId, workspacePath);
+    const patchText = [
+      '*** Begin Patch',
+      '*** Update File: src/first.ts',
+      '@@ -1,2 +1,2 @@',
+      '-const first = 1;',
+      '+const first = 2;',
+      ' const retained = true;',
+      '*** Add File: src/second.ts',
+      '+export const second = true;',
+      '*** End Patch',
+    ].join('\n');
+    await writeFile(transcriptPath, [
+      JSON.stringify({ type: 'session_meta', payload: { id: providerSessionId, cwd: workspacePath } }),
+      JSON.stringify({
+        type: 'response_item',
+        timestamp: '2026-07-07T12:00:00.000Z',
+        payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: 'patch-1', input: patchText },
+      }),
+    ].join('\n') + '\n', 'utf8');
+
+    await withIsolatedDatabase(async () => {
+      sessionsDb.createAppSession('app-patch-1', 'codex', workspacePath);
+      sessionsDb.assignProviderSessionId('app-patch-1', providerSessionId);
+      await new CodexSessionSynchronizer().synchronize();
+
+      const history = await new CodexSessionsProvider().fetchHistory('app-patch-1');
+      const toolUse = history.messages.find((message) => message.kind === 'tool_use');
+
+      assert.ok(toolUse);
+      assert.equal(toolUse.toolName, 'ApplyPatch');
+      assert.equal(toolUse.toolId, 'patch-1');
+      assert.equal(toolUse.timestamp, '2026-07-07T12:00:00.000Z');
+      const toolInput = toolUse.toolInput;
+      if (typeof toolInput !== 'string') {
+        assert.fail('Expected ApplyPatch tool input to be a JSON string');
+      }
+      assert.deepEqual(JSON.parse(toolInput), { patchText });
+    });
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

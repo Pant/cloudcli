@@ -18,11 +18,9 @@ interface BashCommandDisplayProps {
 }
 
 /**
- * Codex-in-VSCode style command row: a compact, single-line command with a
- * chevron on the left. When the command produced output, the row becomes a
- * dropdown that expands to reveal the output inline. Theme-integrated surfaces
- * keep it clean in both light and dark mode; consecutive commands stack tightly
- * into a clean list.
+ * Command card that always exposes the complete command. Output, when present,
+ * remains independently collapsible so long-running commands do not dominate
+ * the transcript.
  */
 export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
   command,
@@ -75,7 +73,7 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
         open && 'bg-muted/50 shadow-sm',
       )}
     >
-      {/* Command header — clickable when there is output to expand */}
+      {/* Header — clickable when there is output to expand */}
       <div
         role={hasOutput ? 'button' : undefined}
         tabIndex={hasOutput ? 0 : undefined}
@@ -88,7 +86,7 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
           }
         }}
         className={cn(
-          'flex items-center gap-2 px-2.5 py-1.5 outline-none',
+          'flex min-w-0 items-center gap-2 px-2.5 py-1.5 outline-none',
           hasOutput && 'cursor-pointer focus-visible:ring-1 focus-visible:ring-ring',
         )}
       >
@@ -99,20 +97,7 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
             !hasOutput && 'opacity-0',
           )}
         />
-        <span className="flex-shrink-0 select-none font-mono text-xs font-semibold text-emerald-500 dark:text-emerald-400">
-          $
-        </span>
-        {/* Not a <code> tag: the global `.chat-message code` rule forces
-            `white-space: pre-wrap !important`, which would defeat `truncate`
-            and render collapsed multi-line commands in full. */}
-        <span
-          className={cn(
-            'min-w-0 flex-1 font-mono text-xs text-foreground',
-            open ? 'whitespace-pre-wrap break-all' : 'truncate',
-          )}
-        >
-          {command}
-        </span>
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">Command</span>
 
         {isRunning && (
           <span className="h-2.5 w-2.5 flex-shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-emerald-400" />
@@ -135,18 +120,22 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
         </button>
       </div>
 
-      {description && !open && (
-        <div className="truncate px-2.5 pb-1.5 pl-[2.4rem] text-[11px] italic text-muted-foreground/70">
+      {description && (
+        <div className="px-3 pb-1.5 text-[11px] italic text-muted-foreground/70">
           {description}
         </div>
       )}
 
+      <div className="min-w-0 border-t border-border/50 bg-background/40 px-3 py-2">
+        <pre className="m-0 max-h-64 min-w-0 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground [overflow-wrap:anywhere]">
+          <span className="select-none font-semibold text-emerald-500 dark:text-emerald-400">$ </span>
+          {command}
+        </pre>
+      </div>
+
       {/* Expanded output */}
       {open && hasOutput && (
         <div className="settings-content-enter border-t border-border/50 bg-background/50">
-          {description && (
-            <div className="px-3 pt-2 text-[11px] italic text-muted-foreground/70">{description}</div>
-          )}
           <pre
             className={cn(
               'max-h-80 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs leading-relaxed',
