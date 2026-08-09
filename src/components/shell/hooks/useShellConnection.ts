@@ -30,6 +30,7 @@ type UseShellConnectionOptions = {
 type UseShellConnectionResult = {
   isConnected: boolean;
   isConnecting: boolean;
+  connectionError: boolean;
   closeSocket: () => void;
   connectToShell: (options?: { forceRestart?: boolean }) => void;
   disconnectFromShell: (options?: { suppressAutoConnect?: boolean }) => void;
@@ -52,6 +53,7 @@ export function useShellConnection({
 }: UseShellConnectionOptions): UseShellConnectionResult {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState(false);
   const connectingRef = useRef(false);
   const forceRestartOnInitRef = useRef(false);
   const suppressAutoConnectRef = useRef(false);
@@ -122,6 +124,7 @@ export function useShellConnection({
         wsRef.current = socket;
 
         socket.onopen = () => {
+          setConnectionError(false);
           setIsConnected(true);
           setIsConnecting(false);
           connectingRef.current = false;
@@ -166,11 +169,13 @@ export function useShellConnection({
         };
 
         socket.onerror = () => {
+          setConnectionError(true);
           setIsConnected(false);
           setIsConnecting(false);
           connectingRef.current = false;
         };
       } catch {
+        setConnectionError(true);
         setIsConnected(false);
         setIsConnecting(false);
         connectingRef.current = false;
@@ -201,6 +206,7 @@ export function useShellConnection({
     suppressAutoConnectRef.current = false;
     connectingRef.current = true;
     setIsConnecting(true);
+    setConnectionError(false);
     connectWebSocket(true);
   }, [connectWebSocket, isConnected, isConnecting, isInitialized]);
 
@@ -213,6 +219,7 @@ export function useShellConnection({
     clearTerminalScreen();
     setIsConnected(false);
     setIsConnecting(false);
+    setConnectionError(false);
     connectingRef.current = false;
     forceRestartOnInitRef.current = false;
   }, [clearTerminalScreen, closeSocket]);
@@ -234,6 +241,7 @@ export function useShellConnection({
   return {
     isConnected,
     isConnecting,
+    connectionError,
     closeSocket,
     connectToShell,
     disconnectFromShell,

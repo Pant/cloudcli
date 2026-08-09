@@ -16,7 +16,6 @@ const VoiceSettingsTab = lazy(() => import('../view/tabs/VoiceSettingsTab'));
 const GitSettingsTab = lazy(() => import('../view/tabs/git-settings/GitSettingsTab'));
 const BrowserUseSettingsTab = lazy(() => import('../view/tabs/browser-use-settings/BrowserUseSettingsTab'));
 const NotificationsSettingsTab = lazy(() => import('../view/tabs/NotificationsSettingsTab'));
-const TasksSettingsTab = lazy(() => import('../view/tabs/tasks-settings/TasksSettingsTab'));
 const PluginSettingsTab = lazy(() => import('../../plugins/view/PluginSettingsTab'));
 const AboutTab = lazy(() => import('../view/tabs/AboutTab'));
 const CacheSettingsTab = lazy(() => import('../view/tabs/CacheSettingsTab'));
@@ -74,7 +73,8 @@ function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents'
   } = useWebPush();
 
   const handleEnablePush = async () => {
-    await pushSubscribe();
+    const result = await pushSubscribe();
+    if (!result.success) return;
     // Server sets webPush: true in preferences on subscribe; sync local state
     setNotificationPreferences({
       ...notificationPreferences,
@@ -83,7 +83,8 @@ function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents'
   };
 
   const handleDisablePush = async () => {
-    await pushUnsubscribe();
+    const result = await pushUnsubscribe();
+    if (!result.success) return;
     // Server sets webPush: false in preferences on unsubscribe; sync local state
     setNotificationPreferences({
       ...notificationPreferences,
@@ -192,8 +193,6 @@ function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents'
                   projects={projects}
                 />
               )}
-
-              {activeTab === 'tasks' && <TasksSettingsTab />}
 
               {activeTab === 'browser' && <BrowserUseSettingsTab />}
 

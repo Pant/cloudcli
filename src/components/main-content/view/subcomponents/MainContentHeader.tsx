@@ -1,9 +1,11 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { RefreshCw, Terminal } from 'lucide-react';
 
 import type { MainContentHeaderProps } from '../../types/types';
+import { getConsoleMessagesSnapshot, subscribeToConsoleMessages } from '../../../../lib/consoleCapture';
 import { Button } from '../../../../shared/view/ui';
 
+import { ConsoleMessagesOverlay } from './ConsoleMessagesOverlay';
 import MobileMenuButton from './MobileMenuButton';
 import MainContentTabSwitcher from './MainContentTabSwitcher';
 import MainContentTitle from './MainContentTitle';
@@ -13,7 +15,6 @@ export default function MainContentHeader({
   setActiveTab,
   selectedProject,
   selectedSession,
-  shouldShowTasksTab,
   shouldShowBrowserTab,
   isMobile,
   onMenuClick,
@@ -21,6 +22,13 @@ export default function MainContentHeader({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const consoleMessages = useSyncExternalStore(
+    subscribeToConsoleMessages,
+    getConsoleMessagesSnapshot,
+    getConsoleMessagesSnapshot,
+  );
+  const consoleLabel = `Open console messages (${consoleMessages.length} captured)`;
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current;
@@ -47,7 +55,6 @@ export default function MainContentHeader({
             activeTab={activeTab}
             selectedProject={selectedProject}
             selectedSession={selectedSession}
-            shouldShowTasksTab={shouldShowTasksTab}
           />
         </div>
 
@@ -64,7 +71,6 @@ export default function MainContentHeader({
               <MainContentTabSwitcher
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
-                shouldShowTasksTab={shouldShowTasksTab}
                 shouldShowBrowserTab={shouldShowBrowserTab}
               />
             </div>
@@ -72,6 +78,17 @@ export default function MainContentHeader({
               <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-6 bg-gradient-to-l from-background to-transparent" />
             )}
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="relative ml-1 h-7 w-7 flex-shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+            onClick={() => setIsConsoleOpen(true)}
+            aria-label={consoleLabel}
+            title={consoleLabel}
+          >
+            <Terminal className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
           <Button
             type="button"
             variant="ghost"
@@ -85,6 +102,7 @@ export default function MainContentHeader({
           </Button>
         </div>
       </div>
+      <ConsoleMessagesOverlay open={isConsoleOpen} onOpenChange={setIsConsoleOpen} />
     </div>
   );
 }

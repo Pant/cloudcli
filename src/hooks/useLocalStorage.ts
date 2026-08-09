@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 
 /**
  * Custom hook to persist state in localStorage.
@@ -7,7 +7,7 @@ import { useState } from 'react';
  * @param {any} initialValue The initial value to use if nothing is in localStorage.
  * @returns {[any, Function]} A tuple containing the stored value and a setter function.
  */
-function useLocalStorage(key, initialValue) {
+function useLocalStorage<T>(key: string, initialValue: T): [T, Dispatch<SetStateAction<T>>] {
   const [storedValue, setStoredValue] = useState(() => {
     if (typeof window === 'undefined') {
       return initialValue;
@@ -21,13 +21,13 @@ function useLocalStorage(key, initialValue) {
     }
   });
 
-  const setValue = (value) => {
+  const setValue: Dispatch<SetStateAction<T>> = (value) => {
     if (typeof window === 'undefined') {
       return;
     }
     try {
       const valueToStore =
-        value instanceof Function ? value(storedValue) : value;
+        typeof value === 'function' ? (value as (previous: T) => T)(storedValue) : value;
       window.localStorage.setItem(key, JSON.stringify(valueToStore));
       setStoredValue(valueToStore);
     } catch (error) {

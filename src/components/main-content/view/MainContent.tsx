@@ -3,14 +3,11 @@ import { useTranslation } from 'react-i18next';
 
 import ChatInterface from '../../chat/view/ChatInterface';
 import type { MainContentProps } from '../types/types';
-import { useTaskMaster } from '../../../contexts/TaskMasterContext';
 import { usePaletteOpsRegister } from '../../../contexts/paletteOps';
-import { useTasksSettings } from '../../../contexts/useTasksSettings';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useFileOpenResolver } from '../../../hooks/useFileOpenResolver';
 import { authenticatedFetch } from '../../../utils/api';
 import { useEditorSidebar } from '../../code-editor/hooks/useEditorSidebar';
-import type { Project } from '../../../types/app';
 import { loadFeatureNamespaces } from '../../../i18n/config.js';
 
 import MainContentHeader from './subcomponents/MainContentHeader';
@@ -22,7 +19,6 @@ const StandaloneShell = lazy(() => import('../../standalone-shell/view/Standalon
 const GitPanel = lazy(() => import('../../git-panel/view/GitPanel'));
 const PluginTabContent = lazy(() => import('../../plugins/view/PluginTabContent'));
 const BrowserUsePanel = lazy(() => import('../../browser-use/view/BrowserUsePanel'));
-const TaskMasterPanel = lazy(() => import('../../task-master/view/TaskMasterPanel'));
 const EditorSidebar = lazy(() => import('../../code-editor/view/EditorSidebar'));
 
 function ConditionalPanelLoadingState() {
@@ -37,17 +33,6 @@ function FeatureNamespaceBoundary({ namespace, children }: { namespace: string; 
   useTranslation(namespace);
   return children;
 }
-
-type TaskMasterContextValue = {
-  currentProject?: Project | null;
-  setCurrentProject?: ((project: Project) => void) | null;
-};
-
-type TasksSettingsContextValue = {
-  tasksEnabled: boolean;
-  isTaskMasterInstalled: boolean | null;
-  isTaskMasterReady: boolean | null;
-};
 
 function MainContent({
   selectedProject,
@@ -74,11 +59,8 @@ function MainContent({
   const { preferences } = useUiPreferences();
   const { showRawParameters, showThinking, sendByCtrlEnter } = preferences;
 
-  const { currentProject, setCurrentProject } = useTaskMaster() as TaskMasterContextValue;
-  const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings() as TasksSettingsContextValue;
   const [browserUseEnabled, setBrowserUseEnabled] = useState(false);
 
-  const shouldShowTasksTab = Boolean(tasksEnabled && isTaskMasterInstalled);
   const shouldShowBrowserTab = browserUseEnabled;
 
   const {
@@ -98,7 +80,6 @@ function MainContent({
 
   useEffect(() => {
     const namespaces = ['chat'];
-    if (activeTab === 'tasks') namespaces.push('tasks');
     if (editingFile) namespaces.push('codeEditor');
     void loadFeatureNamespaces(namespaces);
   }, [activeTab, editingFile]);
@@ -106,23 +87,6 @@ function MainContent({
   // Resolves bare/partial file references (e.g. links inside chat messages) to
   // real project files before opening them in the in-app editor.
   const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen);
-
-  useEffect(() => {
-    // Identify projects by DB `projectId`; the TaskMaster context uses the
-    // same identifier to key its internal maps.
-    const selectedProjectId = selectedProject?.projectId;
-    const currentProjectId = currentProject?.projectId;
-
-    if (selectedProject && selectedProjectId !== currentProjectId) {
-      setCurrentProject?.(selectedProject);
-    }
-  }, [selectedProject, currentProject?.projectId, setCurrentProject]);
-
-  useEffect(() => {
-    if (!shouldShowTasksTab && activeTab === 'tasks') {
-      setActiveTab('chat');
-    }
-  }, [shouldShowTasksTab, activeTab, setActiveTab]);
 
   const loadBrowserUseSettings = useCallback(async () => {
     try {
@@ -172,7 +136,6 @@ function MainContent({
         setActiveTab={setActiveTab}
         selectedProject={selectedProject}
         selectedSession={selectedSession}
-        shouldShowTasksTab={shouldShowTasksTab}
         shouldShowBrowserTab={shouldShowBrowserTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
@@ -183,7 +146,7 @@ function MainContent({
           <div className={`h-full ${activeTab === 'chat' ? 'block' : 'hidden'}`}>
             <Suspense fallback={<ConditionalPanelLoadingState />}>
               <FeatureNamespaceBoundary namespace="chat">
-                <ErrorBoundary showDetails>
+                <ErrorBoundary area="chat" name="Chat" resetKeys={[selectedSession?.id, selectedProject.projectId]}>
                   <ChatInterface
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
@@ -202,7 +165,6 @@ function MainContent({
                 sendByCtrlEnter={sendByCtrlEnter}
                 externalMessageUpdate={externalMessageUpdate}
                 newSessionTrigger={newSessionTrigger}
-                onShowAllTasks={tasksEnabled ? () => setActiveTab('tasks') : null}
                   />
                 </ErrorBoundary>
               </FeatureNamespaceBoundary>
@@ -212,7 +174,7 @@ function MainContent({
           {activeTab === 'files' && (
             <div className="h-full overflow-hidden">
               <Suspense fallback={<ConditionalPanelLoadingState />}>
-                <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} />
+                <ErrorBoundary area="file_tree" name="File tree" resetKeys={[selectedProject.projectId]}><FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} /></ErrorBoundary>
               </Suspense>
             </div>
           )}
@@ -220,12 +182,12 @@ function MainContent({
           {activeTab === 'shell' && (
             <div className="h-full w-full overflow-hidden">
               <Suspense fallback={<ConditionalPanelLoadingState />}>
-                <StandaloneShell
+                <ErrorBoundary area="shell" name="Shell" resetKeys={[selectedProject.projectId]} retryLabel="Reset shell"><StandaloneShell
                   project={selectedProject}
                   isPlainShell
                   showHeader={false}
                   isActive={activeTab === 'shell'}
-                />
+                /></ErrorBoundary>
               </Suspense>
             </div>
           )}
@@ -233,23 +195,15 @@ function MainContent({
           {activeTab === 'git' && (
             <div className="h-full overflow-hidden">
               <Suspense fallback={<ConditionalPanelLoadingState />}>
-                <GitPanel
+                <ErrorBoundary area="git" name="Git panel" resetKeys={[selectedProject.projectId]}><GitPanel
                   selectedProject={selectedProject}
                   isMobile={isMobile}
                   onFileOpen={handleFileOpen}
                   onProjectSelect={onProjectSelect}
                   onProjectsRefresh={onProjectsRefresh}
-                />
+                /></ErrorBoundary>
               </Suspense>
             </div>
-          )}
-
-          {shouldShowTasksTab && (
-            <Suspense fallback={<ConditionalPanelLoadingState />}>
-              <FeatureNamespaceBoundary namespace="tasks">
-                <TaskMasterPanel isVisible={activeTab === 'tasks'} />
-              </FeatureNamespaceBoundary>
-            </Suspense>
           )}
 
           {shouldShowBrowserTab && activeTab === 'browser' && (
@@ -263,11 +217,11 @@ function MainContent({
           {activeTab.startsWith('plugin:') && (
             <div className="h-full overflow-hidden">
               <Suspense fallback={<ConditionalPanelLoadingState />}>
-                <PluginTabContent
+                <ErrorBoundary area="plugin" name="Plugin" resetKeys={[activeTab, selectedProject.projectId]}><PluginTabContent
                   pluginName={activeTab.replace('plugin:', '')}
                   selectedProject={selectedProject}
                   selectedSession={selectedSession}
-                />
+                /></ErrorBoundary>
               </Suspense>
             </div>
           )}
@@ -276,7 +230,7 @@ function MainContent({
         {editingFile && (
           <Suspense fallback={<ConditionalPanelLoadingState />}>
             <FeatureNamespaceBoundary namespace="codeEditor">
-              <EditorSidebar
+              <ErrorBoundary area="editor" name="Editor" resetKeys={[editingFile, selectedProject.projectId]}><EditorSidebar
               editingFile={editingFile}
               isMobile={isMobile}
               editorExpanded={editorExpanded}
@@ -288,7 +242,7 @@ function MainContent({
               onToggleEditorExpand={handleToggleEditorExpand}
               projectPath={selectedProject.path}
               fillSpace={activeTab === 'files'}
-              />
+              /></ErrorBoundary>
             </FeatureNamespaceBoundary>
           </Suspense>
         )}

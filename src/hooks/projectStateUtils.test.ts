@@ -8,6 +8,8 @@ import {
   mergeProjectSessionPage,
   mergeRunningSessionSnapshot,
   mergeRunningSnapshotsIntoProjects,
+  sessionHistoryRevision,
+  shouldSignalExternalHistoryRefresh,
   upsertSessionIntoProject,
 } from './projectStateUtils';
 
@@ -24,6 +26,22 @@ const item = (id: string, parentSessionId?: string | null): ProjectSession => ({
   parentSessionId,
   summary: id,
   updatedAt: '2026-01-01T00:00:00Z',
+});
+
+test('selected-session history refreshes once per inactive canonical revision', () => {
+  assert.equal(sessionHistoryRevision({ id: 's', lastActivity: 'rev-2', updated_at: 'rev-1' }), 'rev-2');
+  assert.equal(shouldSignalExternalHistoryRefresh({
+    viewedSessionId: 's', eventSessionId: 's', active: false,
+    currentRevision: 'rev-1', incomingRevision: 'rev-2', lastSignaledRevision: null,
+  }), true);
+  assert.equal(shouldSignalExternalHistoryRefresh({
+    viewedSessionId: 's', eventSessionId: 's', active: false,
+    currentRevision: 'rev-1', incomingRevision: 'rev-2', lastSignaledRevision: 'rev-2',
+  }), false);
+  assert.equal(shouldSignalExternalHistoryRefresh({
+    viewedSessionId: 's', eventSessionId: 's', active: true,
+    currentRevision: 'rev-1', incomingRevision: 'rev-2', lastSignaledRevision: null,
+  }), false);
 });
 
 test('page merging deduplicates aliases and preserves authoritative root offsets', () => {

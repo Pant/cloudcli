@@ -100,6 +100,7 @@ function schedulePendingWatcherFlush(): void {
   pendingWatcherFlushTimer = setTimeout(() => {
     void flushPendingWatcherUpdate();
   }, delay);
+  pendingWatcherFlushTimer.unref();
 }
 
 function queuePendingWatcherUpdate(

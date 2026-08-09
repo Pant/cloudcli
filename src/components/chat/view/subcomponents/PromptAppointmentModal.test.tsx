@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createInstance } from 'i18next';
+import { I18nextProvider, initReactI18next } from 'react-i18next';
 
 import type { PromptAppointment } from '../../types/appointments';
 
@@ -16,6 +18,20 @@ import {
   validateAppointmentForm,
   reorderQueueIds,
 } from './PromptAppointmentModal.utils';
+
+const testI18n = createInstance();
+await testI18n.use(initReactI18next).init({
+  lng: 'en',
+  fallbackLng: 'en',
+  ns: ['chat'],
+  defaultNS: 'chat',
+  resources: { en: { chat: {} } },
+  interpolation: { escapeValue: false },
+});
+
+const renderModal = (component: React.ReactElement) => renderToStaticMarkup(
+  <I18nextProvider i18n={testI18n}>{component}</I18nextProvider>,
+);
 
 test('validates local dates and durable timer payloads', () => {
   assert.equal(localDateTimeToIso('not-a-date'), null);
@@ -47,7 +63,7 @@ test('renders accessible trigger, draft, management, and restart review states',
     triggerType: 'project_idle', dueAt: null, timerDurationMs: null, isActive: true,
     status: 'needs_review', errorMessage: null, queuePosition: null, runGeneration: null, createdAt: 1, updatedAt: 1,
   };
-  const html = renderToStaticMarkup(<PromptAppointmentModalContent projectId="project-1" prompt="Ship this" appointments={[appointment]} onCreate={() => undefined} />);
+  const html = renderModal(<PromptAppointmentModalContent projectId="project-1" prompt="Ship this" appointments={[appointment]} onCreate={() => undefined} />);
   assert.match(html, /appointments\.trigger\.exact\.title/);
   assert.match(html, /appointments\.trigger\.timer\.title/);
   assert.match(html, /appointments\.trigger\.project_idle\.title/);
@@ -60,7 +76,7 @@ test('renders accessible trigger, draft, management, and restart review states',
 });
 
 test('renders an ordered pipeline with position semantics and disabled boundary controls', () => {
-  const html = renderToStaticMarkup(<PromptAppointmentModalContent projectId="project-1" prompt="Ship this" appointments={[queueAppointment('second', 2, 'draft'), queueAppointment('first', 1)]} onCreate={() => undefined} />);
+  const html = renderModal(<PromptAppointmentModalContent projectId="project-1" prompt="Ship this" appointments={[queueAppointment('second', 2, 'draft'), queueAppointment('first', 1)]} onCreate={() => undefined} />);
   assert.match(html, /<ol/);
   assert.ok(html.indexOf('Prompt first') < html.indexOf('Prompt second'));
   assert.match(html, /appointments\.pipeline\.position/);

@@ -1,13 +1,15 @@
 import { Loader2, RotateCcw } from 'lucide-react';
 
 type ShellConnectionOverlayProps = {
-  mode: 'loading' | 'connect' | 'connecting';
+  mode: 'loading' | 'connect' | 'connecting' | 'error';
   description: string;
   loadingLabel: string;
   connectLabel: string;
   connectTitle: string;
   connectingLabel: string;
+  errorLabel: string;
   onConnect: () => void;
+  onRestart: () => void;
 };
 
 export default function ShellConnectionOverlay({
@@ -17,7 +19,9 @@ export default function ShellConnectionOverlay({
   connectLabel,
   connectTitle,
   connectingLabel,
+  errorLabel,
   onConnect,
+  onRestart,
 }: ShellConnectionOverlayProps) {
   if (mode === 'loading') {
     return (
@@ -47,6 +51,10 @@ export default function ShellConnectionOverlay({
         </div>
       </div>
     );
+  }
+
+  if (mode === 'error') {
+    return <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-950/90 p-6" role="alert"><div className="flex w-full max-w-md flex-col items-center gap-3 text-center"><p className="text-base font-medium text-red-300">{errorLabel}</p><p className="text-sm leading-6 text-gray-300">{description}</p><button type="button" onClick={onRestart} className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-500"><RotateCcw className="h-4 w-4" aria-hidden="true" />Restart shell</button></div></div>;
   }
 
   return (

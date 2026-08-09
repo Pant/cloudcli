@@ -4,12 +4,13 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { ServerEvent } from '../../../contexts/webSocketTypes';
 import { showCompletionTitleIndicator } from '../../../utils/pageTitleNotification';
 import { playChatCompletionSound, playNotificationSound } from '../../../utils/notificationSound';
+import { vibrateForCompletion } from '../../../utils/completionVibration';
 import type { MarkSessionIdle, MarkSessionProcessing } from '../../../hooks/useSessionProtection';
 import type { PendingPermissionRequest } from '../types/types';
 import type { ProjectSession, LLMProvider } from '../../../types/app';
 import type { NormalizedMessage } from '../../../stores/normalizedMessage';
 import type { SessionStore } from '../../../stores/useSessionStore';
-import { authenticatedFetch } from '../../../utils/api.js';
+import { authenticatedFetch } from '../../../utils/api';
 import { createCompletionTokenRefreshController } from '../utils/tokenUsageRefresh';
 
 const isActionablePermissionRequest = (request: { toolName?: unknown } | null | undefined): boolean => {
@@ -232,6 +233,9 @@ export function useChatRealtimeHandlers({
           if (msg.success !== false) {
             showCompletionTitleIndicator();
             void playChatCompletionSound();
+            if (provider === 'opencode' && sid === activeViewSessionId) {
+              vibrateForCompletion();
+            }
           }
 
           // The session id is stable for the whole conversation (allocated

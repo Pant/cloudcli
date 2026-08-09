@@ -78,6 +78,7 @@ export default function Shell({
     isConnected,
     isInitialized,
     isConnecting,
+    connectionError,
     connectToShell,
     disconnectFromShell,
   } = useShellRuntime({
@@ -295,7 +296,7 @@ export default function Shell({
       })
     : t('shell.startCli', { projectName: selectedProject.displayName });
 
-  const overlayMode = !isInitialized ? 'loading' : isConnecting ? 'connecting' : !isConnected ? 'connect' : null;
+  const overlayMode = !isInitialized ? 'loading' : isConnecting ? 'connecting' : connectionError ? 'error' : !isConnected ? 'connect' : null;
   const overlayDescription = overlayMode === 'connecting' ? connectingDescription : readyDescription;
 
   return (
@@ -333,7 +334,9 @@ export default function Shell({
             connectLabel={t('shell.actions.connect')}
             connectTitle={t('shell.actions.connectTitle')}
             connectingLabel={t('shell.connecting')}
+            errorLabel={t('shell.connectionError', { defaultValue: 'Shell connection failed' })}
             onConnect={handleRestartShell}
+            onRestart={handleRestartShell}
           />
         )}
 

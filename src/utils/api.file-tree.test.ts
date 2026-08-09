@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildFileTreeQuery, buildFileTreeUrl } from './api.js';
+import { buildFileTreeQuery, buildFileTreeUrl } from './api';
 
 test('builds encoded root, nested, depth, metadata, and ignore options', () => {
   const query = buildFileTreeQuery({

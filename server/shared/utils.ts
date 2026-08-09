@@ -16,7 +16,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { parseFrontMatter } from '@/shared/frontmatter.js';
 import type {
@@ -49,6 +49,65 @@ type NormalizedMessageInput =
 
 // ---------------------------
 //----------------- HTTP HANDLER UTILITIES ------------
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/**
+ * Returns a bounded caller request ID or generates a new UUID. Server index
+ * uses this to correlate browser and backend request-completion diagnostics.
+ */
+export function resolveRequestId(value: unknown): string {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === 'string' && SAFE_REQUEST_ID.test(candidate) ? candidate : randomUUID();
+}
+
+/**
+ * Builds the safe, query-free request completion record emitted by server
+ * middleware. It deliberately excludes headers, bodies, and query values.
+ */
+export function createRequestCompletionDiagnostic(input: {
+  requestId: string;
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+}): Record<string, unknown> {
+  return {
+    timestamp: new Date().toISOString(),
+    level: input.status >= 500 ? 'error' : input.status >= 400 ? 'warn' : 'info',
+    area: 'http',
+    event: 'request_completed',
+    requestId: input.requestId,
+    method: input.method,
+    path: input.path.split('?')[0],
+    status: input.status,
+    durationMs: Math.max(0, Math.round(input.durationMs)),
+    outcome: input.status >= 500 ? 'server_error' : input.status >= 400 ? 'client_error' : 'success',
+  };
+}
+
+/**
+ * Returns whether server index should emit a completed request to the
+ * operational log. Routine HTTP cache validations are intentionally omitted;
+ * redirects, successful responses, and errors remain observable.
+ */
+export function shouldLogRequestCompletion(status: number): boolean {
+  return status !== 304;
+}
+
+/**
+ * Configures dynamic response caching for server index. API responses are not
+ * stored and Express does not generate implicit ETags, so JSON callers receive
+ * response bodies instead of automatic 304s. Static files and explicitly
+ * revisioned routes retain their deliberate ETag behavior.
+ */
+export function configureDynamicResponseCaching(app: Express): void {
+  app.disable('etag');
+  app.use('/api', (_request, response, next) => {
+    response.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+}
+
 /**
  * Wraps arbitrary data in the standard API success envelope.
  *

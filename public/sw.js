@@ -89,14 +89,38 @@ self.addEventListener('push', event => {
   const options = {
     body: payload.body || '',
     icon: '/logo-256.png',
-    badge: '/logo-128.png',
     data: payload.data || {},
     tag: payload.data?.tag || `${payload.data?.sessionId || 'global'}:${payload.data?.code || 'default'}`,
     renotify: true
   };
+  if (payload.data?.severity !== 'info') {
+    options.badge = '/logo-128.png';
+  }
+
+  const isPrimaryCompletion = payload.data?.code === 'run.stopped'
+    && payload.data?.stopReason === 'completed';
+  const isSubtaskCompletion = payload.data?.code === 'task.completed';
+  const isOpenCodeCompletion = payload.data?.provider === 'opencode'
+    && (isPrimaryCompletion || isSubtaskCompletion);
+  const isReplyableCompletion = isPrimaryCompletion
+    && payload.data?.replyEligible === true;
+  if (isOpenCodeCompletion) {
+    options.vibrate = [200, 100, 200];
+  }
+  if (isReplyableCompletion) {
+    // Notification actions and vibration are best-effort; unsupported browsers
+    // ignore these standard options without affecting notification delivery.
+    options.actions = [{ action: 'reply', title: 'Reply' }];
+  }
 
   event.waitUntil(
-    self.registration.showNotification(payload.title || 'CloudCLI', options)
+    self.registration.showNotification(payload.title || 'CloudCLI', options).catch(() => {
+      if (!isOpenCodeCompletion && !isReplyableCompletion) return undefined;
+      const fallbackOptions = { ...options };
+      delete fallbackOptions.vibrate;
+      delete fallbackOptions.actions;
+      return self.registration.showNotification(payload.title || 'CloudCLI', fallbackOptions);
+    })
   );
 });
 
@@ -107,6 +131,10 @@ self.addEventListener('notificationclick', event => {
   const sessionId = event.notification.data?.sessionId;
   const provider = event.notification.data?.provider || null;
   const urlPath = sessionId ? `/session/${sessionId}` : '/';
+  const isReply = event.action === 'reply' && Boolean(sessionId);
+  const targetUrl = isReply
+    ? `${urlPath}?notificationReply=1`
+    : urlPath;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clientList => {
@@ -117,12 +145,13 @@ self.addEventListener('notificationclick', event => {
             type: 'notification:navigate',
             sessionId: sessionId || null,
             provider,
-            urlPath
+            urlPath,
+            reply: isReply
           });
           return;
         }
       }
-      return self.clients.openWindow(urlPath);
+      return self.clients.openWindow(targetUrl);
     })
   );
 });

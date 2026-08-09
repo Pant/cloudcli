@@ -9,7 +9,7 @@ import {
   appendImagesInputTag,
   normalizeAttachmentDescriptors
 } from '@/shared/image-attachments.js';
-import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
+import { notifyRunFailed, notifyRunStopped, notifyTaskCompleted } from '@/modules/notifications/index.js';
 import type { IProviderRuntime } from '@/shared/interfaces.js';
 import type {
   AnyRecord,
@@ -28,6 +28,7 @@ import {
 
 import { readOpenCodeLatestAssistantWindowTokens } from './opencode-token-usage.provider.js';
 import { createOpenCodeRunDiagnostics } from './opencode-run-diagnostics.provider.js';
+import { extractCompletedOpenCodeTask } from './opencode-sessions.provider.js';
 
 // cross-spawn resolves .cmd shims/PATHEXT on Windows and delegates to
 // child_process.spawn everywhere else.
@@ -272,6 +273,7 @@ export async function spawnOpenCode(
     // Unified lifecycle contract: exactly one terminal `complete` per run
     // (close and error handlers can both fire for spawn failures).
     let completeSent = false;
+    const notifiedTaskIds = new Set<string>();
 
     const notifyTerminalState = ({
       code = null,
@@ -358,6 +360,17 @@ export async function spawnOpenCode(
 
       try {
         registerSession(readOpenCodeSessionId(response));
+        const completedTask = extractCompletedOpenCodeTask(response);
+        if (completedTask && !notifiedTaskIds.has(completedTask.taskId)) {
+          notifiedTaskIds.add(completedTask.taskId);
+          notifyTaskCompleted({
+            userId: ws.userId || null,
+            sessionId: sessionId || capturedSessionId || processKey,
+            sessionName: sessionSummary,
+            taskId: completedTask.taskId,
+            taskSummary: completedTask.summary,
+          });
+        }
         const normalized = context.normalizeMessage(response, capturedSessionId || sessionId || null);
         for (const msg of normalized) {
           ws.send(msg);

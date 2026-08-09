@@ -9,6 +9,7 @@ import Database from 'better-sqlite3';
 
 import { closeConnection, initializeDatabase, sessionRunStateDb, sessionsDb } from '@/modules/database/index.js';
 import { providerRuntimeService, sessionsService } from '@/modules/providers/index.js';
+import { closeSessionsWatcher } from '@/modules/providers/services/sessions-watcher.service.js';
 import { chatRunRegistry, reconcileInterruptedOpenCodeRuns } from '@/modules/websocket/index.js';
 
 class FakeConnection {
@@ -25,10 +26,22 @@ async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promis
   chatRunRegistry.clearAll();
   process.env.DATABASE_PATH = path.join(tempDirectory, 'auth.db');
   await initializeDatabase();
+  const originalRuntime = {
+    health: providerRuntimeService.getHealth,
+    children: providerRuntimeService.listChildActivity,
+    approvals: providerRuntimeService.getPendingApprovalsForSession,
+  };
+  providerRuntimeService.getHealth = () => ({ state: 'missing', startedAt: null, lastOutputAt: null, exitCode: null });
+  providerRuntimeService.listChildActivity = () => [];
+  providerRuntimeService.getPendingApprovalsForSession = () => [];
 
   try {
     await runTest();
   } finally {
+    providerRuntimeService.getHealth = originalRuntime.health;
+    providerRuntimeService.listChildActivity = originalRuntime.children;
+    providerRuntimeService.getPendingApprovalsForSession = originalRuntime.approvals;
+    await closeSessionsWatcher();
     chatRunRegistry.clearAll();
     closeConnection();
     if (previousDatabasePath === undefined) {
@@ -357,7 +370,7 @@ test('listRunningSessions omits unknown parent state for registry-only rows', { 
 });
 
 test('listRunningSessions omits unresolved parent metadata without leaking native ids', { concurrency: false }, async () => {
-  await withIsolatedDatabase(() => {
+  await withOpenCodeHome(async () => withIsolatedDatabase(() => {
     sessionsDb.createAppSession('running-child-app', 'opencode', '/workspace/running-unresolved');
     sessionsDb.createSession(
       'running-child-native',
@@ -385,7 +398,7 @@ test('listRunningSessions omits unresolved parent metadata without leaking nativ
     assert.equal(running.length, 1);
     assert.equal('parentSessionId' in (running[0] ?? {}), false);
     assert.equal(JSON.stringify(running).includes('missing-running-parent-native'), false);
-  });
+  }));
 });
 
 test('listSessionLifecycleStatus preserves durable manual-stop precedence and canonical ancestry', { concurrency: false }, async () => {
@@ -417,29 +430,21 @@ test('listSessionLifecycleStatus preserves durable manual-stop precedence and ca
 });
 
 test('listSessionLifecycleStatus exposes startup-interrupted and terminal outcomes as restartable', { concurrency: false }, async () => {
-  await withIsolatedDatabase(() => {
+  await withOpenCodeHome(async () => withIsolatedDatabase(() => {
     for (const id of ['interrupted', 'failed', 'exited']) sessionsDb.createAppSession(id, 'opencode', '/workspace/restart-status');
     sessionRunStateDb.beginRun({ sessionId: 'interrupted', provider: 'opencode', now: 10 });
     const failed = sessionRunStateDb.beginRun({ sessionId: 'failed', provider: 'opencode', now: 10 });
     sessionRunStateDb.recordTerminal('failed', failed.generation, { lifecycleState: 'failed', terminalReason: 'provider_error', now: 20 });
     const exited = sessionRunStateDb.beginRun({ sessionId: 'exited', provider: 'opencode', now: 10 });
     sessionRunStateDb.recordTerminal('exited', exited.generation, { lifecycleState: 'exited', terminalReason: 'process_exited', now: 20 });
-    const originals = { health: providerRuntimeService.getHealth, children: providerRuntimeService.listChildActivity, approvals: providerRuntimeService.getPendingApprovalsForSession };
-    providerRuntimeService.getHealth = () => ({ state: 'missing', startedAt: null, lastOutputAt: null, exitCode: null });
-    providerRuntimeService.listChildActivity = () => [];
-    providerRuntimeService.getPendingApprovalsForSession = () => [];
-    try { reconcileInterruptedOpenCodeRuns({ now: () => 30 }); } finally {
-      providerRuntimeService.getHealth = originals.health;
-      providerRuntimeService.listChildActivity = originals.children;
-      providerRuntimeService.getPendingApprovalsForSession = originals.approvals;
-    }
+    reconcileInterruptedOpenCodeRuns({ now: () => 30 });
     const status = new Map(sessionsService.listSessionLifecycleStatus(40).map((entry) => [entry.sessionId, entry]));
     assert.equal(status.get('interrupted')?.status, 'stalled');
     assert.equal(status.get('interrupted')?.restartable, true);
     assert.match(status.get('interrupted')?.statusText ?? '', /Restart/);
     assert.equal(status.get('failed')?.status, 'failed');
     assert.equal(status.get('exited')?.status, 'exited');
-  });
+  }));
 });
 
 test('listSessionLifecycleStatus classifies fresh, stale viable, absent-owner, terminal and completed children', { concurrency: false }, async () => {

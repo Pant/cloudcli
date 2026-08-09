@@ -85,3 +85,35 @@ export function shouldApplyCacheHydration(args: {
     && args.hydrationTicket === args.currentHydrationTicket
     && args.appliedFetchTicket === 0;
 }
+
+export type RevisionAcceptance = 'accept' | 'same' | 'reject';
+
+/** Opaque revisions are comparable only for equality; fetch tickets establish freshness. */
+export function acceptCanonicalRevision(current: string | null, incoming: string, staleTicket: boolean): RevisionAcceptance {
+  if (staleTicket) return 'reject';
+  return current === incoming ? 'same' : 'accept';
+}
+
+export function canReuseNotModified(localRevision: string | null, responseRevision: string): boolean {
+  return localRevision !== null && localRevision === responseRevision;
+}
+
+/**
+ * A matching revision is reusable only when its complete canonical row set is
+ * present. Metadata can outlive missing/corrupt IndexedDB message rows, so the
+ * revision alone must never turn a 304 into an empty or truncated history.
+ */
+export function hasCompleteCanonicalSnapshot(args: {
+  canonicalRevision: string | null;
+  serverMessageCount: number;
+  total: number;
+  hasMore: boolean;
+  offset: number;
+}): boolean {
+  return args.canonicalRevision !== null
+    && !args.hasMore
+    && Number.isInteger(args.total)
+    && args.total >= 0
+    && args.total === args.serverMessageCount
+    && args.offset === args.serverMessageCount;
+}

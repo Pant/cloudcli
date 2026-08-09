@@ -682,6 +682,22 @@ export const runMigrations = (db: Database) => {
     db.exec(SESSION_RUN_STATE_INDEXES_SQL);
     db.exec(SESSION_RUN_HISTORY_TABLE_SCHEMA_SQL);
     db.exec(SESSION_RUN_HISTORY_INDEXES_SQL);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS mutation_receipts (
+        scope TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('in_progress', 'completed')),
+        http_status INTEGER,
+        result_json TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (scope, operation, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mutation_receipts_expiry
+      ON mutation_receipts(expires_at, created_at);
+    `);
     migrateAppointmentsQueueSchema(db);
     repairAppointmentOpenCodeSessionMappings(db);
     db.exec(APPOINTMENTS_INDEXES_SQL);

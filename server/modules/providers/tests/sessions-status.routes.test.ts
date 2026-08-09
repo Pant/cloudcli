@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -11,11 +11,15 @@ import express from 'express';
 import { closeConnection, initializeDatabase, sessionRunStateDb, sessionsDb } from '@/modules/database/index.js';
 import providerRoutes from '@/modules/providers/provider.routes.js';
 import { providerRuntimeService } from '@/modules/providers/index.js';
+import { closeSessionsWatcher } from '@/modules/providers/services/sessions-watcher.service.js';
 import { reconcileInterruptedOpenCodeRuns } from '@/modules/websocket/index.js';
 
 test('static session status route returns canonical lifecycle rows', { concurrency: false }, async () => {
   const previous = process.env.DATABASE_PATH;
-  const directory = await mkdtemp(path.join(tmpdir(), 'sessions-status-route-'));
+  const previousHome = os.homedir;
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'sessions-status-route-'));
+  const homeDirectory = await mkdtemp(path.join(os.tmpdir(), 'sessions-status-home-'));
+  (os as any).homedir = () => homeDirectory;
   closeConnection();
   process.env.DATABASE_PATH = path.join(directory, 'auth.db');
   await initializeDatabase();
@@ -46,10 +50,14 @@ test('static session status route returns canonical lifecycle rows', { concurren
     providerRuntimeService.getHealth = originals.health;
     providerRuntimeService.listChildActivity = originals.children;
     providerRuntimeService.getPendingApprovalsForSession = originals.approvals;
+    server.closeIdleConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await closeSessionsWatcher();
+    (os as any).homedir = previousHome;
     closeConnection();
     if (previous === undefined) delete process.env.DATABASE_PATH;
     else process.env.DATABASE_PATH = previous;
     await rm(directory, { recursive: true, force: true });
+    await rm(homeDirectory, { recursive: true, force: true });
   }
 });

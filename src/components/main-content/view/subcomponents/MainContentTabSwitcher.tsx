@@ -1,4 +1,4 @@
-import { MessageSquare, Terminal, Folder, GitBranch, ClipboardCheck, MonitorPlay, type LucideIcon } from 'lucide-react';
+import { MessageSquare, Terminal, Folder, GitBranch, MonitorPlay, type LucideIcon } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -10,7 +10,6 @@ import PluginIcon from '../../../plugins/view/PluginIcon';
 type MainContentTabSwitcherProps = {
   activeTab: AppTab;
   setActiveTab: Dispatch<SetStateAction<AppTab>>;
-  shouldShowTasksTab: boolean;
   shouldShowBrowserTab: boolean;
 };
 
@@ -45,17 +44,9 @@ const BROWSER_TAB: BuiltInTab = {
   icon: MonitorPlay,
 };
 
-const TASKS_TAB: BuiltInTab = {
-  kind: 'builtin',
-  id: 'tasks',
-  labelKey: 'tabs.tasks',
-  icon: ClipboardCheck,
-};
-
 export default function MainContentTabSwitcher({
   activeTab,
   setActiveTab,
-  shouldShowTasksTab,
   shouldShowBrowserTab,
 }: MainContentTabSwitcherProps) {
   const { t } = useTranslation();
@@ -64,7 +55,6 @@ export default function MainContentTabSwitcher({
   const builtInTabs: BuiltInTab[] = [
     ...BASE_TABS,
     ...(shouldShowBrowserTab ? [BROWSER_TAB] : []),
-    ...(shouldShowTasksTab ? [TASKS_TAB] : []),
   ];
 
   const pluginTabs: PluginTab[] = plugins

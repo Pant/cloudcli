@@ -74,6 +74,7 @@ export type UseShellRuntimeResult = {
   isConnected: boolean;
   isInitialized: boolean;
   isConnecting: boolean;
+  connectionError: boolean;
   connectToShell: (options?: { forceRestart?: boolean }) => void;
   disconnectFromShell: (options?: { suppressAutoConnect?: boolean }) => void;
 };

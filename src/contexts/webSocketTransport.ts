@@ -4,6 +4,22 @@ export type RetryPolicy = {
   jitterRatio: number;
 };
 
+import type { WebSocketTransportState } from './webSocketTypes';
+
+export function getWebSocketTransportState(options: {
+  canConnect: boolean;
+  isAuthLoading: boolean;
+  isConnected: boolean;
+  hasConnected: boolean;
+  replayingSubscriptions: number;
+}): WebSocketTransportState {
+  if (options.isAuthLoading) return 'idle';
+  if (!options.canConnect) return 'offline';
+  if (!options.isConnected) return options.hasConnected ? 'degraded' : 'connecting';
+  if (options.replayingSubscriptions > 0) return 'replaying';
+  return 'connected';
+}
+
 export const DEFAULT_WEBSOCKET_RETRY_POLICY: RetryPolicy = {
   baseDelayMs: 1_000,
   maxDelayMs: 30_000,

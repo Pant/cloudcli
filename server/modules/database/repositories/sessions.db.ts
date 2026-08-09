@@ -338,6 +338,7 @@ export const sessionsDb = {
     db.prepare(
       `UPDATE sessions
        SET custom_name = ?
+         , updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
        WHERE session_id = ?`
     ).run(customName, sessionId);
   },

@@ -4,7 +4,10 @@ import test from 'node:test';
 import type { NormalizedMessage } from './normalizedMessage';
 import {
   acceptSequencedEvent,
+  acceptCanonicalRevision,
+  canReuseNotModified,
   deduplicateMessagesById,
+  hasCompleteCanonicalSnapshot,
   reduceRealtimeStream,
   shouldApplyCacheHydration,
   upsertMessageById,
@@ -18,6 +21,30 @@ const message = (id: string, content = id): NormalizedMessage => ({
   kind: 'text',
   role: 'assistant',
   content,
+});
+
+test('opaque canonical revisions use equality plus fetch-ticket freshness', () => {
+  assert.equal(acceptCanonicalRevision('rev-new', 'rev-old', true), 'reject');
+  assert.equal(acceptCanonicalRevision('rev-1', 'rev-1', false), 'same');
+  assert.equal(acceptCanonicalRevision('rev-1', 'rev-2', false), 'accept');
+  assert.equal(canReuseNotModified('rev-1', 'rev-1'), true);
+  assert.equal(canReuseNotModified(null, 'rev-1'), false);
+  assert.equal(canReuseNotModified('rev-2', 'rev-1'), false);
+});
+
+test('conditional history reuse requires a complete canonical row set', () => {
+  assert.equal(hasCompleteCanonicalSnapshot({
+    canonicalRevision: 'rev-1', serverMessageCount: 2, total: 2, hasMore: false, offset: 2,
+  }), true);
+  assert.equal(hasCompleteCanonicalSnapshot({
+    canonicalRevision: 'rev-1', serverMessageCount: 1, total: 2, hasMore: false, offset: 1,
+  }), false);
+  assert.equal(hasCompleteCanonicalSnapshot({
+    canonicalRevision: 'rev-1', serverMessageCount: 2, total: 2, hasMore: true, offset: 2,
+  }), false);
+  assert.equal(hasCompleteCanonicalSnapshot({
+    canonicalRevision: null, serverMessageCount: 0, total: 0, hasMore: false, offset: 0,
+  }), false);
 });
 
 test('idempotent realtime upsert replaces a duplicate message id once', () => {

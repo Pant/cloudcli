@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import type { ServerEvent } from '../contexts/webSocketTypes';
 
 import type { NormalizedMessage } from './normalizedMessage';
 import {
-  AUTOMATIC_CACHE_SYNC_CONCURRENCY,
-  canRunSessionCacheSync,
   getPersistableMessageEvent,
   MANUAL_CACHE_SYNC_CONCURRENCY,
   parseSessionCacheManifest,
@@ -179,45 +178,35 @@ test('force sync records metadata-only sessions and reports partial failures', a
   });
 });
 
-test('uses distinct bounded concurrency for automatic and manual synchronization', async () => {
+test('manual synchronization uses its bounded concurrency without cached metadata lookups', async () => {
   const manifest = Array.from({ length: 12 }, (_, index) => entry(`session-${index}`, String(index)));
-  const run = async (mode: 'automatic' | 'manual') => {
-    let running = 0;
-    let maximum = 0;
-    let metadataLookups = 0;
-    const coordinator = new SessionCacheSyncCoordinator({
-      fetchManifest: async () => manifest,
-      getCachedMetadata: async () => {
-        metadataLookups++;
-        return null;
-      },
-      synchronizeSession: async () => {
-        running++;
-        maximum = Math.max(maximum, running);
-        await new Promise((resolve) => setTimeout(resolve, 2));
-        running--;
-        return { status: 'ok' };
-      },
-      recordSessionMetadata: async () => true,
-      cleanupCache: async () => undefined,
-      getActiveSessionId: () => null,
-      automaticConcurrency: AUTOMATIC_CACHE_SYNC_CONCURRENCY,
-      manualConcurrency: MANUAL_CACHE_SYNC_CONCURRENCY,
-    });
+  let running = 0;
+  let maximum = 0;
+  let metadataLookups = 0;
+  const coordinator = new SessionCacheSyncCoordinator({
+    fetchManifest: async () => manifest,
+    getCachedMetadata: async () => {
+      metadataLookups++;
+      return null;
+    },
+    synchronizeSession: async () => {
+      running++;
+      maximum = Math.max(maximum, running);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      running--;
+      return { status: 'ok' };
+    },
+    recordSessionMetadata: async () => true,
+    cleanupCache: async () => undefined,
+    getActiveSessionId: () => null,
+    manualConcurrency: MANUAL_CACHE_SYNC_CONCURRENCY,
+  });
 
-    const result = mode === 'manual' ? await coordinator.forceSync() : await coordinator.reconcile();
-    return { maximum, metadataLookups, result };
-  };
+  const result = await coordinator.forceSync();
 
-  const automatic = await run('automatic');
-  const manual = await run('manual');
-
-  assert.equal(automatic.maximum, AUTOMATIC_CACHE_SYNC_CONCURRENCY);
-  assert.equal(manual.maximum, MANUAL_CACHE_SYNC_CONCURRENCY);
-  assert.ok(manual.maximum > automatic.maximum);
-  assert.equal(manual.metadataLookups, 0);
-  assert.equal(automatic.result, true);
-  assert.deepEqual(manual.result, {
+  assert.equal(maximum, MANUAL_CACHE_SYNC_CONCURRENCY);
+  assert.equal(metadataLookups, 0);
+  assert.deepEqual(result, {
     eligible: manifest.length,
     succeeded: manifest.length,
     failed: 0,
@@ -315,7 +304,7 @@ test('serializes clear after synchronization and prevents stale writes after cle
     endCacheClear: () => { writes.push('unblock'); },
   });
 
-  const sync = coordinator.reconcile();
+  const sync = coordinator.forceSync();
   const clear = coordinator.clearCache();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(writes, []);
@@ -400,8 +389,19 @@ test('reports clear success only when the repository succeeds and post-clear sta
   });
 });
 
-test('hidden or offline states pause scheduled work', () => {
-  assert.equal(canRunSessionCacheSync('hidden', true), false);
-  assert.equal(canRunSessionCacheSync('visible', false), false);
-  assert.equal(canRunSessionCacheSync('visible', true), true);
+test('runtime cache mount requests persistence without scheduling manifest reconciliation', async () => {
+  const source = await readFile(new URL('./SessionMessageCacheCoordinator.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /requestCachePersistence\(\)/);
+  for (const automaticTrigger of [
+    '.reconcile(',
+    'setInterval(',
+    'setTimeout(',
+    'useWebSocket',
+    'visibilitychange',
+    'websocket_reconnected',
+    'session_upserted',
+  ]) {
+    assert.equal(source.includes(automaticTrigger), false, automaticTrigger);
+  }
 });

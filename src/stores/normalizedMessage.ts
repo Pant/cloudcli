@@ -1,32 +1,13 @@
-import type { LLMProvider } from '../types/app';
+import type { NormalizedMessage as WireNormalizedMessage } from '../../shared/cloudcli-contracts';
 
 /**
  * The normalized message boundary shared by REST history, realtime events,
  * rendering, and the browser cache. Keep this type free of React/store
  * dependencies so persistence code can be used without importing a hook.
  */
-export type MessageKind =
-  | 'text'
-  | 'tool_use'
-  | 'tool_result'
-  | 'thinking'
-  | 'stream_delta'
-  | 'stream_end'
-  | 'error'
-  | 'complete'
-  | 'status'
-  | 'permission_request'
-  | 'permission_cancelled'
-  | 'session_created'
-  | 'interactive_prompt'
-  | 'task_notification';
+export type MessageKind = WireNormalizedMessage['kind'];
 
-export interface NormalizedMessage {
-  id: string;
-  sessionId: string;
-  timestamp: string;
-  provider: LLMProvider;
-  kind: MessageKind;
+export interface NormalizedMessage extends WireNormalizedMessage {
   /** Per-run monotonic sequence number assigned to live websocket events. */
   seq?: number;
   /** Durable run generation paired with seq for realtime cursor safety. */

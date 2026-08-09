@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, type ReactNode } from 'react';
 
 import ThemeContext from './themeContext';
 
-export const ThemeProvider = ({ children }) => {
+export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   // Check for saved theme preference or default to system preference
   const [isDarkMode, setIsDarkMode] = useState(() => {
     // Check localStorage first
@@ -57,7 +57,7 @@ export const ThemeProvider = ({ children }) => {
     if (!window.matchMedia) return;
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e) => {
+    const handleChange = (e: MediaQueryListEvent) => {
       // Only update if user hasn't manually set a preference
       const savedTheme = localStorage.getItem('theme');
       if (!savedTheme) {

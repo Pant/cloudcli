@@ -37,13 +37,14 @@ test('normal execution persists options, streams progress, and records completio
     providerRuntimeService.run = async (_provider, command, options, writer) => {
       assert.equal(command, 'hello');
       assert.equal(options.sessionId, 'normal-run');
+      assert.equal(writer.userId, 42);
       writer.send({ kind: 'text', provider: 'opencode', sessionId: 'native', content: 'answer' });
       writer.send({ kind: 'complete', provider: 'opencode', sessionId: 'native', exitCode: 0 });
     };
     try {
       const connection = new FakeConnection();
       await chatRunLifecycleService.start({
-        sessionId: 'normal-run', command: 'hello', connection,
+        sessionId: 'normal-run', command: 'hello', connection, userId: 42,
         options: { model: 'model-a', agent: 'agent-a', effort: 'high', attachments: [{ path: 'secret' }] },
       });
       await new Promise((resolve) => setImmediate(resolve));
@@ -69,11 +70,12 @@ test('detached manual child restart sends Continue and buffers replay until atta
     providerRuntimeService.run = async (_provider, command, options, writer) => {
       assert.equal(command, 'Continue');
       assert.equal(options.sessionId, childId);
+      assert.equal(writer.userId, 'child-owner');
       writer.send({ kind: 'text', provider: 'opencode', sessionId: 'child-native', content: 'detached' });
       await new Promise<void>((resolve) => { release = resolve; });
     };
     try {
-      const result = await chatRunLifecycleService.manualStart(childId);
+      const result = await chatRunLifecycleService.manualStart(childId, 'child-owner');
       assert.equal(result.sessionId, childId);
       assert.equal(chatRunRegistry.replayEvents(childId, 0)[0]?.content, 'detached');
       const connection = new FakeConnection();

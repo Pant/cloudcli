@@ -1,89 +1,11 @@
+// The compatibility API intentionally retains broad endpoint signatures while
+// consumers migrate incrementally to apiClient.
+// @ts-nocheck
 import { IS_PLATFORM } from "../constants/config";
 
-export const AUTH_TOKEN_REFRESHED_EVENT = 'auth-token-refreshed';
-export const AUTH_SESSION_EXPIRED_EVENT = 'auth-session-expired';
-
-// Only accept a refreshed token that has this app's issued JWT shape
-// (three base64url segments). An attacker-injected/malformed header value
-// must never overwrite the stored auth token.
-/**
- * @param {unknown} token
- * @returns {token is string}
- */
-export const isValidRefreshedToken = (token) =>
-  typeof token === 'string' &&
-  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
-
-const readTokenClaims = (token) => {
-  if (!isValidRefreshedToken(token)) {
-    return null;
-  }
-
-  try {
-    const encodedPayload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const paddedPayload = encodedPayload.padEnd(
-      encodedPayload.length + ((4 - (encodedPayload.length % 4)) % 4),
-      '=',
-    );
-    const payload = JSON.parse(atob(paddedPayload));
-
-    if (
-      typeof payload.iat !== 'number' ||
-      !Number.isFinite(payload.iat) ||
-      typeof payload.exp !== 'number' ||
-      !Number.isFinite(payload.exp)
-    ) {
-      return null;
-    }
-
-    return { issuedAt: payload.iat * 1000, expiresAt: payload.exp * 1000 };
-  } catch {
-    return null;
-  }
-};
-
-export const isAuthTokenExpired = (token) => {
-  const claims = readTokenClaims(token);
-  return claims ? Date.now() >= claims.expiresAt : false;
-};
-
-export const getAuthTokenRefreshDelay = (token) => {
-  const claims = readTokenClaims(token);
-  if (!claims) {
-    return null;
-  }
-
-  const refreshAt = claims.issuedAt + ((claims.expiresAt - claims.issuedAt) / 2);
-  return Math.max(0, refreshAt - Date.now());
-};
-
-export const expireAuthSession = () => {
-  localStorage.removeItem('auth-token');
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event(AUTH_SESSION_EXPIRED_EVENT));
-  }
-};
-
-export const getStoredAuthToken = () => {
-  const token = localStorage.getItem('auth-token');
-  if (token && isAuthTokenExpired(token)) {
-    expireAuthSession();
-    return null;
-  }
-  return token;
-};
-
-export const storeAuthToken = (token) => {
-  if (!isValidRefreshedToken(token)) {
-    return false;
-  }
-
-  localStorage.setItem('auth-token', token);
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(AUTH_TOKEN_REFRESHED_EVENT, { detail: token }));
-  }
-  return true;
-};
+import { apiClient } from './apiClient';
+export * from './authToken';
+import { expireAuthSession, getStoredAuthToken, storeAuthToken } from './authToken';
 
 // Utility function for authenticated API calls
 export const authenticatedFetch = (url, options = {}) => {
@@ -189,8 +111,6 @@ export const api = {
     params.set('offset', String(offset));
     return authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/sessions?${params.toString()}`);
   },
-  projectTaskmaster: (projectId) =>
-    authenticatedFetch(`/api/projects/${encodeURIComponent(projectId)}/taskmaster`),
   listProjectAppointments: (projectId) =>
     authenticatedFetch(`/api/appointments/${encodeURIComponent(projectId)}`),
   createProjectAppointment: (projectId, appointment) =>
@@ -242,39 +162,23 @@ export const api = {
   // Session deletion now mirrors project deletion:
   // - default: archive only (`isArchived = 1`)
   // - hardDelete: remove the row and, by default, its persisted transcript file
-  deleteSession: (sessionId, hardDelete = false) => {
-    const params = new URLSearchParams();
-    if (hardDelete) {
-      params.set('force', 'true');
-    }
-    const qs = params.toString();
-    return authenticatedFetch(`/api/providers/sessions/${sessionId}${qs ? `?${qs}` : ''}`, {
-      method: 'DELETE',
-    });
-  },
+  deleteSession: (sessionId, hardDelete = false, options) => apiClient.deleteSession(sessionId, hardDelete, options),
   getArchivedSessions: () =>
     authenticatedFetch('/api/providers/sessions/archived'),
   // Resolves one session (by app id or provider-native id) to its metadata and
   // owning project — used when a /session/<id> URL isn't in loaded payloads.
   sessionDetails: (sessionId) =>
     authenticatedFetch(`/api/providers/sessions/${encodeURIComponent(sessionId)}`),
-  runningSessions: () =>
-    authenticatedFetch('/api/providers/sessions/running'),
-  sessionLifecycleStatus: () =>
-    authenticatedFetch('/api/providers/sessions/status'),
-  startSession: (sessionId) =>
-    authenticatedFetch(`/api/providers/sessions/${encodeURIComponent(sessionId)}/start`, { method: 'POST' }),
+  runningSessions: (options) => apiClient.runningSessions(options),
+  sessionLifecycleStatus: (options) => apiClient.sessionLifecycleStatus(options),
+  startSession: (sessionId, options) => apiClient.startSession(sessionId, options),
   providerSessionId: (sessionId) =>
     authenticatedFetch(`/api/providers/sessions/${encodeURIComponent(sessionId)}/provider-id`),
   restoreSession: (sessionId) =>
     authenticatedFetch(`/api/providers/sessions/${sessionId}/restore`, {
       method: 'POST',
     }),
-  renameSession: (sessionId, summary) =>
-    authenticatedFetch(`/api/providers/sessions/${sessionId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ summary }),
-    }),
+  renameSession: (sessionId, summary, options) => apiClient.renameSession(sessionId, summary, options),
   // `hardDelete` => server `?force=true` (remove DB row + Claude *.jsonl + sessions rows for path).
   deleteProject: (projectId, hardDelete = false) => {
     const params = new URLSearchParams();
@@ -366,47 +270,6 @@ export const api = {
       body: formData,
       headers: {}, // Let browser set Content-Type for FormData
     }),
-
-  // TaskMaster endpoints — all addressed by DB projectId post-migration.
-  taskmaster: {
-    // Initialize TaskMaster in a project
-    init: (projectId) =>
-      authenticatedFetch(`/api/taskmaster/init/${projectId}`, {
-        method: 'POST',
-      }),
-
-    // Add a new task
-    addTask: (projectId, { prompt, title, description, priority, dependencies }) =>
-      authenticatedFetch(`/api/taskmaster/add-task/${projectId}`, {
-        method: 'POST',
-        body: JSON.stringify({ prompt, title, description, priority, dependencies }),
-      }),
-
-    // Parse PRD to generate tasks
-    parsePRD: (projectId, { fileName, numTasks, append }) =>
-      authenticatedFetch(`/api/taskmaster/parse-prd/${projectId}`, {
-        method: 'POST',
-        body: JSON.stringify({ fileName, numTasks, append }),
-      }),
-
-    // Get available PRD templates
-    getTemplates: () =>
-      authenticatedFetch('/api/taskmaster/prd-templates'),
-
-    // Apply a PRD template
-    applyTemplate: (projectId, { templateId, fileName, customizations }) =>
-      authenticatedFetch(`/api/taskmaster/apply-template/${projectId}`, {
-        method: 'POST',
-        body: JSON.stringify({ templateId, fileName, customizations }),
-      }),
-
-    // Update a task
-    updateTask: (projectId, taskId, updates) =>
-      authenticatedFetch(`/api/taskmaster/update-task/${projectId}/${taskId}`, {
-        method: 'PUT',
-        body: JSON.stringify(updates),
-      }),
-  },
 
   // Browse filesystem for project suggestions
   browseFilesystem: (dirPath = null) => {

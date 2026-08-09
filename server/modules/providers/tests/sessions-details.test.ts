@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { buildSessionUpsertedEvent } from '@/modules/providers/index.js';
-import { flushSessionWatcherUpdatesForTest } from '@/modules/providers/services/sessions-watcher.service.js';
+import { closeSessionsWatcher, flushSessionWatcherUpdatesForTest } from '@/modules/providers/services/sessions-watcher.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { connectedClients } from '@/modules/websocket/index.js';
 import { AppError, normalizeProjectPath } from '@/shared/utils.js';
@@ -23,6 +23,7 @@ async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promis
   try {
     await runTest();
   } finally {
+    await closeSessionsWatcher();
     connectedClients.clear();
     closeConnection();
     if (previousDatabasePath === undefined) {

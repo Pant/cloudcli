@@ -89,8 +89,20 @@ export default defineConfig(({ mode }) => {
                 priority: 25
               },
               {
+                name: 'react-router',
+                test: /node_modules[\\/](?:react-router|react-router-dom)[\\/]/,
+                maxSize: 240000,
+                priority: 21
+              },
+              {
+                name: 'react-dom',
+                test: /node_modules[\\/]react-dom[\\/]/,
+                maxSize: 240000,
+                priority: 21
+              },
+              {
                 name: 'react-core',
-                test: /node_modules[\\/](?:react|react-dom|react-router|react-router-dom|scheduler)[\\/]/,
+                test: /node_modules[\\/](?:react|scheduler)[\\/]/,
                 maxSize: 240000,
                 priority: 20
               },

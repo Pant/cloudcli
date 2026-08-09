@@ -1,0 +1,32 @@
+name: Stability
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Restore validation caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .eslintcache
+            .typecheck-frontend.tsbuildinfo
+            .typecheck-backend.tsbuildinfo
+            .build-backend.tsbuildinfo
+          key: validation-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-${{ hashFiles('package-lock.json', 'package.json') }}-${{ hashFiles('eslint.config.js', 'tsconfig.json', 'server/tsconfig.json', 'server/tsconfig.typecheck.json') }}-${{ hashFiles('src/**', 'server/**', 'shared/**', 'vite.config.*') }}
+      - run: npm run validate:stability

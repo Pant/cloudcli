@@ -12,7 +12,8 @@ import MessageComponent from './MessageComponent';
 type DiffLine = {
   type: string;
   content: string;
-  lineNum: number;
+  oldLine: number | null;
+  newLine: number | null;
 };
 
 interface ToolGroupContainerProps {

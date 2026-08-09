@@ -11,6 +11,19 @@ import {
 
 const wait = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const createScheduler = () => {
+  const timers = new Map<number, () => void>();
+  let id = 0;
+  return {
+    scheduler: {
+      setTimeout(callback: () => void) { const next = ++id; timers.set(next, callback); return next as unknown as ReturnType<typeof setTimeout>; },
+      clearTimeout(timer: ReturnType<typeof setTimeout>) { timers.delete(timer as unknown as number); },
+    },
+    runNext() { const first = timers.entries().next().value as [number, () => void] | undefined; if (first) { timers.delete(first[0]); first[1](); } },
+    size: () => timers.size,
+  };
+};
+
 test('classifies completion, lifecycle/status, reconnect, and session events', () => {
   for (const kind of ['complete', 'lifecycle_status', 'status', 'session_upserted', 'session_deleted']) {
     assert.equal(isLifecycleRelevantEvent({ kind }), true, kind);
@@ -59,4 +72,30 @@ test('immediate invalidation models mount, reconnect, focus, and visibility trig
   controller.invalidate(true);
   await wait();
   assert.equal(calls, 1);
+});
+
+test('fallback polling pauses hidden/offline and resumes through validation', async () => {
+  let visible = false;
+  let online = true;
+  let calls = 0;
+  const timers = createScheduler();
+  const controller = createSessionActivitySyncController({
+    refresh: async () => { calls += 1; },
+    scheduler: timers.scheduler,
+    random: () => 0.5,
+    isVisible: () => visible,
+    isOnline: () => online,
+  });
+  controller.invalidate(true);
+  assert.equal(timers.size(), 0);
+  visible = true;
+  online = false;
+  controller.invalidate(true);
+  assert.equal(timers.size(), 0);
+  online = true;
+  controller.invalidate(true);
+  timers.runNext();
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  controller.dispose();
 });

@@ -29,7 +29,8 @@ import { QuestionFormCard, type QuestionFormSubmitHandler } from './QuestionForm
 type DiffLine = {
   type: string;
   content: string;
-  lineNum: number;
+  oldLine: number | null;
+  newLine: number | null;
 };
 
 type MessageComponentProps = {

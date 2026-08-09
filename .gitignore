@@ -62,8 +62,9 @@ jspm_packages/
 # Optional npm cache directory
 .npm
 
-# Optional eslint cache
-.eslintcache
+# ESLint content cache
+/.eslintcache
+/.test-output/
 
 # Optional REPL history
 .node_repl_history

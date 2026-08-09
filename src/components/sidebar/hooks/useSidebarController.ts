@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 
 import { api } from '../../../utils/api';
+import { ApiError, apiClient } from '../../../utils/apiClient';
 import { usePaletteOps } from '../../../contexts/paletteOps';
 import type { Project, ProjectSession, LLMProvider } from '../../../types/app';
 import type { SessionActivityMap, SessionLifecycleMap } from '../../../hooks/useSessionProtection';
@@ -101,7 +102,6 @@ type UseSidebarControllerArgs = {
   onLoadMoreSessions?: (projectId: string) => Promise<void> | void;
   // `projectId` is the DB-assigned identifier; callbacks use that post-migration.
   onProjectDelete?: (projectId: string) => void;
-  setCurrentProject: (project: Project) => void;
   setSidebarVisible: (visible: boolean) => void;
   sidebarVisible: boolean;
 };
@@ -122,7 +122,6 @@ export function useSidebarController({
   onSessionDelete,
   onLoadMoreSessions,
   onProjectDelete,
-  setCurrentProject,
   setSidebarVisible,
   sidebarVisible,
 }: UseSidebarControllerArgs) {
@@ -159,6 +158,7 @@ export function useSidebarController({
   const starToggleSequenceByProjectRef = useRef<Map<string, number>>(new Map());
   const migrationStartedRef = useRef(false);
   const onRefreshRef = useRef(onRefresh);
+  const renamingSessionIdsRef = useRef(new Set<string>());
 
   const isSidebarCollapsed = !isMobile && !sidebarVisible;
   const activeSessionIds = useMemo(() => new Set(activeSessions.keys()), [activeSessions]);
@@ -800,21 +800,11 @@ export function useSidebarController({
     setSessionDeleteConfirmation(null);
 
     try {
-      const response = await api.deleteSession(sessionId, hardDelete);
-
-      if (response.ok) {
-        onSessionDelete?.(sessionId);
-        await fetchArchivedSessions();
-      } else {
-        const errorText = await response.text();
-        console.error('[Sidebar] Failed to delete session:', {
-          status: response.status,
-          error: errorText,
-        });
-        alert(t('messages.deleteSessionFailed'));
-      }
+      await apiClient.deleteSession(sessionId, hardDelete);
+      onSessionDelete?.(sessionId);
+      await fetchArchivedSessions();
     } catch (error) {
-      console.error('[Sidebar] Error deleting session:', error);
+      console.error('[Sidebar] Error deleting session:', error instanceof ApiError ? { status: error.status, code: error.code, requestId: error.requestId, message: error.message } : error);
       alert(t('messages.deleteSessionError'));
     }
   }, [fetchArchivedSessions, onSessionDelete, sessionDeleteConfirmation, t]);
@@ -868,9 +858,8 @@ export function useSidebarController({
   const handleProjectSelect = useCallback(
     (project: Project) => {
       onProjectSelect(project);
-      setCurrentProject(project);
     },
-    [onProjectSelect, setCurrentProject],
+    [onProjectSelect],
   );
 
   const openArchivedSession = useCallback((session: ArchivedSessionListItem) => {
@@ -966,18 +955,22 @@ export function useSidebarController({
         setEditingSessionName('');
         return;
       }
+      if (renamingSessionIdsRef.current.has(sessionId)) return;
+      renamingSessionIdsRef.current.add(sessionId);
+      const actionId = globalThis.crypto?.randomUUID?.() ?? `rename_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       try {
-        const response = await api.renameSession(sessionId, trimmed);
-        if (response.ok) {
-          await onRefresh();
-        } else {
-          console.error('[Sidebar] Failed to rename session:', response.status);
-          alert(t('messages.renameSessionFailed'));
-        }
+        await apiClient.renameSession(sessionId, trimmed, { clientMutationId: actionId }, { idempotencyKey: actionId });
+        await onRefresh();
       } catch (error) {
-        console.error('[Sidebar] Error renaming session:', error);
-        alert(t('messages.renameSessionError'));
+        console.error('[Sidebar] Error renaming session:', error instanceof ApiError ? { status: error.status, code: error.code, requestId: error.requestId, message: error.message } : error);
+        if (error instanceof ApiError && error.code === 'SESSION_REVISION_CONFLICT') {
+          await onRefresh();
+          alert(t('messages.renameSessionConflict', 'This session changed elsewhere. The latest name has been refreshed.'));
+        } else {
+          alert(t('messages.renameSessionError'));
+        }
       } finally {
+        renamingSessionIdsRef.current.delete(sessionId);
         setEditingSession(null);
         setEditingSessionName('');
       }

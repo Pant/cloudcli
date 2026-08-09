@@ -1,6 +1,28 @@
 import type { IncomingMessage } from 'node:http';
 import type { Readable } from 'node:stream';
 
+import type {
+  ApiSuccessEnvelope,
+  ChatSubscriptionCursor as SharedChatSubscriptionCursor,
+  MessageKind as SharedMessageKind,
+  NormalizedMessage as SharedNormalizedMessage,
+  SessionHistoryPayload,
+  SessionLifecycleContext as SharedSessionLifecycleContext,
+  SessionLifecycleSnapshot as SharedSessionLifecycleSnapshot,
+} from '../../shared/cloudcli-contracts.js';
+
+export type {
+  ApiErrorEnvelope,
+  ApiSuccessEnvelope,
+  ChatSubscribeCommand,
+  ChatSubscribedEvent,
+  ContractParseFailure,
+  ContractParseResult,
+  RunningSessionSnapshot,
+  SequencedChatEvent,
+  SessionHistoryEnvelope,
+} from '../../shared/cloudcli-contracts.js';
+
 //----------------- HTTP RESPONSE SHAPES ------------
 /**
  * Canonical success envelope used by backend APIs that return a structured payload.
@@ -8,10 +30,7 @@ import type { Readable } from 'node:stream';
  * Use this for route handlers that need a stable `success/data` shape so frontend
  * consumers can parse responses consistently across endpoints.
  */
-export type ApiSuccessShape<TData = unknown> = {
-  success: true;
-  data: TData;
-};
+export type ApiSuccessShape<TData = unknown> = ApiSuccessEnvelope<TData>;
 
 /**
  * Generic plain-object record used when parsing loosely typed JSON payloads.
@@ -36,11 +55,7 @@ export type RealtimeClientConnection = {
 };
 
 /** Generation-aware cursor sent by a browser when subscribing to one chat run. */
-export type ChatSubscriptionCursor = {
-  sessionId: string;
-  generation?: number;
-  lastSeq?: number;
-};
+export type ChatSubscriptionCursor = SharedChatSubscriptionCursor;
 
 /**
  * Replay metadata returned before requester-specific replay frames are delivered.
@@ -251,42 +266,15 @@ export type SessionLifecycleStatus = Exclude<SessionRunLifecycleState, 'complete
  * Canonical session/project context attached to lifecycle status responses.
  * Provider-native identifiers are deliberately absent from this API contract.
  */
-export type SessionLifecycleContext = {
-  sessionId: string;
-  provider: LLMProvider;
-  parentSessionId?: string | null;
-  session: {
-    id: string;
-    provider: LLMProvider;
-    model: string | null;
-    agent: string | null;
-    summary: string;
-    lastActivity: string;
-  };
-  project: {
-    projectId: string;
-    path: string;
-    fullPath: string;
-    displayName: string;
-    isStarred: boolean;
-  } | null;
-};
+export type SessionLifecycleContext = SharedSessionLifecycleContext;
 
 /**
  * One bounded actionable lifecycle row returned by the provider status API.
  * All ids are canonical CloudCLI ids; ancestors are inactive rendering context.
  */
-export type SessionLifecycleSnapshot = SessionLifecycleContext & {
-  status: SessionLifecycleStatus;
-  statusText: string | null;
-  lastActivityAt: number;
-  restartable: boolean;
-  canInterrupt: boolean;
-  terminalReason: SessionRunTerminalReason | null;
-  exitCode: number | null;
-  /** Browser-safe OS termination signal for the current generation, when known. */
+export type SessionLifecycleSnapshot = SharedSessionLifecycleSnapshot & {
+  /** Backend narrows browser-safe signals to Node's known signal names. */
   signal?: NodeJS.Signals | null;
-  ancestors?: SessionLifecycleContext[];
 };
 
 /** Input accepted when a user send or explicit manual start creates a generation. */
@@ -612,21 +600,7 @@ export type ProviderSessionModel = {
  *
  * Keep this union in sync with event kinds produced by provider session adapters.
  */
-export type MessageKind =
-  | 'text'
-  | 'tool_use'
-  | 'tool_result'
-  | 'thinking'
-  | 'stream_delta'
-  | 'stream_end'
-  | 'error'
-  | 'complete'
-  | 'status'
-  | 'permission_request'
-  | 'permission_cancelled'
-  | 'session_created'
-  | 'interactive_prompt'
-  | 'task_notification';
+export type MessageKind = SharedMessageKind;
 
 /**
  * Event kinds added by the chat gateway layer on top of provider message kinds.
@@ -658,67 +632,7 @@ export type ServerEventKind = MessageKind | GatewayEventKind;
  * Every provider-specific message must be converted into this shape before being
  * emitted outside provider-specific modules.
  */
-export type NormalizedMessage = {
-  id: string;
-  sessionId: string;
-  timestamp: string;
-  provider: LLMProvider;
-  kind: MessageKind;
-  /**
-   * Monotonic per-run sequence number assigned by the chat run registry when a
-   * live event is forwarded to the websocket. History messages loaded over
-   * REST do not carry it. Clients use it with `chat.subscribe` to replay only
-   * the live events they missed across websocket reconnects.
-   */
-  seq?: number;
-  /** Durable run generation paired with `seq` on every live sequenced event. */
-  generation?: number;
-  role?: 'user' | 'assistant';
-  content?: string;
-  /**
-   * Optional display-oriented metadata used by providers that need to expose
-   * richer transcript artifacts without introducing a brand-new message kind.
-   *
-   * Current Claude usage:
-   * - local slash commands expose parsed command fields
-   * - compact summaries are flagged so the UI can treat them differently later
-   */
-  displayText?: string;
-  commandName?: string;
-  commandMessage?: string;
-  commandArgs?: string;
-  isLocalCommand?: boolean;
-  isLocalCommandStdout?: boolean;
-  isCompactSummary?: boolean;
-  images?: unknown;
-  /** Non-image files attached to a user turn after provider history normalization. */
-  files?: unknown;
-  toolName?: string;
-  toolInput?: unknown;
-  toolId?: string;
-  toolResult?: {
-    content?: string;
-    isError?: boolean;
-    toolUseResult?: unknown;
-  };
-  isError?: boolean;
-  text?: string;
-  tokens?: number;
-  canInterrupt?: boolean;
-  requestId?: string;
-  input?: unknown;
-  context?: unknown;
-  reason?: string;
-  newSessionId?: string;
-  status?: string;
-  summary?: string;
-  tokenBudget?: unknown;
-  subagentTools?: unknown;
-  toolUseResult?: unknown;
-  sequence?: number;
-  rowid?: number;
-  [key: string]: unknown;
-};
+export type NormalizedMessage = SharedNormalizedMessage;
 
 /**
  * Output gateway shared by WebSocket and SSE provider runs.
@@ -799,14 +713,7 @@ export type FetchHistoryOptions = {
  *
  * Use this as the contract for APIs that return paginated conversation history.
  */
-export type FetchHistoryResult = {
-  messages: NormalizedMessage[];
-  total: number;
-  hasMore: boolean;
-  offset: number;
-  limit: number | null;
-  tokenUsage?: unknown;
-};
+export type FetchHistoryResult = Omit<SessionHistoryPayload, 'revision'> & { revision?: string };
 
 // ---------------------------
 //----------------- PROVIDER SKILL TYPES ------------

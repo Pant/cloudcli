@@ -9,6 +9,7 @@ import { providerTokenUsageService } from '@/modules/providers/services/provider
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+import { sessionMutationsService } from '@/modules/providers/services/session-mutations.service.js';
 import type {
   LLMProvider,
   McpScope,
@@ -20,9 +21,27 @@ import type {
   UpsertProviderMcpServerInput,
 } from '@/shared/types.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
-import { chatRunLifecycleService } from '@/modules/websocket/index.js';
+
+import { CLOUDCLI_PROTOCOL_VERSION } from '../../../shared/cloudcli-contracts.js';
 
 const router = express.Router();
+
+const mutationMetadata = (req: Request) => {
+  const user = (req as Request & { user?: { id?: string | number; userId?: string | number } }).user;
+  const identity = user?.id ?? user?.userId;
+  const idempotencyKey = readOptionalQueryString(req.header('Idempotency-Key'));
+  const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  return {
+    scope: identity === undefined ? 'legacy:unauthenticated' : `user:${String(identity)}`,
+    idempotencyKey,
+    clientMutationId: readOptionalQueryString(body.clientMutationId ?? req.header('X-Client-Mutation-ID')),
+  };
+};
+
+const authenticatedIdentity = (req: Request): string | number | null => {
+  const user = (req as Request & { user?: { id?: string | number; userId?: string | number } }).user;
+  return user?.id ?? user?.userId ?? null;
+};
 
 const readPathParam = (value: unknown, name: string): string => {
   if (typeof value === 'string') {
@@ -678,8 +697,8 @@ router.post(
   '/sessions/:sessionId/start',
   asyncHandler(async (req: Request, res: Response) => {
     const sessionId = parseSessionId(req.params.sessionId);
-    const result = await chatRunLifecycleService.manualStart(sessionId);
-    res.status(202).json(createApiSuccessResponse(result));
+    const result = await sessionMutationsService.start(sessionId, mutationMetadata(req), authenticatedIdentity(req));
+    res.status(result.httpStatus).json(createApiSuccessResponse(result.payload));
   }),
 );
 
@@ -756,8 +775,10 @@ router.put(
   asyncHandler(async (req: Request, res: Response) => {
     const sessionId = parseSessionId(req.params.sessionId);
     const summary = parseSessionRenameSummary(req.body);
-    const result = sessionsService.renameSessionById(sessionId, summary);
-    res.json(createApiSuccessResponse(result));
+    const body = req.body as Record<string, unknown>;
+    const expectedRevision = readOptionalQueryString(body.expectedRevision ?? req.header('If-Match'))?.replace(/^W\//, '').replace(/^"|"$/g, '');
+    const result = await sessionMutationsService.rename(sessionId, summary, expectedRevision, mutationMetadata(req));
+    res.status(result.httpStatus).json(createApiSuccessResponse(result.payload));
   }),
 );
 
@@ -792,11 +813,20 @@ router.get(
       offset = parsedOffset;
     }
 
+    const completeHistory = limit === null && offset === 0;
+    const revision = sessionsService.getHistoryRevision(sessionId);
+    const etag = `"${revision.replaceAll('"', '')}"`;
+    res.setHeader('ETag', etag);
+    if (completeHistory && req.headers['if-none-match']?.split(',').some((candidate) => candidate.trim().replace(/^W\//, '') === etag)) {
+      res.status(304).end();
+      return;
+    }
+
     const result = await sessionsService.fetchHistory(sessionId, {
       limit,
       offset,
     });
-    res.json(createApiSuccessResponse(result));
+    res.json({ ...createApiSuccessResponse(result), protocolVersion: CLOUDCLI_PROTOCOL_VERSION });
   }),
 );
 

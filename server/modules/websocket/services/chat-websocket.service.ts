@@ -19,6 +19,8 @@ import type {
 } from '@/shared/types.js';
 import { parseIncomingJsonObject } from '@/shared/utils.js';
 
+import { CLOUDCLI_PROTOCOL_VERSION } from '../../../../shared/cloudcli-contracts.js';
+
 /** Backward-compatible image filter consumed by existing websocket tests. */
 export function filterImagesToUploadStore(
   images: unknown,
@@ -241,7 +243,12 @@ function handleChatSubscribe(
 
     sendJson(ws, {
       kind: 'chat_subscribed',
+      protocolVersion: CLOUDCLI_PROTOCOL_VERSION,
       sessionId,
+      historyRevision: (() => {
+        const session = sessionsDb.getSessionById(sessionId);
+        return session ? session.updated_at ?? session.created_at : null;
+      })(),
       generation: snapshot.generation,
       isProcessing: snapshot.isProcessing,
       lastSeq: snapshot.lastSeq,

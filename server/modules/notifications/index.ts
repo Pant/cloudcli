@@ -9,6 +9,10 @@ export {
   notifyRunFailed,
   // Used by provider runtimes to report stopped or completed agent runs.
   notifyRunStopped,
+  // Used by the OpenCode runtime to report completed Task tool calls.
+  notifyTaskCompleted,
+  // Used by notification integration tests to replace Web Push network delivery.
+  setNotificationWebPushSenderForTests,
 } from '@/modules/notifications/services/notification-orchestrator.service.js';
 export {
   registerDesktopNotificationClient,

@@ -70,7 +70,7 @@ export function useShellRuntime({
     mobileModifierInput,
   });
 
-  const { isConnected, isConnecting, connectToShell, disconnectFromShell } = useShellConnection({
+  const { isConnected, isConnecting, connectionError, connectToShell, disconnectFromShell } = useShellConnection({
     wsRef,
     terminalRef,
     fitAddonRef,
@@ -120,6 +120,7 @@ export function useShellRuntime({
     isConnected,
     isInitialized,
     isConnecting,
+    connectionError,
     connectToShell,
     disconnectFromShell,
   };

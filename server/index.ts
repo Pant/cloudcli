@@ -9,7 +9,7 @@ import http from 'http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 
-import { AppError, findApplicationRoot, getModuleDirectory, terminalTextStyles } from '@/shared/utils.js';
+import { AppError, configureDynamicResponseCaching, createRequestCompletionDiagnostic, findApplicationRoot, getModuleDirectory, resolveRequestId, shouldLogRequestCompletion, terminalTextStyles } from '@/shared/utils.js';
 import {
     closeSessionsWatcher,
     initializeSessionsWatcher,
@@ -26,7 +26,6 @@ import {
     authRoutes,
     validateApiKey,
 } from './modules/auth/index.js';
-import { taskmasterRoutes } from './modules/taskmaster/index.js';
 import { commandsRoutes } from './modules/commands/index.js';
 import { settingsRoutes } from './modules/settings/index.js';
 import { createSystemModule } from './modules/system/index.js';
@@ -81,6 +80,7 @@ const systemRoutes = createSystemModule({
 console.log('SERVER_PORT from env:', process.env.SERVER_PORT);
 
 const app = express();
+configureDynamicResponseCaching(app);
 const server = http.createServer(app);
 const queryClaude = providerRuntimeService.getRunner('claude');
 const queryCursor = providerRuntimeService.getRunner('cursor');
@@ -122,7 +122,23 @@ const wss = createWebSocketServer(server, {
 // Make WebSocket server available to routes
 app.locals.wss = wss;
 
-app.use(cors({ exposedHeaders: ['X-Refreshed-Token', 'X-Auth-Error'] }));
+app.use((req, res, next) => {
+    const requestId = resolveRequestId(req.headers['x-request-id']);
+    const startedAt = performance.now();
+    res.setHeader('X-Request-ID', requestId);
+    res.on('finish', () => {
+        if (!shouldLogRequestCompletion(res.statusCode)) return;
+        console.log(JSON.stringify(createRequestCompletionDiagnostic({
+            requestId,
+            method: req.method,
+            path: req.originalUrl,
+            status: res.statusCode,
+            durationMs: performance.now() - startedAt,
+        })));
+    });
+    next();
+});
+app.use(cors({ exposedHeaders: ['X-Refreshed-Token', 'X-Auth-Error', 'X-Request-ID'] }));
 app.use(express.json({
     limit: '50mb',
     type: (req) => {
@@ -167,9 +183,6 @@ app.use('/api/git', authenticateToken, gitRoutes);
 // Git worktree management (protected)
 app.use('/api/worktrees', authenticateToken, worktreesRoutes);
 app.use('/api/appointments', authenticateToken, appointmentsRouter);
-
-// TaskMaster API Routes (protected)
-app.use('/api/taskmaster', authenticateToken, taskmasterRoutes);
 
 // Commands API Routes (protected)
 app.use('/api/commands', authenticateToken, commandsRoutes);

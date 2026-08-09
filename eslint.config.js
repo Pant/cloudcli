@@ -63,6 +63,9 @@ export default tseslint.config(
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
 
+      // Views consume adapters/services/API modules rather than creating a
+      // second network boundary inside rendering code.
+
       // --- React Refresh (Vite HMR) ---
       "react-refresh/only-export-components": [
         "warn",
@@ -93,6 +96,70 @@ export default tseslint.config(
       "no-control-regex": "off",
       "no-useless-escape": "off",
     },
+  },
+  {
+    files: ["src/**/view/**/*.{ts,tsx,js,jsx}"],
+    ignores: [
+      // Baseline legacy views have follow-up adapter migrations; all new view
+      // modules and already-clean views are protected immediately.
+      "src/components/browser-use/view/BrowserUsePanel.tsx",
+      "src/components/chat/view/subcomponents/ChatMessageFiles.tsx",
+      "src/components/chat/view/subcomponents/ChatMessageImages.tsx",
+      "src/components/code-editor/view/subcomponents/CodeEditorMediaPreview.tsx",
+      "src/components/file-tree/view/ImageViewer.tsx",
+      "src/components/main-content/view/MainContent.tsx",
+      "src/components/onboarding/view/Onboarding.tsx",
+      "src/components/plugins/view/PluginIcon.tsx",
+      "src/components/plugins/view/PluginTabContent.tsx",
+      "src/components/settings/view/tabs/agents-settings/sections/content/OpenCodeAgentsContent.tsx",
+      "src/components/settings/view/tabs/browser-use-settings/BrowserUseSettingsTab.tsx",
+      "src/components/version-upgrade/view/VersionUpgradeModal.tsx",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: "CallExpression[callee.name='fetch']", message: "View code must call a feature adapter/service instead of raw fetch()." },
+        { selector: "CallExpression[callee.name='authenticatedFetch']", message: "View code must call a feature adapter/service instead of authenticatedFetch()." },
+      ],
+    },
+  },
+  {
+    files: ["src/shared/view/ui/**/*.{ts,tsx,js,jsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [{ group: ["**/components/**"], message: "Shared UI cannot import feature component internals." }] },
+      ],
+    },
+  },
+  {
+    files: [
+      "src/main.tsx",
+      "src/utils/{api,apiClient,authToken}.ts",
+      "src/contexts/{ThemeContext,TasksSettingsContext,WebSocketContext}.tsx",
+      "src/hooks/useLocalStorage.ts",
+      "src/lib/serverState.ts",
+      "src/stores/useSessionStore.ts",
+    ],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "react-hooks/exhaustive-deps": "error",
+      "react/jsx-key": "error",
+      "unused-imports/no-unused-imports": "off",
+      "unused-imports/no-unused-vars": "off",
+      "import-x/no-duplicates": "off",
+      "import-x/order": "off",
+      "react-refresh/only-export-components": "off",
+      "react/no-children-prop": "off",
+      "react/no-unknown-property": "off",
+    },
+  },
+  {
+    files: ["src/utils/api.ts"],
+    rules: { "@typescript-eslint/ban-ts-comment": "off" },
   },
   {
     files: ["server/**/*.{js,ts}"], // apply this block only to backend source files

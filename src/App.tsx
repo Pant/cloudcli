@@ -4,13 +4,12 @@ import type { i18n as I18nInstance } from 'i18next';
 
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, ProtectedRoute } from './components/auth';
-import { TaskMasterProvider } from './contexts/TaskMasterContext';
-import { TasksSettingsProvider } from './contexts/TasksSettingsContext';
 import { WebSocketProvider } from './contexts/WebSocketContext';
 import { PluginsProvider } from './contexts/PluginsContext';
 import { appRoutes } from './appRoutes';
 import { SessionStoreProvider } from './stores/sessionStoreProvider';
 import { SessionMessageCacheCoordinator } from './stores/SessionMessageCacheCoordinator';
+import ErrorBoundary from './components/main-content/view/ErrorBoundary';
 
 const DEPLOYMENT_ASSET_DIRECTORIES = new Set(['assets', 'static', 'icons', 'images']);
 
@@ -106,28 +105,26 @@ export default function App({ i18n }: { i18n: I18nInstance }) {
   const routerBasename = detectRouterBasename();
 
   return (
+    <ErrorBoundary area="application" name="Application" root showDetails retryLabel="Reload CloudCLI" onRetry={() => window.location.reload()}>
     <I18nextProvider i18n={i18n}>
       <ThemeProvider>
         <AuthProvider>
           <WebSocketProvider>
             <PluginsProvider>
-              <TasksSettingsProvider>
-                <TaskMasterProvider>
-                  <ProtectedRoute>
+              <ProtectedRoute>
                     <SessionStoreProvider>
                       <SessionMessageCacheCoordinator />
                       <Router basename={routerBasename}>
                         <AppRoutes />
                       </Router>
                     </SessionStoreProvider>
-                  </ProtectedRoute>
-                </TaskMasterProvider>
-              </TasksSettingsProvider>
+              </ProtectedRoute>
             </PluginsProvider>
           </WebSocketProvider>
         </AuthProvider>
       </ThemeProvider>
     </I18nextProvider>
+    </ErrorBoundary>
   );
 }
 

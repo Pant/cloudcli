@@ -9,6 +9,7 @@ export const appRoutes: RouteObject[] = [
     children: [
       { index: true, element: <></> },
       { path: 'session/:sessionId', element: <></> },
+      { path: 'project/:projectId/new', element: <></> },
     ],
   },
 ];

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   getWebSocketRetryDelay,
+  getWebSocketTransportState,
   isCurrentWebSocketLifecycle,
   shouldRetryWebSocketClose,
 } from './webSocketTransport';
@@ -13,6 +14,15 @@ test('retry delay uses bounded exponential backoff with bounded jitter', () => {
   assert.equal(getWebSocketRetryDelay(0, 1, policy), 1_200);
   assert.equal(getWebSocketRetryDelay(3, 0.5, policy), 8_000);
   assert.equal(getWebSocketRetryDelay(20, 1, policy), 8_000);
+});
+
+test('transport state maps authentication, reconnect degradation, and scoped replay signals', () => {
+  assert.equal(getWebSocketTransportState({ canConnect: false, isAuthLoading: true, isConnected: false, hasConnected: false, replayingSubscriptions: 0 }), 'idle');
+  assert.equal(getWebSocketTransportState({ canConnect: false, isAuthLoading: false, isConnected: false, hasConnected: false, replayingSubscriptions: 0 }), 'offline');
+  assert.equal(getWebSocketTransportState({ canConnect: true, isAuthLoading: false, isConnected: false, hasConnected: false, replayingSubscriptions: 0 }), 'connecting');
+  assert.equal(getWebSocketTransportState({ canConnect: true, isAuthLoading: false, isConnected: false, hasConnected: true, replayingSubscriptions: 0 }), 'degraded');
+  assert.equal(getWebSocketTransportState({ canConnect: true, isAuthLoading: false, isConnected: true, hasConnected: true, replayingSubscriptions: 1 }), 'replaying');
+  assert.equal(getWebSocketTransportState({ canConnect: true, isAuthLoading: false, isConnected: true, hasConnected: true, replayingSubscriptions: 0 }), 'connected');
 });
 
 test('an opened connection can reset retry calculation to the first attempt', () => {

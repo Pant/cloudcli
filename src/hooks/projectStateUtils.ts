@@ -21,6 +21,25 @@ export type SessionUpsert = {
   } | null;
 };
 
+export function sessionHistoryRevision(session: ProjectSession | null | undefined): string | null {
+  const revision = session?.lastActivity ?? session?.updated_at ?? session?.createdAt ?? session?.created_at;
+  return typeof revision === 'string' && revision.length > 0 ? revision : null;
+}
+
+export function shouldSignalExternalHistoryRefresh(args: {
+  viewedSessionId: string | null;
+  eventSessionId: string;
+  active: boolean;
+  currentRevision: string | null;
+  incomingRevision: string | null;
+  lastSignaledRevision: string | null;
+}): boolean {
+  if (args.viewedSessionId !== args.eventSessionId || args.active) return false;
+  if (args.incomingRevision === null) return true;
+  return args.incomingRevision !== args.currentRevision
+    && args.incomingRevision !== args.lastSignaledRevision;
+}
+
 const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
 export const getProjectSessions = (project: Project): ProjectSession[] => project.sessions ?? [];

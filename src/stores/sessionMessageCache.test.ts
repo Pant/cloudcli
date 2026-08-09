@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 
 import type { NormalizedMessage } from './normalizedMessage';
 import {
@@ -11,6 +11,11 @@ import {
   SESSION_MESSAGE_CACHE_METADATA_STORE,
   SessionMessageCacheRepository,
 } from './sessionMessageCache';
+
+Object.defineProperty(globalThis, 'IDBKeyRange', {
+  configurable: true,
+  value: IDBKeyRange,
+});
 
 function message(
   id: string,
@@ -121,11 +126,13 @@ test('records metadata, identifies changed manifest revisions, and cleans absent
   const repository = createRepository('cache-metadata');
   await repository.replaceSession('user-a', 'session-1', [message('one', '2026-01-01T00:00:00Z')], [], {
     revision: 'rev-1',
+    canonicalRevision: 'rev-1',
     fetchedAt: 123,
   });
   await repository.replaceSession('user-a', 'session-2', [message('two', '2026-01-01T00:00:00Z')]);
   assert.deepEqual(await repository.getSessionMetadata('user-a', 'session-1'), {
     revision: 'rev-1',
+    canonicalRevision: 'rev-1',
     fetchedAt: 123,
   });
   assert.equal(await repository.getSessionRevision('user-a', 'session-1'), 'rev-1');
@@ -220,6 +227,49 @@ test('clears one user namespace atomically and preserves other users', async () 
   assert.deepEqual(await repository.getCacheStats('user-b'), { sessionCount: 1, messageCount: 1 });
   assert.deepEqual(await repository.hydrateSession('user-b', 'session-1')?.then((result) => result?.messages.map((row) => row.id)), ['b-one']);
   assert.equal(await repository.getSessionMetadata('user-b', 'session-1').then((metadata) => metadata?.revision), 'b-revision');
+});
+
+test('bulk-clears a large namespace by primary-key range without cursor deletion', async () => {
+  const repository = createRepository('cache-clear-large-range');
+  const largeMessages = Array.from({ length: 5_000 }, (_, index) => message(
+    `large-${index}`,
+    new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+  ));
+  await repository.replaceSession('user-a', 'large-session', largeMessages, [], { revision: 'large' });
+  await repository.setSessionMetadata('user-a', 'metadata-only', { historyReady: false });
+
+  const preservedNamespaces = ['user-', 'user-a-child', 'user-a0', 'user-b'];
+  for (const [index, namespace] of preservedNamespaces.entries()) {
+    await repository.replaceSession(namespace, 'session-1', [
+      message(`preserved-${index}`, '2026-01-01T00:00:00Z'),
+    ], [], { revision: namespace });
+  }
+
+  const originalOpenCursor = IDBObjectStore.prototype.openCursor;
+  let cursorCalls = 0;
+  IDBObjectStore.prototype.openCursor = function (...args: Parameters<IDBObjectStore['openCursor']>) {
+    cursorCalls += 1;
+    return originalOpenCursor.apply(this, args);
+  };
+  try {
+    assert.equal(await repository.clearUserCache('user-a'), true);
+  } finally {
+    IDBObjectStore.prototype.openCursor = originalOpenCursor;
+  }
+
+  assert.equal(cursorCalls, 0);
+  assert.deepEqual(await repository.getCacheStats('user-a'), { sessionCount: 0, messageCount: 0 });
+  assert.equal(await repository.getSessionMetadata('user-a', 'metadata-only'), null);
+  for (const [index, namespace] of preservedNamespaces.entries()) {
+    assert.deepEqual(await repository.getCacheStats(namespace), { sessionCount: 1, messageCount: 1 });
+    assert.deepEqual(
+      await repository.hydrateSession(namespace, 'session-1').then((result) => result?.messages.map((row) => row.id)),
+      [`preserved-${index}`],
+    );
+  }
+
+  assert.equal(await repository.clearUserCache('user-a'), true);
+  assert.deepEqual(await repository.getCacheStats('user-a'), { sessionCount: 0, messageCount: 0 });
 });
 
 test('clear and stats are safe to repeat and fail open for invalid or unavailable storage', async () => {

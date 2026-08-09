@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
-import { useMatch, useNavigate } from 'react-router-dom';
+import { useLocation, useMatch, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useWebSocket } from '../../contexts/useWebSocket';
@@ -9,7 +9,7 @@ import { useDeviceSettings } from '../../hooks/useDeviceSettings';
 import { useSessionProtection } from '../../hooks/useSessionProtection';
 import { useProjectsState } from '../../hooks/useProjectsState';
 import { useQueuedMessageAutoSend } from '../../hooks/useQueuedMessageAutoSend';
-import { api } from '../../utils/api';
+import { apiClient } from '../../utils/apiClient';
 import type {
   LLMProvider,
   ProjectSession,
@@ -18,6 +18,7 @@ import type {
   SessionLifecycleSnapshot,
   SessionLifecycleStatus,
 } from '../../types/app';
+import ErrorBoundary from '../main-content/view/ErrorBoundary';
 
 import { createSessionActivitySyncController, getSessionActivityPollInterval, isLifecycleRelevantEvent } from './sessionActivitySync';
 
@@ -34,16 +35,18 @@ function AppSurfaceLoadingState() {
   );
 }
 
-type RunningSessionApiItem = RunningSessionSnapshot & { sessionId?: unknown };
-
-type RunningSessionsApiPayload = {
-  data?: {
-    sessions?: RunningSessionApiItem[];
-  };
-};
-
-type LifecycleSessionsApiPayload = { data?: { sessions?: unknown[] } };
 const lifecycleStatuses = new Set<SessionLifecycleStatus>(['running', 'recovering', 'stalled', 'exited', 'failed', 'manually_stopped', 'recovery_exhausted']);
+const notificationReplyIntentKey = 'cloudcli:notification-reply-intent';
+const notificationReplyEvent = 'cloudcli:notification-reply';
+
+const forwardNotificationReplyIntent = (sessionId: string) => {
+  try {
+    sessionStorage.setItem(notificationReplyIntentKey, JSON.stringify({ sessionId, createdAt: Date.now() }));
+  } catch {
+    // Storage can be unavailable in private/restricted browser contexts.
+  }
+  window.dispatchEvent(new CustomEvent(notificationReplyEvent, { detail: { sessionId } }));
+};
 
 const parseStartedAt = (value: unknown): number | undefined => {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -91,7 +94,7 @@ const parseRunningAncestor = (value: unknown): RunningSessionAncestorSnapshot | 
   };
 };
 
-const parseRunningSession = (value: RunningSessionApiItem): RunningSessionSnapshot | null => {
+const parseRunningSession = (value: RunningSessionSnapshot): RunningSessionSnapshot | null => {
   if (typeof value.sessionId !== 'string' || !value.sessionId) {
     return null;
   }
@@ -151,12 +154,15 @@ export default function AppContent() {
 
 function AppContentInner() {
   const navigate = useNavigate();
+  const location = useLocation();
   const sessionId = useMatch('/session/:sessionId')?.params.sessionId;
+  const projectRouteId = useMatch('/project/:projectId/new')?.params.projectId;
   const { t } = useTranslation('common');
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { ws, sendMessage, subscribe, connectionEpoch } = useWebSocket();
   const activitySyncRef = useRef<ReturnType<typeof createSessionActivitySyncController> | null>(null);
   const activitySyncGenerationRef = useRef(0);
+  const startingSessionIdsRef = useRef(new Set<string>());
 
   const {
     processingSessions,
@@ -186,6 +192,7 @@ function AppContentInner() {
     handleProjectSelect,
   } = useProjectsState({
     sessionId,
+    projectRouteId,
     navigate,
     subscribe,
     isMobile,
@@ -207,13 +214,9 @@ function AppContentInner() {
   const refreshRunningSessions = useCallback(async () => {
     const generation = activitySyncGenerationRef.current;
     try {
-      const [response, lifecycleResponse] = await Promise.all([api.runningSessions(), api.sessionLifecycleStatus()]);
-      if (!response.ok || !lifecycleResponse.ok) return;
-      const payload = (await response.json()) as RunningSessionsApiPayload;
-      const lifecyclePayload = (await lifecycleResponse.json()) as LifecycleSessionsApiPayload;
-      const sessions = Array.isArray(payload.data?.sessions) ? payload.data.sessions : [];
-      const runningSnapshots = sessions.map(parseRunningSession).filter((session): session is NonNullable<typeof session> => Boolean(session));
-      const lifecycleSnapshots = (lifecyclePayload.data?.sessions ?? []).map(parseLifecycleSession).filter((item): item is SessionLifecycleSnapshot => Boolean(item));
+       const [sessions, lifecycleSessions] = await Promise.all([apiClient.runningSessions(), apiClient.sessionLifecycleStatus()]);
+       const runningSnapshots = sessions.map(parseRunningSession).filter((session): session is NonNullable<typeof session> => Boolean(session));
+       const lifecycleSnapshots = lifecycleSessions.map(parseLifecycleSession).filter((item): item is SessionLifecycleSnapshot => Boolean(item));
       if (!activitySyncRef.current || activitySyncGenerationRef.current !== generation) return;
       syncProcessingSessions(
         runningSnapshots,
@@ -225,9 +228,15 @@ function AppContentInner() {
   }, [syncProcessingSessions, syncSessionLifecycle]);
 
   const startSession = useCallback(async (targetSessionId: string) => {
-    const response = await api.startSession(targetSessionId);
-    if (!response.ok) throw new Error(`Failed to start session (${response.status})`);
-    activitySyncRef.current?.invalidate(true);
+    if (startingSessionIdsRef.current.has(targetSessionId)) return;
+    startingSessionIdsRef.current.add(targetSessionId);
+    const actionId = globalThis.crypto?.randomUUID?.() ?? `start_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    try {
+      await apiClient.startSession(targetSessionId, { clientMutationId: actionId }, { idempotencyKey: actionId });
+      activitySyncRef.current?.invalidate(true);
+    } finally {
+      startingSessionIdsRef.current.delete(targetSessionId);
+    }
   }, []);
 
   useEffect(() => {
@@ -237,11 +246,13 @@ function AppContentInner() {
     const unsubscribe = subscribe((event) => {
       if (isLifecycleRelevantEvent(event)) controller.invalidate();
     });
-    const refreshOnFocus = () => controller.invalidate();
+    const refreshOnFocus = () => controller.invalidate(true);
     const refreshOnVisibility = () => {
-      if (document.visibilityState === 'visible') controller.invalidate();
+      if (document.visibilityState === 'visible') controller.invalidate(true);
     };
+    const refreshOnOnline = () => controller.invalidate(true);
     window.addEventListener('focus', refreshOnFocus);
+    window.addEventListener('online', refreshOnOnline);
     document.addEventListener('visibilitychange', refreshOnVisibility);
     controller.invalidate(true);
     return () => {
@@ -250,6 +261,7 @@ function AppContentInner() {
       controller.dispose();
       unsubscribe();
       window.removeEventListener('focus', refreshOnFocus);
+      window.removeEventListener('online', refreshOnOnline);
       document.removeEventListener('visibilitychange', refreshOnVisibility);
     };
   }, [refreshRunningSessions, subscribe]);
@@ -290,6 +302,9 @@ function AppContentInner() {
       void refreshProjectsSilently();
 
       if (typeof message.sessionId === 'string' && message.sessionId) {
+        if (message.reply === true) {
+          forwardNotificationReplyIntent(message.sessionId);
+        }
         navigate(`/session/${message.sessionId}`);
         return;
       }
@@ -303,6 +318,15 @@ function AppContentInner() {
       navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
     };
   }, [navigate, refreshProjectsSilently, setActiveTab, setSidebarOpen]);
+
+  useEffect(() => {
+    const search = new URLSearchParams(location.search);
+    if (search.get('notificationReply') !== '1' || !sessionId) return;
+
+    forwardNotificationReplyIntent(sessionId);
+    search.delete('notificationReply');
+    navigate(`${location.pathname}${search.size ? `?${search.toString()}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate, sessionId]);
 
   // Pending tool permissions are recovered through the `chat.subscribe` flow:
   // the `chat_subscribed` ack carries them on session open and on reconnect,
@@ -333,7 +357,7 @@ function AppContentInner() {
       {!isMobile ? (
         <div className="h-full flex-shrink-0 border-r border-border/50">
           <Suspense fallback={<AppSurfaceLoadingState />}>
-            <Sidebar {...sidebarSharedProps} sessionLifecycle={sessionLifecycle} onStartSession={startSession} />
+            <ErrorBoundary area="sidebar" name="Sidebar" onRetry={() => void refreshProjectsSilently()} resetKeys={[isLoadingProjects]}><Sidebar {...sidebarSharedProps} sessionLifecycle={sessionLifecycle} onStartSession={startSession} /></ErrorBoundary>
           </Suspense>
         </div>
       ) : (
@@ -361,7 +385,7 @@ function AppContentInner() {
             onTouchStart={(event) => event.stopPropagation()}
           >
             <Suspense fallback={<AppSurfaceLoadingState />}>
-              <Sidebar {...sidebarSharedProps} sessionLifecycle={sessionLifecycle} onStartSession={startSession} />
+              <ErrorBoundary area="sidebar" name="Sidebar" onRetry={() => void refreshProjectsSilently()} resetKeys={[isLoadingProjects]}><Sidebar {...sidebarSharedProps} sessionLifecycle={sessionLifecycle} onStartSession={startSession} /></ErrorBoundary>
             </Suspense>
           </div>
         </div>

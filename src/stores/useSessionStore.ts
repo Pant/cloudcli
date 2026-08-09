@@ -10,6 +10,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { authenticatedFetch } from '../utils/api';
+import { apiClient } from '../utils/apiClient';
+import { incrementDiagnosticMetric, logDiagnostic } from '../lib/logger';
+import { KeyedServerState } from '../lib/serverState';
 import type { LLMProvider } from '../types/app';
 
 import {
@@ -28,7 +31,9 @@ import {
 } from './sessionMessageCacheCoordinator';
 import {
   acceptSequencedEvent,
+  canReuseNotModified,
   deduplicateMessagesById,
+  hasCompleteCanonicalSnapshot,
   reduceRealtimeStream,
   shouldApplyCacheHydration,
   upsertMessageById,
@@ -75,6 +80,7 @@ export interface SessionSlot {
   recoveryInFlight: Promise<void> | null;
   /** Monotonic view revision for any visible content or metadata mutation. */
   viewRevision: number;
+  canonicalRevision: string | null;
 }
 
 export interface SessionSnapshot {
@@ -86,6 +92,7 @@ export interface SessionSnapshot {
   offset: number;
   tokenUsage: unknown;
   revision: number;
+  canonicalRevision: string | null;
 }
 
 const EMPTY: NormalizedMessage[] = [];
@@ -112,6 +119,7 @@ function createEmptySlot(): SessionSlot {
     realtimeStream: null,
     recoveryInFlight: null,
     viewRevision: 0,
+    canonicalRevision: null,
   };
 }
 
@@ -391,6 +399,10 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
   const cacheWriteChainsRef = useRef(new Map<string, Promise<void>>());
   const cacheWritesBlockedRef = useRef(false);
   const cacheWriteEpochRef = useRef(0);
+  const historyOwnerRef = useRef<KeyedServerState<string, Awaited<ReturnType<typeof apiClient.sessionHistory>>> | null>(null);
+  if (!historyOwnerRef.current) {
+    historyOwnerRef.current = new KeyedServerState((sessionId, signal) => apiClient.sessionHistory(sessionId, { signal }));
+  }
   if (!cacheRef.current) {
     cacheRef.current = options.cache ?? new SessionMessageCacheRepository();
   }
@@ -421,6 +433,8 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     // Persistence is an optimization. Keep failures visible to developers but
     // never let them reject a network chat operation or surface in the UI.
     console.warn(`[SessionStore] cache ${operation} failed:`, error);
+    incrementDiagnosticMetric('cacheFailure');
+    logDiagnostic({ level: 'warn', area: 'session_store', event: 'cache_failed', outcome: 'fail_open', code: error instanceof Error ? error.name : 'CACHE_ERROR', metadata: { operation } });
   }, []);
 
   const enqueueCacheWrite = useCallback((
@@ -468,6 +482,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
         total: slot.total,
         hasMore: slot.hasMore,
         offset: slot.offset,
+        canonicalRevision: slot.canonicalRevision,
       },
     }), epoch);
   }, [cache, enqueueCacheWrite]);
@@ -504,6 +519,8 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     slot._cacheHydrationStarted = true;
     const hydrationTicket = ++slot._cacheHydrationSeq;
     const generation = storeGenerationRef.current;
+    const startedAt = Date.now();
+    logDiagnostic({ level: 'info', area: 'session_store', event: 'cache_hydration_started', sessionId, generation });
 
     try {
       const hydrated = await cache.hydrateSession(namespace, sessionId);
@@ -518,6 +535,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
           appliedFetchTicket: slot._appliedFetchSeq,
         })
       ) {
+        logDiagnostic({ level: 'debug', area: 'session_store', event: 'cache_hydration_skipped', sessionId, generation, durationMs: Date.now() - startedAt, outcome: hydrated ? 'stale' : 'empty' });
         return slot;
       }
 
@@ -534,6 +552,9 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
       slot.offset = typeof hydrated.metadata?.offset === 'number'
         ? hydrated.metadata.offset
         : slot.serverMessages.length;
+      slot.canonicalRevision = typeof hydrated.metadata?.canonicalRevision === 'string'
+        ? hydrated.metadata.canonicalRevision
+        : typeof hydrated.metadata?.revision === 'string' ? hydrated.metadata.revision : null;
       // A hydrated slot is intentionally stale from the network's perspective.
       // It can render immediately, while the normal loader still fetches the
       // authoritative transcript.
@@ -541,6 +562,9 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
       recomputeMergedIfNeeded(slot);
       bumpViewRevision(slot);
       notify(sessionId);
+      const durationMs = Date.now() - startedAt;
+      incrementDiagnosticMetric('hydrationDuration', durationMs);
+      logDiagnostic({ level: 'info', area: 'session_store', event: 'cache_hydration_succeeded', sessionId, generation, cacheRevision: slot.canonicalRevision ?? undefined, durationMs, outcome: 'hydrated', metadata: { messageCount: slot.serverMessages.length } });
       return slot;
     } catch (error) {
       logCacheFailure('hydration', error);
@@ -581,23 +605,43 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     notify(sessionId);
 
     try {
-      const params = new URLSearchParams();
-      if (opts.limit !== null && opts.limit !== undefined) {
-        params.append('limit', String(opts.limit));
-        params.append('offset', String(opts.offset ?? 0));
+      const isCompleteRequest = opts.limit === null || opts.limit === undefined;
+      const hasReusableCanonicalSnapshot = isCompleteRequest && hasCompleteCanonicalSnapshot({
+        canonicalRevision: slot.canonicalRevision,
+        serverMessageCount: slot.serverMessages.length,
+        total: slot.total,
+        hasMore: slot.hasMore,
+        offset: slot.offset,
+      });
+      let result = await apiClient.sessionHistory(sessionId, {
+        limit: opts.limit,
+        offset: opts.offset,
+        revision: hasReusableCanonicalSnapshot ? slot.canonicalRevision ?? undefined : undefined,
+      });
+      if (result.notModified && (
+        !canReuseNotModified(slot.canonicalRevision, result.revision)
+        || !hasCompleteCanonicalSnapshot({
+          canonicalRevision: slot.canonicalRevision,
+          serverMessageCount: slot.serverMessages.length,
+          total: slot.total,
+          hasMore: slot.hasMore,
+          offset: slot.offset,
+        })
+      )) {
+        logDiagnostic({ level: 'warn', area: 'session_store', event: 'canonical_304_rejected', sessionId, canonicalRevision: result.revision, cacheRevision: slot.canonicalRevision ?? undefined, outcome: 'full_refetch' });
+        result = await apiClient.sessionHistory(sessionId, { limit: opts.limit, offset: opts.offset });
       }
-
-      const qs = params.toString();
-      const url = `/api/providers/sessions/${encodeURIComponent(sessionId)}/messages${qs ? `?${qs}` : ''}`;
-      const response = await authenticatedFetch(url);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      if (result.notModified) {
+        if (fetchTicket > slot._appliedFetchSeq) slot._appliedFetchSeq = fetchTicket;
+        slot.status = 'idle';
+        slot.fetchedAt = Date.now();
+        bumpViewRevision(slot);
+        notify(sessionId);
+        logDiagnostic({ level: 'info', area: 'session_store', event: 'canonical_not_modified', sessionId, canonicalRevision: result.revision, outcome: 'accepted' });
+        return slot;
       }
-
-      const body = await response.json();
-      const data = body?.data ?? body;
-      const messages: NormalizedMessage[] = data.messages || [];
+      const data = result.data;
+      const messages = data.messages as NormalizedMessage[];
 
       // A later-started fetch already applied: this response is stale.
       if (
@@ -606,13 +650,15 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
         || namespace !== userNamespaceRef.current
         || cacheEpoch !== cacheWriteEpochRef.current
       ) {
+        incrementDiagnosticMetric('staleResponseRejection');
+        logDiagnostic({ level: 'warn', area: 'session_store', event: 'canonical_response_rejected', sessionId, canonicalRevision: result.revision, outcome: 'stale' });
         return slot;
       }
       slot._appliedFetchSeq = fetchTicket;
 
        slot.serverMessages = deduplicateMessagesById(messages);
        slot.total = data.total ?? messages.length;
-       const isCompleteRequest = opts.limit === null || opts.limit === undefined;
+       slot.canonicalRevision = isCompleteRequest ? result.revision : slot.canonicalRevision;
        slot.hasMore = isCompleteRequest ? false : Boolean(data.hasMore);
        slot.offset = isCompleteRequest ? messages.length : (opts.offset ?? 0) + messages.length;
       slot.fetchedAt = Date.now();
@@ -629,13 +675,13 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
           total: slot.total,
           hasMore: slot.hasMore,
           offset: slot.offset,
+          canonicalRevision: slot.canonicalRevision,
         };
-        if (data.revision !== undefined) metadata.revision = data.revision;
-        else if (data.updatedAt !== undefined) metadata.revision = data.updatedAt;
         persistAuthoritativeSlot(sessionId, slot, metadata);
       }
 
       notify(sessionId);
+      logDiagnostic({ level: 'info', area: 'session_store', event: 'canonical_revision_accepted', sessionId, canonicalRevision: slot.canonicalRevision ?? undefined, outcome: 'accepted', metadata: { messageCount: messages.length } });
       return slot;
     } catch (error) {
       console.error(`[SessionStore] fetch failed for ${sessionId}:`, error);
@@ -665,20 +711,13 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     const generation = storeGenerationRef.current;
     const namespace = userNamespaceRef.current;
     const cacheEpoch = cacheWriteEpochRef.current;
-    const params = new URLSearchParams();
     const limit = opts.limit ?? 20;
-    params.append('limit', String(limit));
-    params.append('offset', String(slot.offset));
-
-    const qs = params.toString();
-    const url = `/api/providers/sessions/${encodeURIComponent(sessionId)}/messages${qs ? `?${qs}` : ''}`;
 
     try {
-      const response = await authenticatedFetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json();
-      const data = body?.data ?? body;
-      const olderMessages: NormalizedMessage[] = data.messages || [];
+      const result = await apiClient.sessionHistory(sessionId, { limit, offset: slot.offset });
+      if (result.notModified) return slot;
+      const data = result.data;
+      const olderMessages = data.messages as NormalizedMessage[];
 
       // A full fetch/refresh replaced serverMessages while this page was in
       // flight — prepending onto the new array would duplicate or misorder.
@@ -770,11 +809,16 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     const sessionId = event.sessionId;
     const slot = getSlot(sessionId);
     if (typeof event.generation !== 'number' || typeof event.seq !== 'number') {
+      logDiagnostic({ level: 'debug', area: 'session_store', event: 'realtime_event_unsequenced', sessionId, outcome: 'unsequenced', metadata: { kind: event.kind } });
       return { status: 'unsequenced', sessionId };
     }
 
     const acceptance = acceptSequencedEvent(slot.realtimeCursor, event.generation, event.seq);
     if (acceptance.status !== 'accepted') {
+      if (acceptance.status === 'gap') incrementDiagnosticMetric('replayGap');
+      if (acceptance.status === 'duplicate') incrementDiagnosticMetric('duplicateEventRejection');
+      if (acceptance.status === 'stale_generation') incrementDiagnosticMetric('staleResponseRejection');
+      logDiagnostic({ level: 'warn', area: 'session_store', event: 'realtime_event_rejected', sessionId, generation: event.generation, seq: event.seq, outcome: acceptance.status });
       return { status: acceptance.status, sessionId, generation: event.generation, seq: event.seq };
     }
 
@@ -861,12 +905,9 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     const generation = storeGenerationRef.current;
     const namespace = userNamespaceRef.current;
     try {
-      const url = `/api/providers/sessions/${encodeURIComponent(sessionId)}/messages`;
-      const response = await authenticatedFetch(url);
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json();
-      const data = body?.data ?? body;
+      const result = await historyOwnerRef.current!.read(sessionId);
+      if (result.notModified) return;
+      const data = result.data;
 
       // A later-started fetch already applied: applying this stale transcript
       // would erase rows the user has already seen (and re-prune realtime
@@ -876,15 +917,18 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
         || generation !== storeGenerationRef.current
         || namespace !== userNamespaceRef.current
       ) {
+        incrementDiagnosticMetric('staleResponseRejection');
+        logDiagnostic({ level: 'warn', area: 'session_store', event: 'canonical_response_rejected', sessionId, canonicalRevision: result.revision, outcome: 'stale_recovery' });
         return;
       }
       slot._appliedFetchSeq = fetchTicket;
 
-       slot.serverMessages = deduplicateMessagesById(data.messages || []);
+       slot.serverMessages = deduplicateMessagesById(data.messages as NormalizedMessage[]);
        slot.total = data.total ?? slot.serverMessages.length;
        slot.hasMore = false;
        slot.offset = slot.serverMessages.length;
        slot.fetchedAt = Date.now();
+       slot.canonicalRevision = result.revision;
       // Only drop realtime rows the server transcript now owns. A blind clear
       // here caused the chat pane to flash "Continue your conversation" after
       // `complete` while JSONL / provider_session_id indexing was still behind.
@@ -899,11 +943,11 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
          total: slot.total,
          hasMore: slot.hasMore,
          offset: slot.offset,
+         canonicalRevision: slot.canonicalRevision,
        };
-       if (data.revision !== undefined) metadata.revision = data.revision;
-       else if (data.updatedAt !== undefined) metadata.revision = data.updatedAt;
        persistAuthoritativeSlot(sessionId, slot, metadata);
        notify(sessionId);
+       logDiagnostic({ level: 'info', area: 'session_store', event: 'canonical_revision_accepted', sessionId, canonicalRevision: slot.canonicalRevision ?? undefined, outcome: 'recovery_accepted', metadata: { messageCount: slot.serverMessages.length } });
     } catch (error) {
       console.error(`[SessionStore] refresh failed for ${sessionId}:`, error);
     }
@@ -911,8 +955,15 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
 
   const recoverSession = useCallback((sessionId: string): Promise<void> => {
     const slot = getSlot(sessionId);
-    if (slot.recoveryInFlight) return slot.recoveryInFlight;
+    if (slot.recoveryInFlight) {
+      logDiagnostic({ level: 'debug', area: 'session_store', event: 'rest_recovery_deduplicated', sessionId, outcome: 'in_flight' });
+      return slot.recoveryInFlight;
+    }
+    incrementDiagnosticMetric('restRecovery');
+    logDiagnostic({ level: 'info', area: 'session_store', event: 'rest_recovery_started', sessionId });
+    historyOwnerRef.current?.invalidate(sessionId);
     const recovery = refreshFromServer(sessionId).then(() => undefined).finally(() => {
+      logDiagnostic({ level: 'info', area: 'session_store', event: 'rest_recovery_completed', sessionId, canonicalRevision: slot.canonicalRevision ?? undefined, outcome: 'completed' });
       if (slot.recoveryInFlight === recovery) slot.recoveryInFlight = null;
     });
     slot.recoveryInFlight = recovery;
@@ -1189,6 +1240,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
       offset: slot.offset,
       tokenUsage: slot.tokenUsage,
       revision: slot.viewRevision,
+      canonicalRevision: slot.canonicalRevision,
     };
   }, []);
 

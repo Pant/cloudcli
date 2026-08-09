@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 
-import { api } from '../utils/api';
+import { api, authenticatedFetch } from '../utils/api';
 import type { ServerEvent } from '../contexts/webSocketTypes';
 import type {
   AppTab,
@@ -10,6 +10,7 @@ import type {
   Project,
   ProjectSession,
 } from '../types/app';
+import { KeyedServerState } from '../lib/serverState';
 
 import type { SessionActivityMap, SessionLifecycleMap } from './useSessionProtection';
 import {
@@ -17,11 +18,14 @@ import {
   mergeExpandedSessionPages,
   mergeProjectSessionPage,
   mergeRunningSnapshotsIntoProjects,
+  sessionHistoryRevision,
+  shouldSignalExternalHistoryRefresh,
   upsertSessionIntoProject,
 } from './projectStateUtils';
 
 type UseProjectsStateArgs = {
   sessionId?: string;
+  projectRouteId?: string;
   navigate: NavigateFunction;
   /** Subscription to the unified websocket event stream. */
   subscribe: (listener: (event: ServerEvent) => void) => () => void;
@@ -64,7 +68,7 @@ type NewSessionIntentActions = {
   clearSession: () => void;
   showChat: () => void;
   triggerReset: () => void;
-  navigateHome: () => void;
+  navigateToDraft: (project: Project) => void;
   closeSidebar?: () => void;
 };
 
@@ -82,7 +86,7 @@ export const applyNewSessionIntent = (project: Project, actions: NewSessionInten
   actions.clearSession();
   actions.showChat();
   actions.triggerReset();
-  actions.navigateHome();
+  actions.navigateToDraft(project);
   actions.closeSidebar?.();
 };
 
@@ -98,6 +102,12 @@ export const applySessionSelectionIntent = (
   actions.navigateToSession(session.id);
   actions.closeSidebar?.();
 };
+
+export const getProjectDraftUrl = (projectId: string) =>
+  `/project/${encodeURIComponent(projectId)}/new`;
+
+export const resolveProjectRoute = (projectRouteId: string | undefined, projects: Project[]) =>
+  projectRouteId ? projects.find((project) => project.projectId === projectRouteId) ?? null : null;
 
 /**
  * Shape of `GET /api/providers/sessions/:sessionId` — the authoritative
@@ -171,35 +181,8 @@ const projectsHaveChanges = (
       nextProject.fullPath !== prevProject.fullPath ||
       Boolean(nextProject.isStarred) !== Boolean(prevProject.isStarred) ||
       serialize(nextProject.sessionMeta) !== serialize(prevProject.sessionMeta) ||
-      serialize(nextProject.sessions) !== serialize(prevProject.sessions) ||
-      serialize(nextProject.taskmaster) !== serialize(prevProject.taskmaster)
+      serialize(nextProject.sessions) !== serialize(prevProject.sessions)
     );
-  });
-};
-
-const mergeTaskMasterCache = (nextProjects: Project[], previousProjects: Project[]): Project[] => {
-  if (previousProjects.length === 0) {
-    return nextProjects;
-  }
-
-  // Keyed by `projectId` (the DB primary key) so caches stay correct across
-  // renames and other mutations that might have changed the display name.
-  const previousTaskMasterByProject = new Map(
-    previousProjects
-      .filter((project) => Boolean(project.taskmaster))
-      .map((project) => [project.projectId, project.taskmaster]),
-  );
-
-  return nextProjects.map((project) => {
-    const cachedTaskMasterInfo = previousTaskMasterByProject.get(project.projectId);
-    if (!cachedTaskMasterInfo) {
-      return project;
-    }
-
-    return {
-      ...project,
-      taskmaster: cachedTaskMasterInfo,
-    };
   });
 };
 
@@ -211,7 +194,6 @@ const projectFromRegistration = (project: Project): Project => ({
   isStarred: project.isStarred,
   sessions: project.sessions ?? [],
   sessionMeta: project.sessionMeta ?? { hasMore: false, total: getProjectSessions(project).length },
-  taskmaster: project.taskmaster,
 });
 
 const removeSessionFromProject = (project: Project, sessionIdToDelete: string): Project => {
@@ -236,7 +218,7 @@ const removeSessionFromProject = (project: Project, sessionIdToDelete: string): 
   return updatedProject;
 };
 
-const VALID_TABS: Set<string> = new Set(['chat', 'files', 'shell', 'git', 'tasks', 'browser']);
+const VALID_TABS: Set<string> = new Set(['chat', 'files', 'shell', 'git', 'browser']);
 
 const isValidTab = (tab: string): tab is AppTab => {
   return VALID_TABS.has(tab) || tab.startsWith('plugin:');
@@ -256,6 +238,7 @@ const readPersistedTab = (): AppTab => {
 
 export function useProjectsState({
   sessionId,
+  projectRouteId,
   navigate,
   subscribe,
   isMobile,
@@ -267,6 +250,14 @@ export function useProjectsState({
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
+  const projectOwnerRef = useRef<KeyedServerState<'root', Project[]> | null>(null);
+  if (!projectOwnerRef.current) {
+    projectOwnerRef.current = new KeyedServerState(async (_key, signal) => {
+      const response = await authenticatedFetch('/api/projects', { signal });
+      if (!response.ok) throw new Error(`Failed to fetch projects (${response.status})`);
+      return response.json() as Promise<Project[]>;
+    }, 1_000);
+  }
 
   useEffect(() => {
     try {
@@ -318,6 +309,7 @@ export function useProjectsState({
   selectedSessionRef.current = selectedSession;
   const activeSessionsRef = useRef(activeSessions);
   activeSessionsRef.current = activeSessions;
+  const lastExternalHistoryRevisionRef = useRef(new Map<string, string>());
   const selectedProjectRef = useRef(selectedProject);
   selectedProjectRef.current = selectedProject;
   const projectsRef = useRef(projects);
@@ -373,12 +365,10 @@ export function useProjectsState({
       if (showLoadingState) {
         setIsLoadingProjects(true);
       }
-      const response = await api.projects();
-      const projectData = (await response.json()) as Project[];
+      const projectData = await projectOwnerRef.current!.read('root');
 
       setProjects((prevProjects) => {
-        const projectsWithTaskMaster = mergeTaskMasterCache(projectData, prevProjects);
-        const mergedProjects = mergeExpandedSessionPages(prevProjects, projectsWithTaskMaster);
+        const mergedProjects = mergeExpandedSessionPages(prevProjects, projectData);
 
         if (prevProjects.length === 0) {
           return mergedProjects;
@@ -396,6 +386,8 @@ export function useProjectsState({
       }
     }
   }, []);
+
+  useEffect(() => () => projectOwnerRef.current?.dispose(), []);
 
   const refreshProjectsSilently = useCallback(async () => {
     // Keep chat view stable while still syncing sidebar/session metadata in background.
@@ -471,48 +463,6 @@ export function useProjectsState({
     ));
   }, []);
 
-  // Hydrates TaskMaster details for the given `projectId`. The project
-  // identifier comes directly from the DB-driven /api/projects response.
-  const hydrateProjectTaskMaster = useCallback(async (projectId: string) => {
-    if (!projectId) {
-      return;
-    }
-
-    try {
-      const response = await api.projectTaskmaster(projectId);
-      if (!response.ok) {
-        return;
-      }
-
-      const data = (await response.json()) as { taskmaster?: Project['taskmaster'] };
-      const taskMasterInfo = data.taskmaster;
-      if (!taskMasterInfo) {
-        return;
-      }
-
-      setProjects((previousProjects) =>
-        previousProjects.map((project) =>
-          project.projectId === projectId
-            ? { ...project, taskmaster: taskMasterInfo }
-            : project,
-        ),
-      );
-
-      setSelectedProject((previousProject) => {
-        if (!previousProject || previousProject.projectId !== projectId) {
-          return previousProject;
-        }
-
-        return {
-          ...previousProject,
-          taskmaster: taskMasterInfo,
-        };
-      });
-    } catch (error) {
-      console.error(`Error fetching TaskMaster info for project ${projectId}:`, error);
-    }
-  }, []);
-
   const openSettings = useCallback((tab = 'tools') => {
     setSettingsInitialTab(tab);
     setShowSettings(true);
@@ -550,20 +500,22 @@ export function useProjectsState({
     });
   }, [activeSessions, lifecycleSessions]);
 
-  useEffect(() => {
-    if (!selectedProject?.projectId) {
-      return;
-    }
-
-    void hydrateProjectTaskMaster(selectedProject.projectId);
-  }, [hydrateProjectTaskMaster, selectedProject?.projectId]);
-
   // Auto-select the project when there is only one, so the user lands on the new session page
   useEffect(() => {
-    if (!isLoadingProjects && projects.length === 1 && !selectedProject && !sessionId) {
+    if (!isLoadingProjects && projects.length === 1 && !selectedProject && !sessionId && !projectRouteId) {
       setSelectedProject(projects[0]);
     }
-  }, [isLoadingProjects, projects, selectedProject, sessionId]);
+  }, [isLoadingProjects, projectRouteId, projects, selectedProject, sessionId]);
+
+  useEffect(() => {
+    if (!projectRouteId) return;
+
+    const routeProject = resolveProjectRoute(projectRouteId, projects);
+    setSelectedSession((previousSession) => previousSession === null ? previousSession : null);
+    setSelectedProject((previousProject) =>
+      previousProject?.projectId === routeProject?.projectId ? previousProject : routeProject,
+    );
+  }, [projectRouteId, projects]);
 
   // Realtime sidebar updates. The backend pushes per-session deltas
   // (`session_upserted`) instead of full project snapshots, so each event is
@@ -616,18 +568,24 @@ export function useProjectsState({
       if (!upsert.sessionId || !upsert.session) {
         return;
       }
+      projectOwnerRef.current?.invalidate('root');
 
       // The transcript of the currently viewed session changed on disk while
       // no run is active here (e.g. edited from another client or the CLI):
       // signal the chat view to reload its messages.
       const currentSelectedSession = selectedSessionRef.current;
-      if (
-        currentSelectedSession
-        && upsert.sessionId === currentSelectedSession.id
-        && !activeSessionsRef.current.has(upsert.sessionId)
-      ) {
+      const incomingRevision = sessionHistoryRevision(upsert.session);
+      if (shouldSignalExternalHistoryRefresh({
+        viewedSessionId: currentSelectedSession?.id ?? null,
+        eventSessionId: upsert.sessionId,
+        active: activeSessionsRef.current.has(upsert.sessionId),
+        currentRevision: sessionHistoryRevision(currentSelectedSession),
+        incomingRevision,
+        lastSignaledRevision: lastExternalHistoryRevisionRef.current.get(upsert.sessionId) ?? null,
+      })) {
+        if (incomingRevision) lastExternalHistoryRevisionRef.current.set(upsert.sessionId, incomingRevision);
         setExternalMessageUpdate((prev) => prev + 1);
-      } else {
+      } else if (upsert.sessionId !== currentSelectedSession?.id) {
         markSessionAttention(upsert.sessionId);
       }
 
@@ -680,6 +638,23 @@ export function useProjectsState({
         }
         const updated = upsertSessionIntoProject(previousProject, upsert);
         return updated === previousProject ? previousProject : updated;
+      });
+
+      // Keep the selected row's canonical timestamp in sync. Without this,
+      // duplicate watcher frames all compare against the revision from the
+      // original project load and repeatedly refetch the same transcript.
+      setSelectedSession((previousSession) => {
+        if (!previousSession || previousSession.id !== upsert.sessionId) return previousSession;
+        const updated: ProjectSession = {
+          ...previousSession,
+          ...upsert.session,
+          id: upsert.sessionId,
+          __provider: upsert.provider,
+        };
+        if (!upsert.session.summary?.trim() && previousSession.summary?.trim()) {
+          updated.summary = previousSession.summary;
+        }
+        return JSON.stringify(updated) === JSON.stringify(previousSession) ? previousSession : updated;
       });
 
       // Realtime payloads carry only canonical app ids, so there is no native
@@ -858,7 +833,7 @@ export function useProjectsState({
       if (!project) {
         clearSessionAttention(session.id);
         setSelectedSession(session);
-        if (activeTab === 'tasks' || activeTab === 'browser') setActiveTab('chat');
+        if (activeTab === 'browser') setActiveTab('chat');
         navigate(`/session/${session.id}`);
         return;
       }
@@ -867,7 +842,7 @@ export function useProjectsState({
         clearAttention: clearSessionAttention,
         selectProject: setSelectedProject,
         selectSession: setSelectedSession,
-        showChat: activeTab === 'tasks' || activeTab === 'browser'
+        showChat: activeTab === 'browser'
           ? () => setActiveTab('chat')
           : undefined,
         navigateToSession: (selectedSessionId) => navigate(`/session/${selectedSessionId}`),
@@ -886,7 +861,7 @@ export function useProjectsState({
         clearSession: () => setSelectedSession(null),
         showChat: () => setActiveTab('chat'),
         triggerReset: () => setNewSessionTrigger((previous) => previous + 1),
-        navigateHome: () => navigate('/'),
+        navigateToDraft: (selectedProject) => navigate(getProjectDraftUrl(selectedProject.projectId)),
         closeSidebar: isMobile ? () => setSidebarOpen(false) : undefined,
       });
     },
@@ -911,10 +886,9 @@ export function useProjectsState({
 
   const handleSidebarRefresh = useCallback(async () => {
     try {
-      const response = await api.projects();
-      const freshProjects = (await response.json()) as Project[];
-      const projectsWithTaskMaster = mergeTaskMasterCache(freshProjects, projects);
-      const mergedProjects = mergeExpandedSessionPages(projects, projectsWithTaskMaster);
+      projectOwnerRef.current?.invalidate('root');
+      const freshProjects = await projectOwnerRef.current!.read('root', { force: true });
+      const mergedProjects = mergeExpandedSessionPages(projects, freshProjects);
 
       setProjects((prevProjects) =>
         projectsHaveChanges(prevProjects, mergedProjects) ? mergedProjects : prevProjects,

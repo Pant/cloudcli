@@ -339,6 +339,8 @@ test('OpenCode token usage reports zero current-window tokens for genuinely empt
     const service = createProviderTokenUsageService({
       getSessionById: () => createSessionRow({ provider: 'opencode' }),
       getOpenCodeDatabasePath: () => databasePath,
+      resolveOpenCodeSessionModel: async () => undefined,
+      resolveOpenCodeContextWindow: async () => 0,
     });
 
     assert.deepEqual(await service.getSessionTokenUsage('app-session'), {
@@ -430,6 +432,8 @@ test('OpenCode token usage omits windowTokens for old schemas without message st
     const service = createProviderTokenUsageService({
       getSessionById: () => createSessionRow({ provider: 'opencode' }),
       getOpenCodeDatabasePath: () => databasePath,
+      resolveOpenCodeSessionModel: async () => undefined,
+      resolveOpenCodeContextWindow: async () => 0,
     });
     const result = await service.getSessionTokenUsage('app-session');
     assert.equal(result.used, 29);

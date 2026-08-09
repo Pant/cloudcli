@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Project, ProjectSession } from '../types/app';
 
-import { applyNewSessionIntent, applySessionSelectionIntent } from './useProjectsState';
+import { applyNewSessionIntent, applySessionSelectionIntent, getProjectDraftUrl, resolveProjectRoute } from './useProjectsState';
 
 test('one New Session callback clears an existing session and opens a clean draft for the clicked project', () => {
   const clickedProject = {
@@ -21,7 +21,7 @@ test('one New Session callback clears an existing session and opens a clean draf
   let selectedSession: ProjectSession | null = { id: 'existing-session', summary: 'Existing transcript' };
   let activeTab = 'files';
   let resetTrigger = 4;
-  let url = '/session/existing-session';
+  const navigations: string[] = [];
   let mobileSidebarOpen = true;
 
   applyNewSessionIntent(clickedProject, {
@@ -29,7 +29,7 @@ test('one New Session callback clears an existing session and opens a clean draf
     clearSession: () => { selectedSession = null; },
     showChat: () => { activeTab = 'chat'; },
     triggerReset: () => { resetTrigger += 1; },
-    navigateHome: () => { url = '/'; },
+    navigateToDraft: (project) => { navigations.push(getProjectDraftUrl(project.projectId)); },
     closeSidebar: () => { mobileSidebarOpen = false; },
   });
 
@@ -37,8 +37,37 @@ test('one New Session callback clears an existing session and opens a clean draf
   assert.equal(selectedSession, null);
   assert.equal(activeTab, 'chat');
   assert.equal(resetTrigger, 5);
-  assert.equal(url, '/');
+  assert.deepEqual(navigations, ['/project/project-2/new']);
   assert.equal(mobileSidebarOpen, false);
+});
+
+test('New Session encodes the clicked canonical project id in exactly one navigation', () => {
+  const clickedProject = {
+    projectId: 'project/with spaces',
+    displayName: 'Encoded project',
+    fullPath: '/tmp/encoded-project',
+    sessions: [],
+  } satisfies Project;
+  const navigations: string[] = [];
+
+  applyNewSessionIntent(clickedProject, {
+    selectProject: () => undefined,
+    clearSession: () => undefined,
+    showChat: () => undefined,
+    triggerReset: () => undefined,
+    navigateToDraft: (project) => navigations.push(getProjectDraftUrl(project.projectId)),
+  });
+
+  assert.deepEqual(navigations, ['/project/project%2Fwith%20spaces/new']);
+});
+
+test('project draft route resolves authoritatively after delayed availability and rejects stale selection', () => {
+  const staleProject = { projectId: 'stale', displayName: 'Stale', fullPath: '/tmp/stale', sessions: [] } satisfies Project;
+  const routeProject = { projectId: 'route-project', displayName: 'Route', fullPath: '/tmp/route', sessions: [] } satisfies Project;
+
+  assert.equal(resolveProjectRoute('route-project', []), null);
+  assert.equal(resolveProjectRoute('unknown', [staleProject]), null);
+  assert.equal(resolveProjectRoute('route-project', [staleProject, routeProject]), routeProject);
 });
 
 test('one session selection atomically establishes its project and session before one target navigation', () => {

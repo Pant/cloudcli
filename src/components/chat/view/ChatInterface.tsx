@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next';
 import { ArrowDownIcon } from 'lucide-react';
 
-import { useTasksSettings } from '../../../contexts/useTasksSettings';
 import { useWebSocket } from '../../../contexts/useWebSocket';
 import PermissionContext from '../../../contexts/PermissionContext';
 import type { ChatInterfaceProps, Provider } from '../types/types';
@@ -21,8 +20,14 @@ import ChatComposer from './subcomponents/ChatComposer';
 import CommandResultModal from './subcomponents/CommandResultModal';
 import PromptAppointmentModal from './subcomponents/PromptAppointmentModal';
 import { persistOpenCodePreferenceChange } from './agentPreferenceIntegration';
+import { ChatStatusBanner } from './chatDegradedState';
+import { getChatDataState } from './chatDegradedState.utils';
 
 export type AgentPreferenceFeedback = 'model' | 'reasoning';
+
+const notificationReplyIntentKey = 'cloudcli:notification-reply-intent';
+const notificationReplyEvent = 'cloudcli:notification-reply';
+const notificationReplyIntentMaxAge = 60_000;
 
 function ChatInterface({
   selectedProject,
@@ -42,10 +47,8 @@ function ChatInterface({
   sendByCtrlEnter,
   externalMessageUpdate,
   newSessionTrigger,
-  onShowAllTasks,
 }: ChatInterfaceProps) {
-  const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
-  const { subscribe, connectionEpoch } = useWebSocket();
+  const { subscribe, connectionEpoch, transportState } = useWebSocket();
   const { t } = useTranslation('chat');
 
   const sessionStore = useSessionStoreContext();
@@ -163,7 +166,6 @@ function ChatInterface({
 
   const {
     input,
-    setInput,
     textareaRef,
     inputHighlightRef,
     isTextareaExpanded,
@@ -240,6 +242,43 @@ function ChatInterface({
     resolvePermissionModeForProvider,
   });
 
+  useEffect(() => {
+    const activeSessionId = currentSessionId || selectedSession?.id;
+    if (!activeSessionId) return undefined;
+
+    const focusComposer = () => {
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+    const consumeStoredIntent = () => {
+      try {
+        const rawIntent = sessionStorage.getItem(notificationReplyIntentKey);
+        if (!rawIntent) return;
+        const intent = JSON.parse(rawIntent) as { sessionId?: unknown; createdAt?: unknown };
+        if (intent.sessionId !== activeSessionId) return;
+        sessionStorage.removeItem(notificationReplyIntentKey);
+        if (typeof intent.createdAt === 'number' && Date.now() - intent.createdAt <= notificationReplyIntentMaxAge) {
+          focusComposer();
+        }
+      } catch {
+        // Malformed or unavailable storage must not interfere with chat mounting.
+      }
+    };
+    const handleReplyIntent = (event: Event) => {
+      const replyEvent = event as CustomEvent<{ sessionId?: string }>;
+      if (replyEvent.detail?.sessionId !== activeSessionId) return;
+      try {
+        sessionStorage.removeItem(notificationReplyIntentKey);
+      } catch {
+        // The event still provides a usable fallback when storage is unavailable.
+      }
+      focusComposer();
+    };
+
+    consumeStoredIntent();
+    window.addEventListener(notificationReplyEvent, handleReplyIntent);
+    return () => window.removeEventListener(notificationReplyEvent, handleReplyIntent);
+  }, [currentSessionId, selectedSession?.id, textareaRef]);
+
   const refreshAppointments = useCallback(async () => {
     const projectId = selectedProject?.projectId;
     if (!projectId) return;
@@ -295,21 +334,12 @@ function ChatInterface({
     [sendQuestionFormAnswer],
   );
 
-  // On WebSocket reconnect, re-fetch the current session's messages from the
-  // server so missed streaming events are shown, then re-subscribe — the
-  // `chat_subscribed` ack restores or clears the activity indicator, replays
-  // missed live events, and re-attaches a still-running stream to this socket.
-  const subscribeSession = useCallback((sessionId: string) => {
-    statusCheckSentAtRef.current.set(sessionId, Date.now());
-    return sendMessage({
-      type: 'chat.subscribe',
-      sessions: [sessionStore.getSubscriptionTarget(sessionId)],
-    });
-  }, [sendMessage, sessionStore]);
-
   const handleRecoveryRequired = useCallback((sessionId: string) => {
-    void sessionStore.recoverSession(sessionId).then(() => subscribeSession(sessionId));
-  }, [sessionStore, subscribeSession]);
+    // The server keeps this socket subscribed while REST fills a replay gap.
+    // Re-subscribing here makes an inactive session acknowledge the same
+    // refresh requirement forever and creates a canonical-history fetch loop.
+    void sessionStore.recoverSession(sessionId);
+  }, [sessionStore]);
 
   useChatRealtimeHandlers({
     subscribe,
@@ -478,6 +508,12 @@ function ChatInterface({
   // reserve enough bottom space to keep the floating status tab from
   // overlapping the last message.
   const hasActivityIndicator = Boolean(sessionActivity && pendingPermissionRequests.length === 0);
+  const sessionSnapshot = currentSessionId ? sessionStore.getSessionSnapshot(currentSessionId) : null;
+  const chatDataState = getChatDataState({ messageCount: chatMessages.length, loading: isLoadingSessionMessages, sessionStatus: sessionSnapshot?.status ?? 'idle', transportState });
+  const retryCanonicalHistory = useCallback(() => {
+    if (!currentSessionId) return;
+    void sessionStore.recoverSession(currentSessionId);
+  }, [currentSessionId, sessionStore]);
 
   const selectedProviderLabel =
     provider === 'cursor'
@@ -506,6 +542,7 @@ function ChatInterface({
   return (
     <PermissionContext.Provider value={permissionContextValue}>
       <div className="flex h-full min-h-0 flex-col">
+        <ChatStatusBanner state={chatDataState} onRetry={currentSessionId ? retryCanonicalHistory : undefined} />
         <ChatMessagesPane
           scrollContainerRef={scrollContainerRef}
           onWheel={handleScroll}
@@ -529,10 +566,6 @@ function ChatInterface({
           setOpenCodeModel={setOpenCodeModel}
           providerModelCatalog={providerModelCatalog}
           providerModelsLoading={providerModelsLoading}
-          tasksEnabled={tasksEnabled}
-          isTaskMasterInstalled={isTaskMasterInstalled}
-          onShowAllTasks={onShowAllTasks}
-          setInput={setInput}
            visibleMessageCount={visibleMessageCount}
           visibleMessages={visibleMessages}
           loadEarlierMessages={loadEarlierMessages}

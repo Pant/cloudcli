@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import Database from 'better-sqlite3';
 
+import { closeConnection, initializeDatabase, notificationPreferencesDb, pushSubscriptionsDb, userDb } from '@/modules/database/index.js';
+import { setNotificationWebPushSenderForTests } from '@/modules/notifications/index.js';
 import type {
   AnyRecord,
   ProviderRuntimeContext,
@@ -72,6 +74,8 @@ if (capturePath) {
 
 const events = [
   { type: 'text', sessionID: 'open-live-1', text: 'assistant response' },
+  { type: 'tool_use', sessionID: 'open-live-1', part: { id: 'part-task', tool: 'task', callID: 'task-call-1', state: { status: 'completed', input: { description: 'Inspect notifications' }, output: 'done' } } },
+  { type: 'tool_use', sessionID: 'open-live-1', part: { id: 'part-task', tool: 'Task', callID: 'task-call-1', state: { status: 'completed', input: { description: 'Inspect notifications' }, output: 'done' } } },
   { type: 'step_finish', sessionID: 'open-live-1' },
 ];
 
@@ -155,6 +159,29 @@ async function createOpenCodeUsageDatabase(
   }
   database.close();
 }
+
+test('spawnOpenCode notifies each completed Task once and primary completion once', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-task-notify-'));
+  const pathKey = findEnvKey('PATH'); const previousPath = process.env[pathKey]; const previousDatabasePath = process.env.DATABASE_PATH;
+  closeConnection(); process.env.DATABASE_PATH = path.join(tempRoot, 'auth.db'); await initializeDatabase();
+  const userId = Number(userDb.createUser('runtime-user', 'hash').id);
+  notificationPreferencesDb.updatePreferences(userId, { channels: { webPush: true }, events: { stop: true } });
+  pushSubscriptionsDb.saveSubscription(userId, 'https://push.example/runtime', 'p256dh', 'auth');
+  const payloads: Array<{ data: { code: string } }> = [];
+  setNotificationWebPushSenderForTests(async (_subscription, payload) => { payloads.push(JSON.parse(payload as string) as { data: { code: string } }); return {} as never; });
+  try {
+    await createFakeOpenCodeExecutable(tempRoot); process.env[pathKey] = `${tempRoot}${path.delimiter}${previousPath || ''}`;
+    await opencodeRuntime.run('Hi', { cwd: tempRoot, sessionId: 'app-task-run' }, { userId, send() {} }, runtimeContext);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(payloads.filter((payload) => payload.data.code === 'task.completed').length, 1);
+    assert.equal(payloads.filter((payload) => payload.data.code === 'run.stopped').length, 1);
+  } finally {
+    setNotificationWebPushSenderForTests(null); closeConnection();
+    if (previousPath === undefined) delete process.env[pathKey]; else process.env[pathKey] = previousPath;
+    if (previousDatabasePath === undefined) delete process.env.DATABASE_PATH; else process.env.DATABASE_PATH = previousDatabasePath;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
 
 test('spawnOpenCode emits session_created before normalized live messages for new sessions', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-live-'));

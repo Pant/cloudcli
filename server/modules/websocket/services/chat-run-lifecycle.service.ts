@@ -154,7 +154,7 @@ export const chatRunLifecycleService = {
     return this.start({ ...input, options, command: 'Continue' });
   },
 
-  async manualStart(sessionId: string) { return this.restart({ sessionId }); },
+  async manualStart(sessionId: string, userId: string | number | null = null) { return this.restart({ sessionId, userId }); },
 
   async stop(sessionId: string): Promise<boolean> {
     const run = chatRunRegistry.getRun(sessionId);

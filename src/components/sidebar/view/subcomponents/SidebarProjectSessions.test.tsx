@@ -185,6 +185,7 @@ test('sidebar controls emit only atomic New Session and session-selection intent
   ]);
 
   assert.match(projectSessionsSource, /onClick=\{\(\) => onNewSession\(project\)\}/);
+  assert.equal((projectSessionsSource.match(/onClick=\{\(\) => onNewSession\(project\)\}/g) ?? []).length, 2);
   assert.doesNotMatch(projectSessionsSource, /onProjectSelect\(project\);\s*onNewSession/);
   assert.match(sessionItemSource, /onSessionSelect\(session, project\);/);
   assert.doesNotMatch(sessionItemSource, /onProjectSelect\(project\);\s*onSessionSelect/);

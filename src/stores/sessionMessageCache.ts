@@ -18,6 +18,7 @@ export type MessageSource = 'server' | 'realtime';
 export type CacheRevision = string | number | null;
 
 export interface SessionSyncMetadata {
+  canonicalRevision?: CacheRevision;
   revision?: CacheRevision;
   fetchedAt?: number | string | null;
   [key: string]: unknown;
@@ -149,6 +150,12 @@ function sessionMessageKey(
 
 function sessionKey(userNamespace: string, sessionId: string): IDBValidKey {
   return [userNamespace, sessionId];
+}
+
+function userNamespaceKeyRange(userNamespace: string): IDBKeyRange {
+  // Compound keys for both stores start with the namespace. An array sorts
+  // after the string session-id component, making it a bounded prefix sentinel.
+  return IDBKeyRange.bound([userNamespace], [userNamespace, []]);
 }
 
 function recordMessage(
@@ -625,22 +632,9 @@ export class SessionMessageCacheRepository {
         [SESSION_MESSAGE_CACHE_MESSAGES_STORE, SESSION_MESSAGE_CACHE_METADATA_STORE],
         'readwrite',
       );
-      const deleteByUser = (storeName: string, indexName: string) => {
-        const cursorRequest = transaction
-          .objectStore(storeName)
-          .index(indexName)
-          .openCursor(userNamespace);
-        cursorRequest.onsuccess = () => {
-          const cursor = cursorRequest.result;
-          if (!cursor) return;
-          cursor.delete();
-          cursor.continue();
-        };
-        cursorRequest.onerror = () => transaction.abort();
-      };
-
-      deleteByUser(SESSION_MESSAGE_CACHE_MESSAGES_STORE, MESSAGE_INDEX_BY_USER);
-      deleteByUser(SESSION_MESSAGE_CACHE_METADATA_STORE, METADATA_INDEX_BY_USER);
+      const range = userNamespaceKeyRange(userNamespace);
+      transaction.objectStore(SESSION_MESSAGE_CACHE_MESSAGES_STORE).delete(range);
+      transaction.objectStore(SESSION_MESSAGE_CACHE_METADATA_STORE).delete(range);
       await transactionComplete(transaction);
       return true;
     } catch {

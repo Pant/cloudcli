@@ -8,7 +8,7 @@ import test from 'node:test';
 import { GitRepositoryService } from '@/modules/git/git-repository.service.js';
 
 const execFileAsync = promisify(execFile);
-const fixtureRoot = path.resolve('server/modules/git/tests/.test-fixtures');
+const fixtureRoot = path.resolve('.test-output/git-repository-fixtures');
 const runCommand = async (command: string, args: string[], options?: { cwd?: string }) => {
   const result = await execFileAsync(command, args, { ...options, encoding: 'utf8' });
   return { stdout: result.stdout, stderr: result.stderr };

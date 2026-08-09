@@ -1,9 +1,10 @@
-import { Cloud, ExternalLink, MessageSquare, Star, Users } from 'lucide-react';
+import { Cloud, Download, ExternalLink, MessageSquare, Star, Trash2, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { CLOUDCLI_WORDMARK_FONT_FAMILY } from '../../../../constants/branding';
 import { IS_PLATFORM } from '../../../../constants/config';
 import { useVersionCheck } from '../../../../hooks/useVersionCheck';
+import { clearDiagnostics, exportDiagnostics } from '../../../../lib/logger';
 import PremiumFeatureCard from '../PremiumFeatureCard';
 
 const GITHUB_REPO_URL = 'https://github.com/siteboon/claudecodeui';
@@ -31,6 +32,15 @@ export default function AboutTab() {
   const { t } = useTranslation('settings');
   const { updateAvailable, latestVersion, currentVersion, releaseInfo } = useVersionCheck('siteboon', 'claudecodeui');
   const releasesUrl = releaseInfo?.htmlUrl || `${GITHUB_REPO_URL}/releases`;
+  const downloadDiagnostics = () => {
+    const blob = new Blob([exportDiagnostics()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `cloudcli-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-6">
@@ -162,6 +172,21 @@ export default function AboutTab() {
       )}
 
       {/* License */}
+      <div className="border-t border-border/50 pt-4">
+        <h3 className="text-sm font-medium text-foreground">Support diagnostics</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Export a bounded reliability timeline and counters. Prompts, message content, credentials, request bodies, and sensitive file details are excluded or redacted.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" onClick={downloadDiagnostics} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+            <Download className="h-4 w-4" /> Export diagnostics
+          </button>
+          <button type="button" onClick={clearDiagnostics} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground">
+            <Trash2 className="h-4 w-4" /> Clear diagnostics
+          </button>
+        </div>
+      </div>
+
       <div className="border-t border-border/50 pt-4">
         <p className="text-xs text-muted-foreground/60">
           Licensed under AGPL-3.0

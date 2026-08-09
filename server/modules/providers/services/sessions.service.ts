@@ -123,6 +123,10 @@ export type RunningSessionAncestor = {
 
 type IndexedSessionRow = NonNullable<ReturnType<typeof sessionsDb.getSessionById>>;
 
+function historyRevision(row: IndexedSessionRow): string {
+  return row.updated_at ?? row.created_at;
+}
+
 function createRunningSessionDetails(row: IndexedSessionRow): Pick<RunningSession, 'parentSessionId' | 'session' | 'project'> {
   const projectPath = row.project_path;
   const project = projectPath ? projectsDb.getProjectPath(projectPath) : null;
@@ -651,6 +655,7 @@ export const sessionsService = {
     // (e.g. first message still streaming) simply have no history.
     if (!session.provider_session_id) {
       return {
+        revision: historyRevision(session),
         messages: [],
         total: 0,
         hasMore: false,
@@ -669,11 +674,19 @@ export const sessionsService = {
 
     return {
       ...result,
+      revision: historyRevision(session),
       messages: result.messages.map((message) => ({
         ...message,
         sessionId,
       })),
     };
+  },
+
+  /** Returns stable canonical history metadata without loading provider transcript content. */
+  getHistoryRevision(sessionId: string): string {
+    const session = sessionsDb.getSessionById(sessionId);
+    if (!session) throw new AppError(`Session "${sessionId}" was not found.`, { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+    return historyRevision(session);
   },
 
   /**
