@@ -42,6 +42,7 @@ export type MainContentHeaderProps = {
   shouldShowBrowserTab: boolean;
   isMobile: boolean;
   onMenuClick: () => void;
+  onSoftReload: () => void;
 };
 
 export type MainContentStateViewProps = {

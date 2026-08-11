@@ -1,157 +1,98 @@
-// Service Worker for CloudCLI PWA
-// Cache only manifest (needed for PWA install). HTML and JS are never pre-cached
-// so a rebuild + refresh always picks up the latest assets.
-const CACHE_NAME = 'claude-ui-v2';
-const urlsToCache = [
-  '/manifest.json'
-];
+const BUILD_ID = '__CLOUDCLI_BUILD_ID__';
+const SHELL_FILES = __CLOUDCLI_SHELL__;
+const CACHE_PREFIX = 'cloudcli-pwa-';
+const SHELL_CACHE = `${CACHE_PREFIX}${BUILD_ID}-shell`;
+const RUNTIME_CACHE = `${CACHE_PREFIX}${BUILD_ID}-runtime`;
+const RUNTIME_LIMIT = 80;
 
-// Install event
+const scopedUrl = path => new URL(path, self.registration.scope).href;
+const isCloudCliCache = name => name.startsWith(CACHE_PREFIX);
+const isEligibleResponse = response => response && response.ok && response.type !== 'opaque';
+const isApiPath = pathname => pathname === '/api' || pathname.includes('/api/');
+
+async function trimRuntimeCache(cache) {
+  const keys = await cache.keys();
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - RUNTIME_LIMIT)).map(key => cache.delete(key)));
+}
+
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(urlsToCache))
-  );
-  self.skipWaiting();
+  event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES.map(scopedUrl))));
 });
 
-// Fetch event — network-first for everything except hashed assets
-self.addEventListener('fetch', event => {
-  const url = event.request.url;
-
-  // Never intercept API requests or WebSocket upgrades
-  if (url.includes('/api/') || url.includes('/ws')) {
-    return;
-  }
-
-  // Navigation requests (HTML) — always go to network, no caching
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request).catch(() =>
-        new Response('<h1>Offline</h1><p>Please check your connection.</p>', {
-          status: 503,
-          headers: { 'Content-Type': 'text/html' }
-        })
-      )
-    );
-    return;
-  }
-
-  // Hashed assets (JS/CSS in /assets/) — cache-first since filenames change per build
-  if (url.includes('/assets/')) {
-    event.respondWith(
-      caches.match(event.request).then(cached => {
-        if (cached) return cached;
-        return fetch(event.request).then(response => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-          return response;
-        });
-      })
-    );
-    return;
-  }
-
-  // Everything else — network-first
-  event.respondWith(
-    fetch(event.request).catch(async () => {
-      const cached = await caches.match(event.request);
-      return cached || new Response('Resource unavailable while offline.', { status: 503 });
-    })
-  );
-});
-
-// Activate event — purge old caches
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(cacheNames =>
-      Promise.all(
-        cacheNames
-          .filter(name => name !== CACHE_NAME)
-          .map(name => caches.delete(name))
-      )
-    )
-  );
-  self.clients.claim();
+  event.waitUntil(caches.keys().then(names => Promise.all(names
+    .filter(name => isCloudCliCache(name) && name !== SHELL_CACHE && name !== RUNTIME_CACHE)
+    .map(name => caches.delete(name)))).then(() => self.clients.claim()));
 });
 
-// Push notification event
+self.addEventListener('message', event => {
+  if (event.data?.type === 'cloudcli:activate-update') self.skipWaiting();
+  if (event.data?.type === 'cloudcli:check-update') event.waitUntil(self.registration.update());
+});
+
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || request.method !== 'GET' || isApiPath(url.pathname)) return;
+
+  if (request.mode === 'navigate') {
+    event.respondWith(fetch(request).then(response => isEligibleResponse(response) ? response : Promise.reject(new Error('Navigation unavailable'))).catch(() => caches.match(scopedUrl('index.html'))));
+    return;
+  }
+
+  const inScope = url.href.startsWith(self.registration.scope);
+  if (!inScope) return;
+  const shellRequest = SHELL_FILES.some(path => scopedUrl(path) === url.href);
+  if (shellRequest) {
+    event.respondWith(caches.match(request).then(cached => cached || fetch(request)));
+    return;
+  }
+
+  event.respondWith(fetch(request).then(async response => {
+    if (isEligibleResponse(response)) {
+      const cache = await caches.open(RUNTIME_CACHE);
+      await cache.put(request, response.clone());
+      await trimRuntimeCache(cache);
+    }
+    return response;
+  }).catch(() => caches.match(request).then(cached => cached || new Response('Resource unavailable while offline.', { status: 503 }))));
+});
+
 self.addEventListener('push', event => {
   if (!event.data) return;
-
   let payload;
-  try {
-    payload = event.data.json();
-  } catch {
-    payload = { title: 'CloudCLI', body: event.data.text() };
-  }
-
+  try { payload = event.data.json(); } catch { payload = { title: 'CloudCLI', body: event.data.text() }; }
   const options = {
-    body: payload.body || '',
-    icon: '/logo-256.png',
-    data: payload.data || {},
-    tag: payload.data?.tag || `${payload.data?.sessionId || 'global'}:${payload.data?.code || 'default'}`,
-    renotify: true
+    body: payload.body || '', icon: scopedUrl('logo-256.png'), data: payload.data || {},
+    tag: payload.data?.tag || `${payload.data?.sessionId || 'global'}:${payload.data?.code || 'default'}`, renotify: true
   };
-  if (payload.data?.severity !== 'info') {
-    options.badge = '/logo-128.png';
-  }
-
-  const isPrimaryCompletion = payload.data?.code === 'run.stopped'
-    && payload.data?.stopReason === 'completed';
-  const isSubtaskCompletion = payload.data?.code === 'task.completed';
-  const isOpenCodeCompletion = payload.data?.provider === 'opencode'
-    && (isPrimaryCompletion || isSubtaskCompletion);
-  const isReplyableCompletion = isPrimaryCompletion
-    && payload.data?.replyEligible === true;
-  if (isOpenCodeCompletion) {
-    options.vibrate = [200, 100, 200];
-  }
-  if (isReplyableCompletion) {
-    // Notification actions and vibration are best-effort; unsupported browsers
-    // ignore these standard options without affecting notification delivery.
-    options.actions = [{ action: 'reply', title: 'Reply' }];
-  }
-
-  event.waitUntil(
-    self.registration.showNotification(payload.title || 'CloudCLI', options).catch(() => {
-      if (!isOpenCodeCompletion && !isReplyableCompletion) return undefined;
-      const fallbackOptions = { ...options };
-      delete fallbackOptions.vibrate;
-      delete fallbackOptions.actions;
-      return self.registration.showNotification(payload.title || 'CloudCLI', fallbackOptions);
-    })
-  );
+  if (payload.data?.severity !== 'info') options.badge = scopedUrl('logo-128.png');
+  const primary = payload.data?.code === 'run.stopped' && payload.data?.stopReason === 'completed';
+  const completion = payload.data?.provider === 'opencode' && (primary || payload.data?.code === 'task.completed');
+  const replyable = primary && payload.data?.replyEligible === true;
+  if (completion) options.vibrate = [200, 100, 200];
+  if (replyable) options.actions = [{ action: 'reply', title: 'Reply' }];
+  event.waitUntil(self.registration.showNotification(payload.title || 'CloudCLI', options).catch(() => {
+    const fallback = { ...options }; delete fallback.vibrate; delete fallback.actions;
+    return self.registration.showNotification(payload.title || 'CloudCLI', fallback);
+  }));
 });
 
-// Notification click event
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-
   const sessionId = event.notification.data?.sessionId;
   const provider = event.notification.data?.provider || null;
-  const urlPath = sessionId ? `/session/${sessionId}` : '/';
+  const relativePath = sessionId ? `session/${encodeURIComponent(sessionId)}` : '';
+  const urlPath = new URL(relativePath, self.registration.scope).pathname;
   const isReply = event.action === 'reply' && Boolean(sessionId);
-  const targetUrl = isReply
-    ? `${urlPath}?notificationReply=1`
-    : urlPath;
-
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clientList => {
-      for (const client of clientList) {
-        if (client.url.includes(self.location.origin)) {
-          await client.focus();
-          client.postMessage({
-            type: 'notification:navigate',
-            sessionId: sessionId || null,
-            provider,
-            urlPath,
-            reply: isReply
-          });
-          return;
-        }
-      }
-      return self.clients.openWindow(targetUrl);
-    })
-  );
+  const targetUrl = new URL(isReply ? `${relativePath}?notificationReply=1` : relativePath, self.registration.scope).href;
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clients => {
+    const scopedClient = clients.find(client => client.url.startsWith(self.registration.scope));
+    if (scopedClient) {
+      await scopedClient.focus();
+      scopedClient.postMessage({ type: 'notification:navigate', sessionId: sessionId || null, provider, urlPath, reply: isReply });
+      return;
+    }
+    return self.clients.openWindow(targetUrl);
+  }));
 });

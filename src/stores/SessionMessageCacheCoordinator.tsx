@@ -10,7 +10,12 @@ export function SessionMessageCacheCoordinator() {
   const sessionStore = useSessionStoreContext();
 
   useEffect(() => {
-    void sessionStore.requestCachePersistence();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void sessionStore.requestCachePersistence().finally(() => sessionStore.refreshCacheStorageStatus(false));
+    });
+    return () => { cancelled = true; };
   }, [sessionStore]);
 
   return null;

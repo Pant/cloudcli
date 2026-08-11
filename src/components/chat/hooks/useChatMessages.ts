@@ -86,6 +86,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
       generation: msg.generation,
       seq: msg.seq,
       sourceKind: msg.kind,
+      provider: msg.provider,
       displayText: msg.displayText,
       commandName: msg.commandName,
       commandMessage: msg.commandMessage,
@@ -94,6 +95,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
       isLocalCommandStdout: msg.isLocalCommandStdout,
       isCompactSummary: msg.isCompactSummary,
     };
+    const responseMetadata = msg.responseMetadata ? { responseMetadata: msg.responseMetadata } : {};
 
     switch (msg.kind) {
       case 'text': {
@@ -145,6 +147,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
             content: text,
             timestamp: msg.timestamp,
             ...sharedMetadata,
+            ...responseMetadata,
           });
         }
         break;
@@ -194,6 +197,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
               }
             : undefined,
           ...sharedMetadata,
+          ...responseMetadata,
         });
         break;
       }
@@ -206,6 +210,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
             timestamp: msg.timestamp,
             isThinking: true,
             ...sharedMetadata,
+            ...responseMetadata,
           });
         }
         break;
@@ -299,4 +304,37 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
   }
 
   return converted;
+}
+
+function renderedMessageSignature(message: ChatMessage): string {
+  return JSON.stringify(message, (_key, value) => value instanceof Date ? value.toISOString() : value);
+}
+
+/** Preserve row identity when normalization produces an equivalent render model. */
+export function stabilizeRenderedMessages(
+  previous: ChatMessage[],
+  next: ChatMessage[],
+): ChatMessage[] {
+  const previousByKey = new Map<string, ChatMessage[]>();
+  for (const message of previous) {
+    const key = `${message.id ?? ''}:${message.renderKeySuffix ?? ''}:${message.sourceKind ?? ''}`;
+    const matches = previousByKey.get(key) ?? [];
+    matches.push(message);
+    previousByKey.set(key, matches);
+  }
+
+  let changed = previous.length !== next.length;
+  const stabilized = next.map((message, index) => {
+    const key = `${message.id ?? ''}:${message.renderKeySuffix ?? ''}:${message.sourceKind ?? ''}`;
+    const candidates = previousByKey.get(key);
+    const prior = candidates?.shift();
+    if (prior && renderedMessageSignature(prior) === renderedMessageSignature(message)) {
+      if (prior !== previous[index]) changed = true;
+      return prior;
+    }
+    changed = true;
+    return message;
+  });
+
+  return changed ? stabilized : previous;
 }

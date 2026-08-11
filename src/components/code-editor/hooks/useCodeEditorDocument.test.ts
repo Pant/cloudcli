@@ -28,3 +28,15 @@ test('header wires reload immediately after save with disabled and animated stat
   assert.match(source, /reloading \? labels\.reloading : labels\.reload/);
   assert.match(source, /reloading \? 'animate-spin' : ''/);
 });
+
+test('document recovery tracks baseline, save success, conflicts, and excludes non-text files', async () => {
+  const source = await readSource('./useCodeEditorDocument.ts');
+  assert.match(source, /const \[baseline, setBaseline\] = useState\(''\)/);
+  assert.match(source, /const isDirty = content !== baseline/);
+  assert.match(source, /setBaseline\(content\)/);
+  assert.match(source, /editorRecoveryStore\.delete/);
+  assert.match(source, /stored\.baseline !== serverContent/);
+  assert.match(source, /!previewKind && !isBinaryFile\(fileName\) && !file\.diffInfo/);
+  assert.match(source, /restoreRecovery/);
+  assert.match(source, /discardRecovery/);
+});

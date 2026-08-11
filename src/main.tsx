@@ -1,31 +1,26 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import type { i18n as I18nInstance } from 'i18next';
 
 import App from './App'
-import { initializeI18n } from './i18n/config.js'
+import i18n, { initializeI18n } from './i18n/config.js'
 import { installConsoleCapture } from './lib/consoleCapture'
+import { initializePerformanceDiagnostics } from './lib/performanceDiagnostics'
+import { initializePwaRegistration } from './lib/pwaRegistration'
 import './index.css'
 
 installConsoleCapture()
+initializePerformanceDiagnostics()
 
-// Register service worker for PWA + Web Push support
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then((registration) => {
-    void registration.update().catch(err => {
-      console.warn('Service worker update check failed:', err);
-    });
-  }).catch(err => {
-    console.warn('Service worker registration failed:', err);
-  });
-}
+void initializePwaRegistration()
 
-initializeI18n().then((i18n: I18nInstance) => {
-  const root = document.getElementById('root');
-  if (!root) throw new Error('Application root element was not found.');
-  ReactDOM.createRoot(root).render(
-    <React.StrictMode>
-      <App i18n={i18n} />
-    </React.StrictMode>,
-  )
-})
+// Start loading the saved language before rendering, but let react-i18next
+// Suspense boundaries own resource readiness instead of delaying React mount.
+void initializeI18n()
+
+const root = document.getElementById('root');
+if (!root) throw new Error('Application root element was not found.');
+ReactDOM.createRoot(root).render(
+  <React.StrictMode>
+    <App i18n={i18n} />
+  </React.StrictMode>,
+)

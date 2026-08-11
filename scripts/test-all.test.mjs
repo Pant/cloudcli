@@ -42,16 +42,19 @@ test('failure cancels siblings, prevents runtime, and returns child status', asy
 for (const signal of ['SIGINT', 'SIGTERM']) test(`${signal} is forwarded and fails the run`, async () => { const source = signals(); let child; const promise = runValidation({ jobs: oneJob, budget: 1, signalSource: source, stdout() {}, stderr() {}, spawnCheck() { child = new FakeChild(); return child; } }); await tick(); source.emit(signal); assert.equal(await promise, 1); assert.equal(child.killedWith, signal); });
 
 test('default graph contains every optimized validation exactly once', () => {
-  const ids = validationJobs.map((job) => job.id); assert.equal(new Set(ids).size, 10);
+  const ids = validationJobs.map((job) => job.id); assert.equal(new Set(ids).size, 14);
   assert.ok(validationJobs.every((job) => job.command !== 'npm' && job.command !== 'npm.cmd'));
-  assert.deepEqual(ids, ['server-build', 'client-build', 'frontend-contract-tests', 'playwright', 'frontend-typecheck', 'lint', 'crash-diagnostics', 'realtime-hydration', 'backend-tests', 'session-recovery']);
+  assert.deepEqual(ids, ['server-build', 'client-build', 'frontend-tests', 'contract-tests', 'pwa-source', 'playwright', 'frontend-typecheck', 'lint', 'crash-diagnostics', 'realtime-hydration', 'backend-tests', 'pwa-assets', 'pwa-built-output', 'session-recovery']);
   assert.equal(validationJobs.some((job) => job.id === 'backend-typecheck'), false);
-  const combined = validationJobs.find((job) => job.id === 'frontend-contract-tests');
-  assert.ok(combined.args.includes('--test-isolation=none')); assert.ok(combined.args.includes('shared/**/*.test.ts')); assert.ok(combined.args.includes('src/**/*.test.tsx'));
-  const backend = validationJobs.find((job) => job.id === 'backend-tests'); assert.deepEqual(backend.dependencies, ['server-build']); assert.deepEqual(backend.args, ['scripts/validation/run-backend-tests.mjs']);
+  const frontend = validationJobs.find((job) => job.id === 'frontend-tests');
+  const contracts = validationJobs.find((job) => job.id === 'contract-tests');
+  assert.ok(frontend.args.includes('src/**/*.test.tsx')); assert.ok(contracts.args.includes('shared/**/*.test.ts'));
+  const backend = validationJobs.find((job) => job.id === 'backend-tests'); assert.deepEqual(backend.dependencies, ['server-build']); assert.ok(backend.args.includes('server/**/*.test.ts'));
   assert.equal(backend.priority, 99); assert.equal(validationJobs.find((job) => job.id === 'client-build').weight, 1);
   assert.deepEqual(validationJobs.find((job) => job.id === 'session-recovery').dependencies, ['server-build', 'client-build']);
-  assert.deepEqual(validationJobs.find((job) => job.id === 'playwright').dependencies, undefined);
+  assert.deepEqual(validationJobs.find((job) => job.id === 'playwright').dependencies, ['client-build']);
+  assert.ok(validationJobs.find((job) => job.id === 'playwright').args.includes('--project=production-pwa'));
+  assert.ok(validationJobs.find((job) => job.id === 'playwright').args.includes('--project=production-performance'));
   assert.deepEqual(validationJobs.find((job) => job.id === 'crash-diagnostics').dependencies, undefined);
 });
 

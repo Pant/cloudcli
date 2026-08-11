@@ -5,6 +5,7 @@ import {
   patchQueuedMessageOptions,
   queuedMessageKey,
   readQueuedMessage,
+  safeLocalStorage,
   writeQueuedMessage,
 } from './chatStorage';
 
@@ -83,4 +84,41 @@ test('patches only the requested queued option', () => {
 test('missing queued messages are not created by an option patch', () => {
   assert.equal(patchQueuedMessageOptions('missing', { model: 'new-model' }), null);
   assert.equal(values.has(queuedMessageKey('missing')), false);
+});
+
+test('quota failures retain unrelated project drafts and queues', () => {
+  values.set('draft_input_project-a', 'private draft');
+  values.set(queuedMessageKey('session-b'), JSON.stringify({ content: 'queued elsewhere' }));
+  const storage = globalThis.localStorage;
+  const originalSetItem = storage.setItem;
+  storage.setItem = () => {
+    throw Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+  };
+
+  try {
+    assert.deepEqual(safeLocalStorage.setItem('draft_input_project-c', 'new draft'), {
+      ok: false,
+      reason: 'quota',
+    });
+    assert.equal(values.get('draft_input_project-a'), 'private draft');
+    assert.equal(readQueuedMessage('session-b')?.content, 'queued elsewhere');
+  } finally {
+    storage.setItem = originalSetItem;
+  }
+});
+
+test('failed queued option persistence leaves the existing record intact', () => {
+  writeQueuedMessage('session-3', { content: 'keep me', options: { model: 'old' } });
+  const storage = globalThis.localStorage;
+  const originalSetItem = storage.setItem;
+  storage.setItem = () => {
+    throw Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+  };
+
+  try {
+    assert.equal(patchQueuedMessageOptions('session-3', { model: 'new' }), null);
+    assert.equal(readQueuedMessage('session-3')?.options?.model, 'old');
+  } finally {
+    storage.setItem = originalSetItem;
+  }
 });

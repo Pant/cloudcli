@@ -1,15 +1,20 @@
+import { useEffect } from 'react';
 import { BrowserRouter as Router, useRoutes } from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import type { i18n as I18nInstance } from 'i18next';
 
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, ProtectedRoute } from './components/auth';
+import { useAuth } from './components/auth/context/authContextContract';
 import { WebSocketProvider } from './contexts/WebSocketContext';
 import { PluginsProvider } from './contexts/PluginsContext';
 import { appRoutes } from './appRoutes';
 import { SessionStoreProvider } from './stores/sessionStoreProvider';
 import { SessionMessageCacheCoordinator } from './stores/SessionMessageCacheCoordinator';
 import ErrorBoundary from './components/main-content/view/ErrorBoundary';
+import { markCloudCliLifecycle } from './lib/performanceDiagnostics';
+import { ReloadSafetyProvider } from './contexts/ReloadSafetyContext';
+import { PwaUpdateProvider } from './contexts/PwaUpdateContext';
 
 const DEPLOYMENT_ASSET_DIRECTORIES = new Set(['assets', 'static', 'icons', 'images']);
 
@@ -109,18 +114,23 @@ export default function App({ i18n }: { i18n: I18nInstance }) {
     <I18nextProvider i18n={i18n}>
       <ThemeProvider>
         <AuthProvider>
-          <WebSocketProvider>
-            <PluginsProvider>
+          <AuthLifecycleBoundary />
+          <ReloadSafetyProvider>
+            <WebSocketProvider>
               <ProtectedRoute>
-                    <SessionStoreProvider>
-                      <SessionMessageCacheCoordinator />
-                      <Router basename={routerBasename}>
-                        <AppRoutes />
-                      </Router>
-                    </SessionStoreProvider>
+                <PluginsProvider>
+                    <PwaUpdateProvider>
+                      <SessionStoreProvider>
+                        <SessionMessageCacheCoordinator />
+                        <Router basename={routerBasename}>
+                          <AppRoutes />
+                        </Router>
+                      </SessionStoreProvider>
+                    </PwaUpdateProvider>
+                </PluginsProvider>
               </ProtectedRoute>
-            </PluginsProvider>
-          </WebSocketProvider>
+            </WebSocketProvider>
+          </ReloadSafetyProvider>
         </AuthProvider>
       </ThemeProvider>
     </I18nextProvider>
@@ -129,5 +139,12 @@ export default function App({ i18n }: { i18n: I18nInstance }) {
 }
 
 function AppRoutes() {
+  useEffect(() => { markCloudCliLifecycle('protected-shell-ready'); }, []);
   return useRoutes(appRoutes);
+}
+
+function AuthLifecycleBoundary() {
+  const { isLoading } = useAuth();
+  useEffect(() => { if (!isLoading) markCloudCliLifecycle('auth-ready'); }, [isLoading]);
+  return null;
 }

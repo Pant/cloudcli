@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promises as fs } from 'node:fs';
+
+import sharp from 'sharp';
 
 import {
   buildStoredAttachmentRecords,
   buildStoredImageRecords,
   isAllowedImageMimeType,
+  openStoredImageThumbnail,
   resolveAttachmentAssetFile,
   resolveImageAssetFile,
 } from '@/modules/assets/services/image-assets.service.js';
@@ -18,6 +22,31 @@ test('isAllowedImageMimeType accepts image formats and rejects the rest', () => 
   assert.equal(isAllowedImageMimeType('image/svg+xml'), true);
   assert.equal(isAllowedImageMimeType('application/pdf'), false);
   assert.equal(isAllowedImageMimeType('text/html'), false);
+});
+
+test('openStoredImageThumbnail bounds raster dimensions and preserves unsupported originals', async () => {
+  await fs.mkdir(ASSETS_DIR, { recursive: true });
+  const filename = `thumbnail-test-${process.pid}.png`;
+  const svgFilename = `thumbnail-test-${process.pid}.svg`;
+  const imagePath = path.join(ASSETS_DIR, filename);
+  const svgPath = path.join(ASSETS_DIR, svgFilename);
+  try {
+    await sharp({ create: { width: 800, height: 400, channels: 3, background: '#336699' } }).png().toFile(imagePath);
+    await fs.writeFile(svgPath, '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="400"/>');
+
+    const thumbnail = await openStoredImageThumbnail(filename);
+    assert.equal(thumbnail.status, 'found');
+    if (thumbnail.status === 'found') {
+      assert.equal(thumbnail.contentType, 'image/webp');
+      const metadata = await sharp(thumbnail.buffer).metadata();
+      assert.ok((metadata.width || 0) <= 224);
+      assert.ok((metadata.height || 0) <= 224);
+    }
+    assert.deepEqual(await openStoredImageThumbnail(svgFilename), { status: 'unsupported' });
+  } finally {
+    await fs.rm(imagePath, { force: true });
+    await fs.rm(svgPath, { force: true });
+  }
 });
 
 test('buildStoredImageRecords returns absolute posix paths in the assets dir', () => {

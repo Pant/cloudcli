@@ -30,3 +30,12 @@ jobs:
             .build-backend.tsbuildinfo
           key: validation-${{ runner.os }}-${{ runner.arch }}-node-${{ hashFiles('.node-version') }}-${{ hashFiles('package-lock.json', 'package.json') }}-${{ hashFiles('eslint.config.js', 'tsconfig.json', 'server/tsconfig.json', 'server/tsconfig.typecheck.json') }}-${{ hashFiles('src/**', 'server/**', 'shared/**', 'vite.config.*') }}
       - run: npm run validate:stability
+      - name: Upload production browser artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stability-browser-reports
+          if-no-files-found: ignore
+          path: |
+            playwright-report/
+            test-results/

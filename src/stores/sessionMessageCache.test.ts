@@ -5,6 +5,7 @@ import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 
 import type { NormalizedMessage } from './normalizedMessage';
 import {
+  inspectBrowserStorage,
   getUserCacheNamespace,
   SESSION_MESSAGE_CACHE_DB_VERSION,
   SESSION_MESSAGE_CACHE_MESSAGES_STORE,
@@ -285,4 +286,27 @@ test('clear and stats are safe to repeat and fail open for invalid or unavailabl
   assert.deepEqual(await unavailable.getCacheStats('user-a'), { sessionCount: 0, messageCount: 0 });
   assert.equal(await unavailable.clearUserCache('user-a'), false);
   assert.deepEqual(await unavailable.getCacheStats(''), { sessionCount: 0, messageCount: 0 });
+});
+
+test('classifies unsupported storage and reports estimate and persistence', async () => {
+  const originalNavigator = globalThis.navigator;
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+  assert.deepEqual(await inspectBrowserStorage(), {
+    persistence: 'unsupported', usage: null, quota: null, failure: 'unsupported',
+  });
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { storage: { persisted: async () => false, estimate: async () => ({ usage: 1_500_000, quota: 9_000_000 }) } },
+  });
+  assert.deepEqual(await inspectBrowserStorage(), {
+    persistence: 'denied', usage: 1_500_000, quota: 9_000_000, failure: 'denied',
+  });
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: originalNavigator });
+});
+
+test('classifies synchronous cache open failures', async () => {
+  const indexedDB = { open() { throw new DOMException('failed', 'QuotaExceededError'); } } as unknown as IDBFactory;
+  const repository = new SessionMessageCacheRepository({ indexedDB });
+  assert.equal(await repository.hydrateSession('user-a', 'session-1'), null);
+  assert.equal(repository.failureKind, 'quota');
 });

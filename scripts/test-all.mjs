@@ -11,13 +11,17 @@ const DEFAULT_CAPTURE_BYTES = 256 * 1024;
 export const validationJobs = [
   { id: 'server-build', label: 'server build', command: bin('concurrently'), args: [`${node} scripts/validation/prepare-server-build.mjs && ${bin('tsc')} -p server/tsconfig.json && ${bin('tsc-alias')} -p server/tsconfig.json`], env: { NODE_ENV: 'production' }, weight: 2, priority: 100 },
   { id: 'client-build', label: 'client build', command: bin('concurrently'), args: [`${bin('vite')} build --mode production && ${node} scripts/validation/client-codemirror-chunks.mjs && ${node} scripts/validation/client-bundle-budget.mjs`], env: { NODE_ENV: 'production' }, weight: 1, priority: 95 },
-  { id: 'frontend-contract-tests', label: 'frontend and shared contract tests', command: node, args: ['--import', 'tsx', '--test', '--test-isolation=none', 'src/**/*.test.ts', 'src/**/*.test.tsx', 'src/**/*.test.js', 'shared/**/*.test.ts'], weight: 2, priority: 90 },
-  { id: 'playwright', label: 'Playwright stability E2E', command: bin('playwright'), args: ['test', 'e2e/realtime-hydration.spec.ts'], weight: 1, priority: 85 },
+  { id: 'frontend-tests', label: 'frontend tests', command: node, args: ['--import', 'tsx', '--test', 'src/**/*.test.ts', 'src/**/*.test.tsx', 'src/**/*.test.js'], weight: 2, priority: 90 },
+  { id: 'contract-tests', label: 'shared contract tests', command: node, args: ['--import', 'tsx', '--test', 'shared/**/*.test.ts'], weight: 1, priority: 89 },
+  { id: 'pwa-source', label: 'PWA source validators', command: node, args: ['--test', 'scripts/validation/service-worker-notifications.test.mjs', 'scripts/validation/service-worker-lifecycle.test.mjs', 'scripts/validation/pwa-install-metadata.test.mjs', 'scripts/validation/font-resources.test.mjs'], weight: 1, priority: 88 },
+  { id: 'playwright', label: 'production browser stability matrix', command: bin('playwright'), args: ['test', '--project=stability', '--project=production-pwa', '--project=production-performance'], weight: 2, priority: 85, dependencies: ['client-build'] },
   { id: 'frontend-typecheck', label: 'frontend typecheck', command: bin('tsc'), args: ['--noEmit', '-p', 'tsconfig.json'], weight: 1, priority: 70 },
   { id: 'lint', label: 'full lint', command: bin('eslint'), args: ['--max-warnings', '0', '--cache', '--cache-strategy', 'content', '--cache-location', '.eslintcache', 'src/', 'server/'], weight: 1, priority: 60 },
   { id: 'crash-diagnostics', label: 'OpenCode crash diagnostics smoke', command: node, args: ['--import', 'tsx', 'scripts/validation/opencode-crash-diagnostics-smoke.mjs'], env: tsxEnv, weight: 1, priority: 50 },
   { id: 'realtime-hydration', label: 'realtime hydration smoke', command: node, args: ['--import', 'tsx', 'scripts/validation/realtime-session-hydration-smoke.mjs'], env: tsxEnv, weight: 1, priority: 40 },
-  { id: 'backend-tests', label: 'emitted backend tests', command: node, args: ['scripts/validation/run-backend-tests.mjs'], weight: 2, priority: 99, dependencies: ['server-build'] },
+  { id: 'backend-tests', label: 'backend tests', command: node, args: ['--import', 'tsx', '--test', 'server/**/*.test.ts', 'server/**/*.test.js'], env: tsxEnv, weight: 2, priority: 99, dependencies: ['server-build'] },
+  { id: 'pwa-assets', label: 'PWA asset validation', command: node, args: ['scripts/validation/pwa-assets.mjs'], weight: 1, priority: 45, dependencies: ['client-build'] },
+  { id: 'pwa-built-output', label: 'PWA built output validation', command: node, args: ['--test', 'scripts/validation/pwa-built-output.test.mjs'], weight: 1, priority: 44, dependencies: ['client-build'] },
   { id: 'session-recovery', label: 'OpenCode session recovery smoke', command: node, args: ['scripts/validation/opencode-session-recovery-smoke.mjs'], weight: 1, priority: 20, dependencies: ['server-build', 'client-build'] },
 ];
 

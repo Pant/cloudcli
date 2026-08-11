@@ -21,6 +21,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 
   // Update document class and localStorage when theme changes
   useEffect(() => {
+    document.documentElement.style.colorScheme = isDarkMode ? 'dark' : 'light';
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
       localStorage.setItem('theme', 'dark');
@@ -31,7 +32,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         statusBarMeta.setAttribute('content', 'black-translucent');
       }
       
-      const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+      const themeColorMeta = document.querySelector('meta[name="theme-color"]:not([media])');
       if (themeColorMeta) {
         themeColorMeta.setAttribute('content', '#141414'); // Dark background color (hsl(0 0% 8%))
       }
@@ -45,7 +46,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         statusBarMeta.setAttribute('content', 'default');
       }
       
-      const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+      const themeColorMeta = document.querySelector('meta[name="theme-color"]:not([media])');
       if (themeColorMeta) {
         themeColorMeta.setAttribute('content', '#f6f4ef'); // Light background color (warm cream)
       }

@@ -9,7 +9,7 @@ import http from 'http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 
-import { AppError, configureDynamicResponseCaching, createRequestCompletionDiagnostic, findApplicationRoot, getModuleDirectory, resolveRequestId, shouldLogRequestCompletion, terminalTextStyles } from '@/shared/utils.js';
+import { AppError, configureDynamicResponseCaching, createRequestCompletionDiagnostic, findApplicationRoot, getModuleDirectory, REVALIDATE_CACHE_CONTROL, resolveRequestId, setStaticResourceCacheHeaders, shouldLogRequestCompletion, terminalTextStyles } from '@/shared/utils.js';
 import {
     closeSessionsWatcher,
     initializeSessionsWatcher,
@@ -21,6 +21,7 @@ import { getConnectableHost } from '../shared/networkHosts.js';
 
 import { createGitModule } from './modules/git/index.js';
 import {
+    authenticateDocsToken,
     authenticateToken,
     authenticateWebSocket,
     authRoutes,
@@ -48,6 +49,7 @@ import {
 } from './modules/browser-use/index.js';
 import { assetsRoutes } from './modules/assets/index.js';
 import { fileTreeRoutes } from './modules/file-tree/index.js';
+import { attachDocsUiWebSocketBridge, createConfiguredDocsUiWebSocketBridge, docsUiRoutes } from './modules/docs-ui/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
 import { appointmentScheduler, appointmentsRouter } from './modules/appointments/index.js';
 import { initializeDatabase, sessionsDb } from './modules/database/index.js';
@@ -96,6 +98,8 @@ const agentRoutes = createAgentModule({
     queryCodex,
     queryOpenCode,
 });
+
+attachDocsUiWebSocketBridge(server, createConfiguredDocsUiWebSocketBridge(authenticateWebSocket));
 
 // Single WebSocket server that handles chat, shell, and plugin proxy paths.
 const wss = createWebSocketServer(server, {
@@ -168,6 +172,9 @@ app.use('/api', validateApiKey);
 // Authentication routes (public)
 app.use('/api/auth', authRoutes);
 
+// Docs UI proxy (protected and mounted before body parsers consume streaming uploads)
+app.use('/api/docs-ui', authenticateDocsToken, docsUiRoutes);
+
 // File Tree API Routes (protected)
 app.use('/api/file-tree', authenticateToken, fileTreeRoutes);
 
@@ -228,22 +235,14 @@ app.use('/api', (_req, res) => {
 });
 
 // Serve public files (like api-docs.html)
-app.use(express.static(path.join(APP_ROOT, 'public')));
+app.use(express.static(path.join(APP_ROOT, 'public'), {
+    setHeaders: setStaticResourceCacheHeaders,
+}));
 
 // Static files served after API routes
 // Add cache control: HTML files should not be cached, but assets can be cached
 app.use(express.static(path.join(APP_ROOT, 'dist'), {
-    setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.html')) {
-            // Prevent HTML caching to avoid service worker issues after builds
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
-        } else if (filePath.match(/\.(js|css|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|ico)$/)) {
-            // Cache static assets for 1 year (they have hashed names)
-            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        }
-    }
+    setHeaders: setStaticResourceCacheHeaders,
 }));
 
 // API Routes (protected)
@@ -267,7 +266,7 @@ app.get('/{*routePath}', (req, res) => {
     // Check if dist/index.html exists (production build available)
     if (fs.existsSync(indexPath)) {
         // Set no-cache headers for HTML to prevent service worker issues
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Cache-Control', REVALIDATE_CACHE_CONTROL);
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
         res.sendFile(indexPath);

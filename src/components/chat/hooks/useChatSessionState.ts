@@ -11,13 +11,15 @@ import { createCachedDiffCalculator, type DiffCalculator } from '../utils/messag
 import { stabilizeTokenUsageSnapshot } from '../utils/tokenUsageSnapshot';
 import { revealLocalHistoryWindow } from '../../../stores/sessionHistoryPolicy';
 
-import { normalizedToChatMessages } from './useChatMessages';
-import { createSessionMessageLoadingOwner } from './sessionMessageLoading';
+import { normalizedToChatMessages, stabilizeRenderedMessages } from './useChatMessages';
+import { createSessionMessageLoadingOwner, shouldBlockSessionMessageDisplay } from './sessionMessageLoading';
 import {
   advanceViewportSettle,
   chooseViewportSnapshot,
   isSelectionCurrent,
   shouldApplyViewportRevision,
+  shouldCancelViewportSettle,
+  transitionViewportOwnership,
   type SavedViewport,
 } from './sessionViewport';
 import {
@@ -31,6 +33,20 @@ import {
 const INITIAL_VISIBLE_MESSAGES = 100;
 const LOCAL_REVEAL_CHUNK = 100;
 const EMPTY_NORMALIZED_MESSAGES: NormalizedMessage[] = [];
+export const MAX_SAVED_CHAT_VIEWPORTS = 20;
+
+export function saveBoundedViewport(
+  viewports: Map<string, SavedViewport>, key: string, viewport: SavedViewport, activeKey: string | null,
+): void {
+  viewports.delete(key);
+  viewports.set(key, viewport);
+  while (viewports.size > MAX_SAVED_CHAT_VIEWPORTS) {
+    const oldest = viewports.keys().next().value as string | undefined;
+    if (!oldest) break;
+    if (oldest === activeKey) { const value = viewports.get(oldest)!; viewports.delete(oldest); viewports.set(oldest, value); continue; }
+    viewports.delete(oldest);
+  }
+}
 
 interface UseChatSessionStateArgs {
   selectedProject: Project | null;
@@ -182,6 +198,8 @@ export function useChatSessionState({
   const savedViewportsRef = useRef(new Map<string, SavedViewport>());
   const currentViewportRef = useRef<SavedViewport | null>(null);
   const settleCleanupRef = useRef<(() => void) | null>(null);
+  const applyingAutomaticScrollRef = useRef(false);
+  const viewportCaptureFrameRef = useRef(0);
   const searchTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const captureViewport = useCallback((): SavedViewport | null => {
     const container = scrollContainerRef.current;
@@ -213,12 +231,17 @@ export function useChatSessionState({
     const apply = () => {
       if (stopped || searchScrollActiveRef.current || !isSelectionCurrent(selectionKey, selectionKeyRef.current)) return;
       if (saved.mode === 'bottom') {
+        applyingAutomaticScrollRef.current = true;
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight - saved.bottomDistance);
       } else {
         const row = [...container.querySelectorAll<HTMLElement>('[data-message-key]')]
           .find((candidate) => candidate.dataset.messageKey === saved.key);
-        if (row) container.scrollTop += row.getBoundingClientRect().top - container.getBoundingClientRect().top - saved.offset;
+        if (row) {
+          applyingAutomaticScrollRef.current = true;
+          container.scrollTop += row.getBoundingClientRect().top - container.getBoundingClientRect().top - saved.offset;
+        }
       }
+      queueMicrotask(() => { applyingAutomaticScrollRef.current = false; });
       const measurement = saved.mode === 'bottom'
         ? container.scrollHeight
         : Math.round((container.querySelector<HTMLElement>(`[data-message-key="${saved.key.replace(/["\\]/g, '\\$&')}"]`)?.getBoundingClientRect().top ?? 0) * 10);
@@ -310,8 +333,6 @@ export function useChatSessionState({
 
   const activeSessionId = committedIdentity?.sessionId ?? null;
   const activeIdentityKey = committedIdentity?.key ?? null;
-  selectionKeyRef.current = activeIdentityKey;
-
   // The activity indicator always reflects the latest status of the session
   // being viewed — never stale local UI state from the last time it was
   // open. Session ids are concrete before any send, so no pending
@@ -324,6 +345,7 @@ export function useChatSessionState({
   /*  Derive chatMessages from the store                              */
   /* ---------------------------------------------------------------- */
   const [pendingUserMessage, setPendingUserMessage] = useState<ChatMessage | null>(null);
+  const renderedMessagesRef = useRef<ChatMessage[]>([]);
   const flushedPendingUserMessageRef = useRef<ChatMessage | null>(null);
 
   // Tell the store which session we're viewing so it only re-renders for this one
@@ -368,6 +390,14 @@ export function useChatSessionState({
   const storeMessages = activeSessionId
     ? sessionStore.getMessages(activeSessionId)
     : EMPTY_NORMALIZED_MESSAGES;
+  const activeSessionSnapshot = activeSessionId
+    ? sessionStore.getSessionSnapshot(activeSessionId)
+    : null;
+
+  useEffect(() => {
+    if (!activeSessionSnapshot?.hasDisplayableMessages || !isLoadingSessionMessages) return;
+    setIsLoadingSessionMessages(false);
+  }, [activeSessionSnapshot?.hasDisplayableMessages, isLoadingSessionMessages]);
 
   // Reset viewHiddenCount when store messages change
   const prevStoreLenRef = useRef(0);
@@ -377,7 +407,8 @@ export function useChatSessionState({
   }
 
   const chatMessages = useMemo(() => {
-    const all = normalizedToChatMessages(storeMessages);
+    const all = stabilizeRenderedMessages(renderedMessagesRef.current, normalizedToChatMessages(storeMessages));
+    renderedMessagesRef.current = all;
     // Show pending user message when no session data exists yet (new session, pre-backend-response)
     if (pendingUserMessage && all.length === 0) {
       return [pendingUserMessage];
@@ -417,6 +448,9 @@ export function useChatSessionState({
   }, []);
 
   const scrollToBottomAndReset = useCallback(() => {
+    cancelViewportSettle();
+    currentViewportRef.current = { mode: 'bottom', bottomDistance: 0 };
+    setIsUserScrolledUp(false);
     scrollToBottom();
     if (allMessagesLoaded) {
       visibleMessageCountRef.current = INITIAL_VISIBLE_MESSAGES;
@@ -425,7 +459,9 @@ export function useChatSessionState({
       setAllMessagesLoaded(hasAllLocalRows);
       allMessagesLoadedRef.current = hasAllLocalRows;
     }
-  }, [allMessagesLoaded, chatMessages.length, scrollToBottom]);
+    const selectionKey = selectionKeyRef.current;
+    if (selectionKey) startViewportSettle({ mode: 'bottom', bottomDistance: 0 }, selectionKey);
+  }, [allMessagesLoaded, cancelViewportSettle, chatMessages.length, scrollToBottom, startViewportSettle]);
 
   const isNearBottom = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -471,14 +507,18 @@ export function useChatSessionState({
   const handleScroll = useCallback(async () => {
     const container = scrollContainerRef.current;
     if (!container) return;
-
     const nearBottom = isNearBottom();
     setIsUserScrolledUp(!nearBottom);
     if (!searchScrollActiveRef.current) {
-      const captured = captureViewport();
-      currentViewportRef.current = nearBottom && captured?.mode === 'bottom'
-        ? { mode: 'bottom', bottomDistance: 0 }
-        : captured;
+      if (viewportCaptureFrameRef.current) cancelAnimationFrame(viewportCaptureFrameRef.current);
+      viewportCaptureFrameRef.current = requestAnimationFrame(() => {
+        viewportCaptureFrameRef.current = 0;
+        if (searchScrollActiveRef.current) return;
+        const captured = captureViewport();
+        currentViewportRef.current = nearBottom && captured?.mode === 'bottom'
+          ? { mode: 'bottom', bottomDistance: 0 }
+          : captured;
+      });
     }
 
     const scrolledNearTop = container.scrollTop < 100;
@@ -494,6 +534,12 @@ export function useChatSessionState({
     }
   }, [captureViewport, isNearBottom, loadOlderMessages]);
 
+  const handleViewportIntent = useCallback(() => {
+    if (shouldCancelViewportSettle({ userIntent: true, applyingAutomaticScroll: applyingAutomaticScrollRef.current })) {
+      cancelViewportSettle();
+    }
+  }, [cancelViewportSettle]);
+
   useLayoutEffect(() => {
     if (!pendingScrollRestoreRef.current || !scrollContainerRef.current) return;
     const saved = pendingScrollRestoreRef.current;
@@ -505,18 +551,18 @@ export function useChatSessionState({
   // Reset scroll/pagination state on session change
   useEffect(() => {
     cancelViewportSettle();
-    const previousKey = selectionKeyRef.current;
-    if (previousKey) {
-      const saved = currentViewportRef.current;
-      if (saved) savedViewportsRef.current.set(previousKey, saved);
-    }
+    const transition = transitionViewportOwnership({
+      departingIdentityKey: selectionKeyRef.current,
+      arrivingIdentityKey: activeIdentityKey,
+      departingViewport: currentViewportRef.current ?? captureViewport(),
+      savedViewports: savedViewportsRef.current,
+    });
+    if (transition.save) saveBoundedViewport(savedViewportsRef.current, transition.save.key, transition.save.viewport, activeIdentityKey);
     selectionKeyRef.current = activeIdentityKey;
-    pendingScrollRestoreRef.current = selectionKeyRef.current
-      ? savedViewportsRef.current.get(selectionKeyRef.current) ?? null
-      : null;
+    pendingScrollRestoreRef.current = transition.restore;
     currentViewportRef.current = pendingScrollRestoreRef.current;
     if (!searchScrollActiveRef.current) {
-      pendingInitialScrollRef.current = !pendingScrollRestoreRef.current;
+      pendingInitialScrollRef.current = transition.firstOpen;
       setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
     }
     topLoadLockRef.current = false;
@@ -644,10 +690,15 @@ export function useChatSessionState({
 
     lastLoadedSessionKeyRef.current = sessionKey;
 
-    // Fetch from server → store updates → chatMessages re-derives automatically
+    // Warm-up shares any anticipatory cache/network work already in flight.
     const loadingToken = sessionMessageLoadingOwnerRef.current.begin(sessionKey);
-    setIsLoadingSessionMessages(true);
-    sessionStore.fetchFromServer(selectedSessionId).then(slot => {
+    const initialSnapshot = sessionStore.getSessionSnapshot(selectedSessionId);
+    const warmPromise = sessionStore.warmSession(selectedSessionId);
+    const warmedSnapshot = sessionStore.getSessionSnapshot(selectedSessionId);
+    setIsLoadingSessionMessages(shouldBlockSessionMessageDisplay(
+      warmedSnapshot.isCanonicalLoading ? warmedSnapshot : initialSnapshot,
+    ));
+    warmPromise.then(slot => {
        if (selectionKeyRef.current !== sessionKey || !sessionMessageLoadingOwnerRef.current.isCurrent(loadingToken, sessionKey)) return;
       if (slot) {
         // Ordinary opens always request the complete transcript.
@@ -771,8 +822,9 @@ export function useChatSessionState({
           // Fall through and scroll in currently loaded messages.
         }
       }
-      visibleMessageCountRef.current = Infinity;
-      setVisibleMessageCount(Infinity);
+      const completeCount = Math.max(chatMessages.length, sessionStore.getSessionSlot(selectedSession?.id || '')?.total ?? 0);
+      visibleMessageCountRef.current = completeCount;
+      setVisibleMessageCount(completeCount);
       if (hasAuthoritativeCompleteHistory || sessionStore.getSessionSlot(selectedSession?.id || '')?.fetchedAt) {
         allMessagesLoadedRef.current = true;
         setAllMessagesLoaded(true);
@@ -829,6 +881,7 @@ export function useChatSessionState({
   }, [isLoadingSessionMessages, searchTarget]);
 
   useEffect(() => () => {
+    if (viewportCaptureFrameRef.current) cancelAnimationFrame(viewportCaptureFrameRef.current);
     for (const timer of searchTimersRef.current) clearTimeout(timer);
     searchTimersRef.current.clear();
     searchScrollActiveRef.current = false;
@@ -869,18 +922,6 @@ export function useChatSessionState({
   }, [chatMessages, committedVisibleMessageCount]);
 
   useEffect(() => {
-    if (!scrollContainerRef.current || chatMessages.length === 0) return;
-    if (isLoadingMoreRef.current || pendingScrollRestoreRef.current) return;
-    if (searchScrollActiveRef.current) return;
-
-    const selectionKey = selectionKeyRef.current;
-    const saved = currentViewportRef.current ?? captureViewport();
-    if (selectionKey && saved) {
-      startViewportSettle(saved.mode === 'bottom' ? { mode: 'bottom', bottomDistance: 0 } : saved, selectionKey);
-    }
-  }, [captureViewport, chatMessages, isUserScrolledUp, startViewportSettle, visibleMessageCount]);
-
-  useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     container.addEventListener('scroll', handleScroll);
@@ -893,11 +934,11 @@ export function useChatSessionState({
     if (container) {
       pendingScrollRestoreRef.current = captureViewport();
     }
-    visibleMessageCountRef.current = Infinity;
-    setVisibleMessageCount(Infinity);
+    visibleMessageCountRef.current = chatMessages.length;
+    setVisibleMessageCount(chatMessages.length);
     allMessagesLoadedRef.current = true;
     setAllMessagesLoaded(true);
-  }, [captureViewport, selectedProject, selectedSession]);
+  }, [captureViewport, chatMessages.length, selectedProject, selectedSession]);
 
   const loadEarlierMessages = useCallback(() => {
     revealLocalMessages(LOCAL_REVEAL_CHUNK);
@@ -935,5 +976,6 @@ export function useChatSessionState({
     scrollToBottomAndReset,
     isNearBottom,
     handleScroll,
+    handleViewportIntent,
   };
 }

@@ -37,6 +37,28 @@ export function shouldPinViewport(options: {
   return !options.searchActive && (options.firstOpen || options.saved?.mode === 'bottom');
 }
 
+export function transitionViewportOwnership(options: {
+  departingIdentityKey: string | null;
+  arrivingIdentityKey: string | null;
+  departingViewport: SavedViewport | null;
+  savedViewports: ReadonlyMap<string, SavedViewport>;
+}): { save: { key: string; viewport: SavedViewport } | null; restore: SavedViewport | null; firstOpen: boolean } {
+  const save = options.departingIdentityKey && options.departingViewport
+    ? { key: options.departingIdentityKey, viewport: options.departingViewport }
+    : null;
+  const restore = options.arrivingIdentityKey
+    ? options.savedViewports.get(options.arrivingIdentityKey) ?? null
+    : null;
+  return { save, restore, firstOpen: options.arrivingIdentityKey !== null && restore === null };
+}
+
+export function shouldCancelViewportSettle(options: {
+  userIntent: boolean;
+  applyingAutomaticScroll: boolean;
+}): boolean {
+  return options.userIntent && !options.applyingAutomaticScroll;
+}
+
 export const VIEWPORT_SETTLE_MAX_FRAMES = 60;
 export const VIEWPORT_SETTLE_STABLE_FRAMES = 3;
 

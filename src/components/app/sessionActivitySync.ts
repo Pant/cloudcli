@@ -2,8 +2,8 @@ import type { ServerEvent } from '../../contexts/webSocketTypes';
 import { KeyedServerState } from '../../lib/serverState';
 
 export const SESSION_ACTIVITY_DEBOUNCE_MS = 100;
-export const SESSION_ACTIVITY_ACTIVE_POLL_MS = 1_000;
-export const SESSION_ACTIVITY_IDLE_POLL_MS = 15_000;
+export const SESSION_ACTIVITY_ACTIVE_POLL_MS = 5_000;
+export const SESSION_ACTIVITY_IDLE_POLL_MS = 60_000;
 
 const lifecycleEventKinds = new Set([
   'complete',

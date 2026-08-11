@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDownIcon } from 'lucide-react';
 
@@ -13,13 +13,14 @@ import { useOpenCodeAgentState } from '../hooks/useOpenCodeAgentState';
 import { useSessionStoreContext } from '../../../stores/sessionStoreContext';
 import { api } from '../../../utils/api';
 import type { AppointmentTriggerRequest, PromptAppointment } from '../types/appointments';
+import { useAuth } from '../../auth/context/authContextContract';
 
 import type { QuestionFormSubmitHandler } from './subcomponents/QuestionFormCard';
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
 import CommandResultModal from './subcomponents/CommandResultModal';
-import PromptAppointmentModal from './subcomponents/PromptAppointmentModal';
 import { persistOpenCodePreferenceChange } from './agentPreferenceIntegration';
+import { shouldAutoOpenAppointmentReview } from './appointmentReview';
 import { ChatStatusBanner } from './chatDegradedState';
 import { getChatDataState } from './chatDegradedState.utils';
 
@@ -28,6 +29,7 @@ export type AgentPreferenceFeedback = 'model' | 'reasoning';
 const notificationReplyIntentKey = 'cloudcli:notification-reply-intent';
 const notificationReplyEvent = 'cloudcli:notification-reply';
 const notificationReplyIntentMaxAge = 60_000;
+const PromptAppointmentModal = React.lazy(() => import('./subcomponents/PromptAppointmentModal'));
 
 function ChatInterface({
   selectedProject,
@@ -49,6 +51,7 @@ function ChatInterface({
   newSessionTrigger,
 }: ChatInterfaceProps) {
   const { subscribe, connectionEpoch, transportState } = useWebSocket();
+  const { isOfflineSession } = useAuth();
   const { t } = useTranslation('chat');
 
   const sessionStore = useSessionStoreContext();
@@ -139,7 +142,7 @@ function ChatInterface({
     scrollContainerRef,
     scrollToBottom,
     scrollToBottomAndReset,
-    handleScroll,
+    handleViewportIntent,
   } = useChatSessionState({
     selectedProject,
     selectedSession,
@@ -290,7 +293,7 @@ function ChatInterface({
       const rows = Array.isArray(body?.data) ? body.data : [];
       setAppointments(rows);
       setAppointmentError(null);
-      if (rows.some((row: PromptAppointment) => row.status === 'needs_review') && !reviewAutoOpenedRef.current.has(projectId)) {
+       if (shouldAutoOpenAppointmentReview(rows, projectId, reviewAutoOpenedRef.current)) {
         reviewAutoOpenedRef.current.add(projectId);
         setAppointmentModalOpen(true);
       }
@@ -542,11 +545,12 @@ function ChatInterface({
   return (
     <PermissionContext.Provider value={permissionContextValue}>
       <div className="flex h-full min-h-0 flex-col">
-        <ChatStatusBanner state={chatDataState} onRetry={currentSessionId ? retryCanonicalHistory : undefined} />
+        <ChatStatusBanner state={isOfflineSession && chatMessages.length > 0 ? 'stale-offline' : chatDataState} onRetry={!isOfflineSession && currentSessionId ? retryCanonicalHistory : undefined} />
+        {isOfflineSession && <div className="border-b border-border bg-muted/70 px-4 py-2 text-xs text-muted-foreground">Read-only offline view. Drafts and queued messages are retained locally; sends, appointments, permissions, and other server changes require a connection.</div>}
         <ChatMessagesPane
           scrollContainerRef={scrollContainerRef}
-          onWheel={handleScroll}
-          onTouchMove={handleScroll}
+          onWheel={handleViewportIntent}
+          onTouchMove={handleViewportIntent}
           isLoadingSessionMessages={isLoadingSessionMessages}
           isProcessing={isProcessing}
           hasActivityIndicator={hasActivityIndicator}
@@ -581,7 +585,7 @@ function ChatInterface({
         />
 
         <div className="relative flex-shrink-0">
-          {isUserScrolledUp && chatMessages.length > 0 && (
+          {chatMessages.length > 0 && (
             <div className="pointer-events-none absolute -top-11 left-0 right-0 z-20 flex justify-center">
               <button
                 type="button"
@@ -589,6 +593,7 @@ function ChatInterface({
                 aria-label={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
                 className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-card text-muted-foreground shadow-sm transition-all duration-200 hover:bg-accent hover:text-foreground"
                 title={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
+                aria-pressed={!isUserScrolledUp}
               >
                 <ArrowDownIcon className="h-4 w-4" aria-hidden />
               </button>
@@ -679,19 +684,23 @@ function ChatInterface({
         currentSessionId={currentSessionId || selectedSession?.id || null}
         onSelectProviderModel={selectProviderModel}
       />
-      <PromptAppointmentModal
-        open={appointmentModalOpen}
-        onClose={() => setAppointmentModalOpen(false)}
-        projectId={selectedProject.projectId}
-        prompt={input}
-        attachmentCount={attachedFiles.length}
-        appointments={appointments}
-        loading={appointmentsLoading}
-        submitting={appointmentSubmitting}
-        error={appointmentError}
-        onCreate={handleCreateAppointment}
-        onAppointmentsChange={refreshAppointments}
-      />
+      {appointmentModalOpen && (
+        <Suspense fallback={null}>
+          <PromptAppointmentModal
+            open
+            onClose={() => setAppointmentModalOpen(false)}
+            projectId={selectedProject.projectId}
+            prompt={input}
+            attachmentCount={attachedFiles.length}
+            appointments={appointments}
+            loading={appointmentsLoading}
+            submitting={appointmentSubmitting}
+            error={appointmentError}
+            onCreate={handleCreateAppointment}
+            onAppointmentsChange={refreshAppointments}
+          />
+        </Suspense>
+      )}
     </PermissionContext.Provider>
   );
 }

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from '../../../utils/api';
+import { useAuth } from '../../auth/context/authContextContract';
+import { getUserCacheNamespace } from '../../../stores/sessionMessageCache';
+import { editorRecoveryStore, type EditorRecoveryRecord } from '../../../stores/editorRecoveryStore';
 import type { CodeEditorFile } from '../types/types';
 import { isBinaryFile } from '../utils/binaryFile';
 import { getPreviewKind } from '../utils/previewableFile';
@@ -19,7 +22,12 @@ const getErrorMessage = (error: unknown) => {
 };
 
 export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocumentParams) => {
+  const { user } = useAuth();
+  const accountId = getUserCacheNamespace(user);
   const [content, setContent] = useState('');
+  const [baseline, setBaseline] = useState('');
+  const [recovery, setRecovery] = useState<EditorRecoveryRecord | null>(null);
+  const [hasRecoveryConflict, setHasRecoveryConflict] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -39,6 +47,25 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   const fileDiffOldString = file.diffInfo?.old_string;
   const savingRef = useRef(false);
   const reloadingRef = useRef(false);
+  const isRecoverable = Boolean(accountId && fileProjectId && !previewKind && !isBinaryFile(fileName) && !file.diffInfo);
+  const isDirty = content !== baseline;
+
+  const acceptServerContent = useCallback(async (serverContent: string) => {
+    if (!isRecoverable || !accountId || !fileProjectId) {
+      setContent(serverContent);
+      setBaseline(serverContent);
+      setRecovery(null);
+      setHasRecoveryConflict(false);
+      return;
+    }
+    const stored = await editorRecoveryStore.get(accountId, fileProjectId, filePath);
+    if (stored) {
+      setRecovery(stored);
+      setHasRecoveryConflict(stored.baseline !== serverContent);
+    }
+    setContent(serverContent);
+    setBaseline(serverContent);
+  }, [accountId, filePath, fileProjectId, isRecoverable]);
 
   const loadFileContent = useCallback(async (manualReload = false) => {
     try {
@@ -73,6 +100,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         // Diff payload may already include full old/new snapshots, so avoid disk read.
         if (file.diffInfo && fileDiffNewString !== undefined && fileDiffOldString !== undefined) {
           setContent(fileDiffNewString);
+          setBaseline(fileDiffNewString);
           return;
         }
       }
@@ -87,7 +115,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
       }
 
       const data = await response.json();
-      setContent(data.content);
+      await acceptServerContent(data.content);
     } catch (error) {
       const message = getErrorMessage(error);
       console.error('Error loading file:', error);
@@ -104,11 +132,19 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         setLoading(false);
       }
     }
-  }, [file.name, file.diffInfo, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId]);
+  }, [acceptServerContent, file.name, file.diffInfo, fileDiffNewString, fileDiffOldString, fileName, filePath, fileProjectId]);
 
   useEffect(() => {
     void loadFileContent();
   }, [loadFileContent]);
+
+  useEffect(() => {
+    if (!isRecoverable || !accountId || !fileProjectId || !isDirty) return;
+    const timer = window.setTimeout(() => {
+      void editorRecoveryStore.put({ accountId, projectId: fileProjectId, filePath, content, baseline, updatedAt: Date.now() });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [accountId, baseline, content, filePath, fileProjectId, isDirty, isRecoverable]);
 
   const handleReload = useCallback(async () => {
     await loadFileContent(true);
@@ -146,6 +182,10 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
 
       await response.json();
 
+      setBaseline(content);
+      setRecovery(null);
+      setHasRecoveryConflict(false);
+      if (accountId && fileProjectId) await editorRecoveryStore.delete(accountId, fileProjectId, filePath);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
@@ -156,7 +196,18 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
       savingRef.current = false;
       setSaving(false);
     }
-  }, [content, filePath, fileProjectId, previewKind, fileName]);
+  }, [accountId, content, filePath, fileProjectId, previewKind, fileName]);
+
+  const restoreRecovery = useCallback(() => {
+    if (!recovery) return;
+    setContent(recovery.content);
+  }, [recovery]);
+
+  const discardRecovery = useCallback(async () => {
+    if (accountId && fileProjectId) await editorRecoveryStore.delete(accountId, fileProjectId, filePath);
+    setRecovery(null);
+    setHasRecoveryConflict(false);
+  }, [accountId, filePath, fileProjectId]);
 
   const handleDownload = useCallback(() => {
     const blob = new Blob([content], { type: 'text/plain' });
@@ -184,6 +235,12 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     isBinary,
     previewKind,
     fileProjectId,
+    baseline,
+    isDirty,
+    recovery,
+    hasRecoveryConflict,
+    restoreRecovery,
+    discardRecovery,
     handleSave,
     handleReload,
     handleDownload,

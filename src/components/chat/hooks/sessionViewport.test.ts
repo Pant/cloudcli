@@ -7,6 +7,8 @@ import {
   isSelectionCurrent,
   shouldApplyViewportRevision,
   shouldPinViewport,
+  shouldCancelViewportSettle,
+  transitionViewportOwnership,
   VIEWPORT_SETTLE_MAX_FRAMES,
 } from './sessionViewport';
 
@@ -14,6 +16,29 @@ test('saves near-bottom views by bottom distance', () => {
   assert.deepEqual(chooseViewportSnapshot({ scrollTop: 955, scrollHeight: 1200, clientHeight: 220 }, null), {
     mode: 'bottom', bottomDistance: 25,
   });
+});
+
+test('A-B-A transitions save the departing viewport and restore only the arriving session', () => {
+  const saved = new Map<string, ReturnType<typeof chooseViewportSnapshot>>([
+    ['A', { mode: 'anchor', key: 'a2', offset: 9 }],
+  ]);
+  const toB = transitionViewportOwnership({
+    departingIdentityKey: 'A', arrivingIdentityKey: 'B',
+    departingViewport: { mode: 'anchor', key: 'a3', offset: 4 }, savedViewports: saved,
+  });
+  assert.deepEqual(toB.save, { key: 'A', viewport: { mode: 'anchor', key: 'a3', offset: 4 } });
+  assert.equal(toB.restore, null);
+  saved.set('A', toB.save!.viewport);
+  assert.deepEqual(transitionViewportOwnership({
+    departingIdentityKey: 'B', arrivingIdentityKey: 'A',
+    departingViewport: { mode: 'bottom', bottomDistance: 0 }, savedViewports: saved,
+  }).restore, { mode: 'anchor', key: 'a3', offset: 4 });
+});
+
+test('real user intent cancels settling but automatic scroll events do not', () => {
+  assert.equal(shouldCancelViewportSettle({ userIntent: true, applyingAutomaticScroll: false }), true);
+  assert.equal(shouldCancelViewportSettle({ userIntent: true, applyingAutomaticScroll: true }), false);
+  assert.equal(shouldCancelViewportSettle({ userIntent: false, applyingAutomaticScroll: false }), false);
 });
 
 test('viewport revisions are fenced across rapid exact-identity switches', () => {

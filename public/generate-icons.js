@@ -1,49 +1,33 @@
-const fs = require('fs');
-const path = require('path');
+import { mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import sharp from 'sharp';
 
-// Icon sizes needed
-const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
+const iconsDirectory = fileURLToPath(new URL('./icons/', import.meta.url));
+const ordinarySizes = [192, 512];
+const maskableSizes = [192, 512];
 
-// SVG template function
-function createIconSVG(size) {
-  const cornerRadius = Math.round(size * 0.25); // 25% corner radius
-  const strokeWidth = Math.max(2, Math.round(size * 0.06)); // Scale stroke width
-  
-  // MessageSquare path scaled to size
-  const padding = Math.round(size * 0.25);
-  const iconSize = size - (padding * 2);
-  const startX = padding;
-  const startY = Math.round(padding * 0.7);
-  const endX = startX + iconSize;
-  const endY = startY + Math.round(iconSize * 0.6);
-  const tailX = startX;
-  const tailY = endY + Math.round(iconSize * 0.3);
-  
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background with rounded corners -->
-  <rect width="${size}" height="${size}" rx="${cornerRadius}" fill="hsl(262.1 83.3% 57.8%)"/>
-  
-  <!-- MessageSquare icon -->
-  <path d="M${startX} ${startY}C${startX} ${startY - 10} ${startX + 10} ${startY - 20} ${startX + 20} ${startY - 20}H${endX - 20}C${endX - 10} ${startY - 20} ${endX} ${startY - 10} ${endX} ${startY}V${endY - 20}C${endX} ${endY - 10} ${endX - 10} ${endY} ${endX - 20} ${endY}H${startX + Math.round(iconSize * 0.4)}L${tailX} ${tailY}V${startY}Z" 
-        stroke="white" 
-        stroke-width="${strokeWidth}" 
-        stroke-linecap="round" 
-        stroke-linejoin="round" 
-        fill="none"/>
+function iconSvg(size, maskable) {
+  const inset = maskable ? Math.round(size * 0.2) : Math.round(size * 0.12);
+  const x1 = inset;
+  const y1 = Math.round(size * 0.25);
+  const x2 = size - inset;
+  const y2 = Math.round(size * 0.61);
+  const tailX = Math.round(size * 0.43);
+  const tailY = size - inset;
+  const stroke = Math.round(size * 0.0625);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  <rect width="${size}" height="${size}" fill="#18181b"/>
+  <path d="M${x1} ${y1} Q${x1} ${y1 - stroke} ${x1 + stroke} ${y1 - stroke} H${x2 - stroke} Q${x2} ${y1 - stroke} ${x2} ${y1} V${y2 - stroke} Q${x2} ${y2} ${x2 - stroke} ${y2} H${tailX} L${x1} ${tailY} Z" fill="none" stroke="#fff" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
 }
 
-// Generate SVG files for each size
-sizes.forEach(size => {
-  const svgContent = createIconSVG(size);
-  const filename = `icon-${size}x${size}.svg`;
-  const filepath = path.join(__dirname, 'icons', filename);
-  
-  fs.writeFileSync(filepath, svgContent);
-  console.log(`Created ${filename}`);
-});
+async function writeIcon(filename, size, maskable) {
+  await sharp(Buffer.from(iconSvg(size, maskable))).png({ compressionLevel: 9, adaptiveFiltering: false }).toFile(path.join(iconsDirectory, filename));
+  console.log(`generated icons/${filename}`);
+}
 
-console.log('\nSVG icons created! To convert to PNG, you can use:');
-console.log('1. Online converter like cloudconvert.com');
-console.log('2. If you have ImageMagick: convert icon.svg icon.png');
-console.log('3. If you have Inkscape: inkscape --export-type=png icon.svg');
+await mkdir(iconsDirectory, { recursive: true });
+for (const size of ordinarySizes) await writeIcon(`icon-${size}x${size}.png`, size, false);
+for (const size of maskableSizes) await writeIcon(`icon-maskable-${size}x${size}.png`, size, true);
+await writeIcon('apple-touch-icon-180x180.png', 180, false);

@@ -7,7 +7,7 @@ import type { ToolGroupItem } from '../../utils/toolGrouping';
 import { getToolConfig } from '../../tools';
 
 import type { QuestionFormSubmitHandler } from './QuestionFormCard';
-import MessageComponent from './MessageComponent';
+import MessageComponent, { ResponseMetadataFooter } from './MessageComponent';
 
 type DiffLine = {
   type: string;
@@ -28,7 +28,6 @@ interface ToolGroupContainerProps {
   showThinking?: boolean;
   selectedProject?: Project | null;
   provider: Provider | string;
-  transcriptMessages: ChatMessage[];
   onSubmitQuestionForm: QuestionFormSubmitHandler;
 }
 
@@ -73,7 +72,6 @@ export default function ToolGroupContainer({
   showThinking,
   selectedProject,
   provider,
-  transcriptMessages,
   onSubmitQuestionForm,
 }: ToolGroupContainerProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -82,6 +80,11 @@ export default function ToolGroupContainer({
   const borderClass = config.colorScheme?.border || 'border-border';
   const iconClass = config.colorScheme?.icon || 'text-muted-foreground';
   const icon = getToolGroupIcon(config.icon, group.toolName);
+  const responseMetadata = provider === 'opencode'
+    ? group.messages.flatMap((message) => message.type === 'assistant' && message.responseMetadata
+      ? [message.responseMetadata]
+      : [])
+    : [];
 
   const preview = useMemo(() => {
     const visiblePreviews = group.messages
@@ -126,6 +129,13 @@ export default function ToolGroupContainer({
         )}
       </button>
 
+      {responseMetadata.map((metadata, index) => (
+        <ResponseMetadataFooter
+          key={`${metadata.timestamp}-${index}`}
+          metadata={metadata}
+        />
+      ))}
+
       {isExpanded && (
         <div className="mt-2 space-y-3 sm:space-y-4">
           {group.messages.map((message, index) => (
@@ -134,6 +144,7 @@ export default function ToolGroupContainer({
               message={message}
               messageKey={getMessageKey(message)}
               ownsMessageAnchor={false}
+              ownsResponseMetadataFooter={false}
               prevMessage={index > 0 ? group.messages[index - 1] : prevMessage}
               createDiff={createDiff}
               onFileOpen={onFileOpen}
@@ -143,8 +154,6 @@ export default function ToolGroupContainer({
               showThinking={showThinking}
               selectedProject={selectedProject}
               provider={provider}
-              transcriptMessages={transcriptMessages}
-              messageIndex={transcriptMessages.indexOf(message)}
               onSubmitQuestionForm={onSubmitQuestionForm}
             />
           ))}

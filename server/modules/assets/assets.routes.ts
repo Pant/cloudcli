@@ -6,6 +6,7 @@ import {
   buildStoredImageRecords,
   ensureImageAssetsDir,
   isAllowedImageMimeType,
+  openStoredImageThumbnail,
   openStoredAttachmentAsset,
 } from '@/modules/assets/services/image-assets.service.js';
 
@@ -120,6 +121,20 @@ router.get('/images/:filename', async (req, res) => {
       res.status(500).json({ error: 'Error reading asset' });
     }
   });
+});
+
+/** Serves a bounded preview while leaving the original image endpoint intact. */
+router.get('/images/:filename/thumbnail', async (req, res) => {
+  const thumbnail = await openStoredImageThumbnail(req.params.filename);
+  if (thumbnail.status === 'invalid') return res.status(400).json({ error: 'Invalid asset filename' });
+  if (thumbnail.status === 'missing') return res.status(404).json({ error: 'Asset not found' });
+  if (thumbnail.status === 'unsupported') return res.status(415).json({ error: 'Thumbnail unavailable' });
+
+  res.setHeader('Content-Type', thumbnail.contentType);
+  res.setHeader('Content-Length', String(thumbnail.buffer.byteLength));
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.send(thumbnail.buffer);
 });
 
 /**

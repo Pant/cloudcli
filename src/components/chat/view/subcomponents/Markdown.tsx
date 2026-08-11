@@ -1,22 +1,23 @@
-import React, { lazy, Suspense, useMemo, useState } from 'react';
+import React, { lazy, memo, Suspense, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import { useTranslation } from 'react-i18next';
-import 'katex/dist/katex.min.css';
 
 import { normalizeInlineCodeFences } from '../../utils/chatFormatting';
 import { copyTextToClipboard } from '../../../../utils/clipboard';
 import { usePaletteOps } from '../../../../contexts/paletteOps';
 import { useTheme } from '../../../../contexts/useTheme';
 
+import { hasMarkdownMath } from './markdownMathDetection';
+
 type MarkdownProps = {
   children: React.ReactNode;
   className?: string;
   /** Render single newlines as hard line breaks (for user-typed messages). */
   breaks?: boolean;
+  /** Growing stream content keeps fenced code plain until its final commit. */
+  isStreaming?: boolean;
 };
 
 // Links to the wider web (or in-page anchors) keep normal browser navigation;
@@ -63,7 +64,7 @@ type CodeBlockProps = {
 
 const ControlledSyntaxHighlighter = lazy(() => import('../../../markdown/ControlledSyntaxHighlighter'));
 
-const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockProps) => {
+const CodeBlock = ({ node, inline, className, children, isStreaming, ...props }: CodeBlockProps & { isStreaming?: boolean }) => {
   const { t } = useTranslation('chat');
   const { isDarkMode } = useTheme();
   const [copied, setCopied] = useState(false);
@@ -137,9 +138,13 @@ const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockPro
         )}
       </button>
 
-      <Suspense fallback={<pre className="m-0 overflow-x-auto rounded-xl bg-muted p-4 pt-8 text-sm"><code>{raw}</code></pre>}>
-        <ControlledSyntaxHighlighter code={raw} language={language} isDarkMode={isDarkMode} />
-      </Suspense>
+      {isStreaming ? (
+        <pre className="m-0 overflow-x-auto rounded-xl bg-muted p-4 pt-8 text-sm text-foreground"><code>{raw}</code></pre>
+      ) : (
+        <Suspense fallback={<pre className="m-0 overflow-x-auto rounded-xl bg-muted p-4 pt-8 text-sm"><code>{raw}</code></pre>}>
+          <ControlledSyntaxHighlighter code={raw} language={language} isDarkMode={isDarkMode} />
+        </Suspense>
+      )}
     </div>
   );
 };
@@ -177,20 +182,23 @@ const markdownComponents = {
   ),
 };
 
-export function Markdown({ children, className, breaks = false }: MarkdownProps) {
+const MathMarkdown = lazy(() => import('./MarkdownMath'));
+
+function MarkdownView({ children, className, breaks = false, isStreaming = false }: MarkdownProps) {
   const content = normalizeInlineCodeFences(String(children ?? ''));
+  const useMath = hasMarkdownMath(content);
   const remarkPlugins = useMemo(
     () => (breaks
-      ? [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkBreaks]
-      : [remarkGfm, [remarkMath, { singleDollarTextMath: false }]]) as any,
+      ? [remarkGfm, remarkBreaks]
+      : [remarkGfm]) as any,
     [breaks],
   );
-  const rehypePlugins = useMemo(() => [rehypeKatex], []);
   const { openFileInEditor } = usePaletteOps();
 
   const components = useMemo(
     () => ({
       ...markdownComponents,
+      code: (props: CodeBlockProps) => <CodeBlock {...props} isStreaming={isStreaming} />,
       a: ({ href, children: linkChildren }: { href?: string; children?: React.ReactNode }) => {
         // Prefer the href when it is a real path; otherwise fall back to the
         // link text, since models often emit `[src/foo.ts]()` with an empty href.
@@ -224,14 +232,20 @@ export function Markdown({ children, className, breaks = false }: MarkdownProps)
         );
       },
     }),
-    [openFileInEditor],
+    [isStreaming, openFileInEditor],
   );
+
+  if (useMath) {
+    return <Suspense fallback={<div className={className}>{content}</div>}><MathMarkdown className={className} breaks={breaks} components={components}>{content}</MathMarkdown></Suspense>;
+  }
 
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components as any}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={components as any}>
         {content}
       </ReactMarkdown>
     </div>
   );
 }
+
+export const Markdown = memo(MarkdownView);

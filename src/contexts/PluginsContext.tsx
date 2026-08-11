@@ -7,6 +7,25 @@ import { KeyedServerState } from '../lib/serverState';
 import { PluginsContext } from './plugins';
 import type { Plugin } from './plugins';
 
+let sharedPluginsOwner: KeyedServerState<'plugins', Plugin[]> | null = null;
+
+function getPluginsOwner() {
+  sharedPluginsOwner ??= new KeyedServerState(async (_key, signal) => {
+    const res = await authenticatedFetch('/api/plugins', { signal });
+    if (!res.ok) {
+      let errorMessage = `Failed to fetch plugins (${res.status})`;
+      try {
+        const data = await res.json();
+        errorMessage = data.details || data.error || errorMessage;
+      } catch { errorMessage = res.statusText || errorMessage; }
+      throw new Error(errorMessage);
+    }
+    const data = await res.json();
+    return data.plugins || [];
+  }, 5_000);
+  return sharedPluginsOwner;
+}
+
 export type { Plugin } from './plugins';
 
 export function PluginsProvider({ children }: { children: ReactNode }) {
@@ -15,19 +34,7 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
   const [pluginsError, setPluginsError] = useState<string | null>(null);
   const ownerRef = useRef<KeyedServerState<'plugins', Plugin[]> | null>(null);
   if (!ownerRef.current) {
-    ownerRef.current = new KeyedServerState(async (_key, signal) => {
-      const res = await authenticatedFetch('/api/plugins', { signal });
-      if (!res.ok) {
-        let errorMessage = `Failed to fetch plugins (${res.status})`;
-        try {
-          const data = await res.json();
-          errorMessage = data.details || data.error || errorMessage;
-        } catch { errorMessage = res.statusText || errorMessage; }
-        throw new Error(errorMessage);
-      }
-      const data = await res.json();
-      return data.plugins || [];
-    }, 5_000);
+    ownerRef.current = getPluginsOwner();
   }
 
   const refreshPlugins = useCallback(async () => {
@@ -46,7 +53,6 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshPlugins();
-    return () => ownerRef.current?.dispose();
   }, [refreshPlugins]);
 
   const refreshAfterMutation = useCallback(async () => {

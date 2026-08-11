@@ -36,8 +36,8 @@ test('uses fast active/transitional cadence and a slower idle safety cadence', (
   assert.equal(getSessionActivityPollInterval(1, []), SESSION_ACTIVITY_ACTIVE_POLL_MS);
   assert.equal(getSessionActivityPollInterval(0, ['recovering']), SESSION_ACTIVITY_ACTIVE_POLL_MS);
   assert.equal(getSessionActivityPollInterval(0, ['failed']), SESSION_ACTIVITY_IDLE_POLL_MS);
-  assert.ok(SESSION_ACTIVITY_ACTIVE_POLL_MS < 5_000);
-  assert.ok(SESSION_ACTIVITY_IDLE_POLL_MS > 5_000);
+  assert.ok(SESSION_ACTIVITY_ACTIVE_POLL_MS <= 5_000);
+  assert.ok(SESSION_ACTIVITY_IDLE_POLL_MS >= 60_000);
 });
 
 test('coalesces bursts and queues exactly one trailing refresh while in flight', async () => {

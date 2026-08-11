@@ -2,6 +2,7 @@ import fsSync, { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import mime from 'mime-types';
+import sharp from 'sharp';
 
 import { getGlobalImageAssetsDir, toPosixPath } from '@/shared/image-attachments.js';
 
@@ -16,6 +17,19 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/webp',
   'image/svg+xml',
 ]);
+
+const THUMBNAIL_SIZE = 224;
+const MAX_THUMBNAIL_SOURCE_BYTES = 20 * 1024 * 1024;
+const MAX_THUMBNAIL_CACHE_ENTRIES = 100;
+
+type CachedThumbnail = {
+  buffer: Buffer;
+  contentType: string;
+  sourceModifiedMs: number;
+  sourceSize: number;
+};
+
+const thumbnailCache = new Map<string, CachedThumbnail>();
 
 // Used only by this service and the assets routes via the barrel file.
 type StoredImageAsset = {
@@ -124,4 +138,58 @@ export async function openStoredAttachmentAsset(filename: string) {
     contentType: mime.lookup(resolved) || 'application/octet-stream',
     stream: fsSync.createReadStream(resolved),
   };
+}
+
+/**
+ * Builds a bounded, orientation-correct WebP preview for the authenticated
+ * assets route. Unsupported/animated/vector inputs are reported explicitly so
+ * callers can retain the original-image route's existing behavior.
+ */
+export async function openStoredImageThumbnail(filename: string) {
+  const resolved = resolveImageAssetFile(filename);
+  if (!resolved) {
+    return { status: 'invalid' as const };
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(resolved);
+  } catch {
+    return { status: 'missing' as const };
+  }
+
+  const contentType = mime.lookup(resolved) || 'application/octet-stream';
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(contentType) || stat.size > MAX_THUMBNAIL_SOURCE_BYTES) {
+    return { status: 'unsupported' as const };
+  }
+
+  const cached = thumbnailCache.get(resolved);
+  if (cached && cached.sourceModifiedMs === stat.mtimeMs && cached.sourceSize === stat.size) {
+    thumbnailCache.delete(resolved);
+    thumbnailCache.set(resolved, cached);
+    return { status: 'found' as const, contentType: cached.contentType, buffer: cached.buffer };
+  }
+
+  try {
+    const buffer = await sharp(resolved, { animated: false, limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, { fit: 'cover', withoutEnlargement: true })
+      .webp({ quality: 78, effort: 4 })
+      .toBuffer();
+    const entry = { buffer, contentType: 'image/webp', sourceModifiedMs: stat.mtimeMs, sourceSize: stat.size };
+    thumbnailCache.set(resolved, entry);
+    while (thumbnailCache.size > MAX_THUMBNAIL_CACHE_ENTRIES) {
+      const oldest = thumbnailCache.keys().next().value;
+      if (typeof oldest !== 'string') break;
+      thumbnailCache.delete(oldest);
+    }
+    return { status: 'found' as const, contentType: entry.contentType, buffer };
+  } catch {
+    return { status: 'unsupported' as const };
+  }
+}
+
+/** Clears process-local thumbnail state for focused service validation. */
+export function clearImageThumbnailCache(): void {
+  thumbnailCache.clear();
 }

@@ -18,6 +18,9 @@ import type { LLMProvider } from '../types/app';
 import {
   SessionMessageCacheRepository,
   type CacheStats,
+  type CacheStorageStatus,
+  EMPTY_CACHE_STORAGE_STATUS,
+  inspectBrowserStorage,
   type CacheRevision,
   type SessionManifestEntry,
   type SessionSyncMetadata,
@@ -33,12 +36,18 @@ import {
   acceptSequencedEvent,
   canReuseNotModified,
   deduplicateMessagesById,
+  finalizeRealtimeStreamMessage,
+  getSessionWarmupPolicy,
+  getCanonicalResponseMetadataSnapshot,
   hasCompleteCanonicalSnapshot,
+  isCanonicalResponseMetadataReady,
+  materializeRealtimeStream,
   reduceRealtimeStream,
   shouldApplyCacheHydration,
   upsertMessageById,
   type RealtimeCursor,
   type RealtimeStreamState,
+  type CanonicalResponseMetadataSnapshot,
 } from './sessionStore.helpers';
 import { removeOptimisticUserEchoes } from './sessionMessageReconciliation';
 export type { MessageKind, NormalizedMessage } from './normalizedMessage';
@@ -69,6 +78,8 @@ export interface SessionSlot {
   _cacheHydrationSeq: number;
   _appliedCacheHydrationSeq: number;
   _cacheHydrationStarted: boolean;
+  _cacheHydrationInFlight: Promise<SessionSlot> | null;
+  _canonicalFetchInFlight: Promise<SessionSlot> | null;
   status: SessionStatus;
   fetchedAt: number;
   total: number;
@@ -93,6 +104,8 @@ export interface SessionSnapshot {
   tokenUsage: unknown;
   revision: number;
   canonicalRevision: string | null;
+  hasDisplayableMessages: boolean;
+  isCanonicalLoading: boolean;
 }
 
 const EMPTY: NormalizedMessage[] = [];
@@ -115,6 +128,8 @@ function createEmptySlot(): SessionSlot {
     _cacheHydrationSeq: 0,
     _appliedCacheHydrationSeq: 0,
     _cacheHydrationStarted: false,
+    _cacheHydrationInFlight: null,
+    _canonicalFetchInFlight: null,
     realtimeCursor: null,
     realtimeStream: null,
     recoveryInFlight: null,
@@ -132,12 +147,19 @@ export interface SessionStoreOptions {
   userNamespace?: string | null;
   /** Injectable repository for tests/embedders; defaults to the browser cache. */
   cache?: SessionMessageCacheRepository | null;
+  /** Visible stream/cache commit cadence. Injectable for deterministic tests. */
+  realtimeCommitIntervalMs?: number;
 }
 
 export interface CompleteSessionSyncOptions {
   revision?: CacheRevision;
   fetchedAt?: number | string | null;
   [key: string]: unknown;
+}
+
+export interface RefreshFromServerOptions {
+  /** Start a new canonical request, aborting/fencing any older keyed request. */
+  force?: boolean;
 }
 
 /**
@@ -386,12 +408,39 @@ function recomputeMergedIfNeeded(slot: SessionSlot): boolean {
 const STALE_THRESHOLD_MS = 30_000;
 
 const MAX_REALTIME_MESSAGES = 500;
+export const MAX_IN_MEMORY_SESSION_SLOTS = 20;
+
+export function evictInactiveSessionSlots(
+  store: Map<string, SessionSlot>,
+  lastUsed: Map<string, number>,
+  activeSessionId: string | null,
+  limit = MAX_IN_MEMORY_SESSION_SLOTS,
+): string[] {
+  const removed: string[] = [];
+  if (store.size <= limit) return removed;
+  const candidates = [...store.entries()]
+    .filter(([id, slot]) => id !== activeSessionId
+      && slot.status === 'idle'
+      && slot.realtimeMessages.length === 0
+      && !slot.realtimeStream
+      && !slot._cacheHydrationInFlight
+      && !slot._canonicalFetchInFlight
+      && !slot.recoveryInFlight)
+    .sort(([a], [b]) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0));
+  for (const [id] of candidates) {
+    if (store.size <= limit) break;
+    store.delete(id); lastUsed.delete(id); removed.push(id);
+  }
+  return removed;
+}
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
 export function useSessionStore(options: SessionStoreOptions = {}) {
   const storeRef = useRef(new Map<string, SessionSlot>());
+  const snapshotRef = useRef(new Map<string, SessionSnapshot>());
   const activeSessionIdRef = useRef<string | null>(null);
+  const sessionLastUsedRef = useRef(new Map<string, number>());
   const initialNamespace = options.userNamespace ?? null;
   const userNamespaceRef = useRef<string | null>(initialNamespace);
   const storeGenerationRef = useRef(0);
@@ -399,6 +448,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
   const cacheWriteChainsRef = useRef(new Map<string, Promise<void>>());
   const cacheWritesBlockedRef = useRef(false);
   const cacheWriteEpochRef = useRef(0);
+  const realtimeCommitTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const historyOwnerRef = useRef<KeyedServerState<string, Awaited<ReturnType<typeof apiClient.sessionHistory>>> | null>(null);
   if (!historyOwnerRef.current) {
     historyOwnerRef.current = new KeyedServerState((sessionId, signal) => apiClient.sessionHistory(sessionId, { signal }));
@@ -415,6 +465,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     userNamespaceRef.current = options.userNamespace ?? null;
     storeGenerationRef.current += 1;
     storeRef.current.clear();
+    snapshotRef.current.clear();
     activeSessionIdRef.current = null;
   }
 
@@ -423,6 +474,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
   // allocates them before the first send), so slots are keyed directly with
   // no alias/redirect indirection.
   const [, setTick] = useState(0);
+  const [cacheStorageStatus, setCacheStorageStatus] = useState<CacheStorageStatus>(EMPTY_CACHE_STORAGE_STATUS);
   const notify = useCallback((sessionId: string) => {
     if (sessionId === activeSessionIdRef.current) {
       setTick(n => n + 1);
@@ -493,6 +545,36 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     enqueueCacheWrite(sessionId, () => cache.upsertRealtimeMessage(namespace, sessionId, message));
   }, [cache, enqueueCacheWrite]);
 
+  const commitRealtimeStream = useCallback((sessionId: string) => {
+    const timer = realtimeCommitTimersRef.current.get(sessionId);
+    if (timer) clearTimeout(timer);
+    realtimeCommitTimersRef.current.delete(sessionId);
+    const slot = storeRef.current.get(sessionId);
+    if (!slot?.realtimeStream) return;
+    slot.realtimeStream = materializeRealtimeStream(slot.realtimeStream);
+    const stream = slot.realtimeStream;
+    const streamMessage: NormalizedMessage = {
+      id: `__streaming_${sessionId}_${stream.generation}`,
+      sessionId,
+      provider: stream.provider ?? 'claude',
+      kind: 'stream_delta',
+      content: stream.content,
+      timestamp: stream.startedAt,
+    };
+    const existing = slot.realtimeMessages.find((message) => message.id === streamMessage.id);
+    slot.realtimeMessages = upsertMessageById(slot.realtimeMessages, existing ? { ...existing, ...streamMessage } : streamMessage);
+    recomputeMergedIfNeeded(slot);
+    bumpViewRevision(slot);
+    persistRealtimeMessage(sessionId, slot.realtimeMessages.find((message) => message.id === streamMessage.id)!);
+    notify(sessionId);
+  }, [notify, persistRealtimeMessage]);
+
+  const scheduleRealtimeStreamCommit = useCallback((sessionId: string) => {
+    if (realtimeCommitTimersRef.current.has(sessionId)) return;
+    const interval = Math.max(0, options.realtimeCommitIntervalMs ?? 16);
+    realtimeCommitTimersRef.current.set(sessionId, setTimeout(() => commitRealtimeStream(sessionId), interval));
+  }, [commitRealtimeStream, options.realtimeCommitIntervalMs]);
+
   const deleteCachedRealtimeMessage = useCallback((sessionId: string, messageId: string) => {
     const namespace = userNamespaceRef.current;
     if (!namespace) return;
@@ -501,6 +583,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
 
   const setActiveSession = useCallback((sessionId: string | null) => {
     activeSessionIdRef.current = sessionId;
+    if (sessionId) sessionLastUsedRef.current.set(sessionId, Date.now());
   }, []);
 
   const getSlot = useCallback((sessionId: string): SessionSlot => {
@@ -508,20 +591,26 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     if (!store.has(sessionId)) {
       store.set(sessionId, createEmptySlot());
     }
+    sessionLastUsedRef.current.set(sessionId, Date.now());
+    for (const evicted of evictInactiveSessionSlots(store, sessionLastUsedRef.current, activeSessionIdRef.current)) {
+      snapshotRef.current.delete(evicted);
+    }
     return store.get(sessionId)!;
   }, []);
 
-  const hydrateFromCache = useCallback(async (sessionId: string) => {
+  const hydrateFromCache = useCallback((sessionId: string): Promise<SessionSlot> => {
     const namespace = userNamespaceRef.current;
-    if (!namespace) return getSlot(sessionId);
+    if (!namespace) return Promise.resolve(getSlot(sessionId));
     const slot = getSlot(sessionId);
-    if (slot._cacheHydrationStarted) return slot;
+    if (slot._cacheHydrationInFlight) return slot._cacheHydrationInFlight;
+    if (slot._cacheHydrationStarted) return Promise.resolve(slot);
     slot._cacheHydrationStarted = true;
     const hydrationTicket = ++slot._cacheHydrationSeq;
     const generation = storeGenerationRef.current;
     const startedAt = Date.now();
     logDiagnostic({ level: 'info', area: 'session_store', event: 'cache_hydration_started', sessionId, generation });
 
+    const hydration = (async () => {
     try {
       const hydrated = await cache.hydrateSession(namespace, sessionId);
       if (
@@ -570,6 +659,11 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
       logCacheFailure('hydration', error);
       return slot;
     }
+    })().finally(() => {
+      if (slot._cacheHydrationInFlight === hydration) slot._cacheHydrationInFlight = null;
+    });
+    slot._cacheHydrationInFlight = hydration;
+    return hydration;
   }, [cache, getSlot, logCacheFailure, notify]);
 
   const has = useCallback((sessionId: string) => {
@@ -592,6 +686,26 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     } = {},
   ) => {
     const slot = getSlot(sessionId);
+    const isCompleteRequest = opts.limit === null || opts.limit === undefined;
+    if (isCompleteRequest && slot._canonicalFetchInFlight) {
+      return slot._canonicalFetchInFlight;
+    }
+    const policy = getSessionWarmupPolicy({
+      hasCompleteSnapshot: hasCompleteCanonicalSnapshot({
+        canonicalRevision: slot.canonicalRevision,
+        serverMessageCount: slot.serverMessages.length,
+        total: slot.total,
+        hasMore: slot.hasMore,
+        offset: slot.offset,
+      }),
+      fetchedAt: slot.fetchedAt,
+      now: Date.now(),
+      staleThresholdMs: STALE_THRESHOLD_MS,
+      messageCount: slot.merged.length,
+    });
+    if (isCompleteRequest && policy.reuseFreshSnapshot) return slot;
+
+    const request = (async () => {
     const fetchTicket = ++slot._fetchSeq;
     const generation = storeGenerationRef.current;
     const namespace = userNamespaceRef.current;
@@ -605,7 +719,6 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     notify(sessionId);
 
     try {
-      const isCompleteRequest = opts.limit === null || opts.limit === undefined;
       const hasReusableCanonicalSnapshot = isCompleteRequest && hasCompleteCanonicalSnapshot({
         canonicalRevision: slot.canonicalRevision,
         serverMessageCount: slot.serverMessages.length,
@@ -693,7 +806,36 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
       }
       return slot;
     }
+    })().finally(() => {
+      if (slot._canonicalFetchInFlight === request) {
+        slot._canonicalFetchInFlight = null;
+        bumpViewRevision(slot);
+        notify(sessionId);
+      }
+    });
+    if (isCompleteRequest) slot._canonicalFetchInFlight = request;
+    return request;
   }, [getSlot, hydrateFromCache, notify, persistAuthoritativeSlot]);
+
+  const warmSession = useCallback((sessionId: string): Promise<SessionSlot> => {
+    const slot = getSlot(sessionId);
+    const policy = getSessionWarmupPolicy({
+      hasCompleteSnapshot: hasCompleteCanonicalSnapshot({
+        canonicalRevision: slot.canonicalRevision,
+        serverMessageCount: slot.serverMessages.length,
+        total: slot.total,
+        hasMore: slot.hasMore,
+        offset: slot.offset,
+      }),
+      fetchedAt: slot.fetchedAt,
+      now: Date.now(),
+      staleThresholdMs: STALE_THRESHOLD_MS,
+      messageCount: slot.merged.length,
+    });
+    if (policy.reuseFreshSnapshot) return Promise.resolve(slot);
+    void hydrateFromCache(sessionId);
+    return fetchFromServer(sessionId);
+  }, [fetchFromServer, getSlot, hydrateFromCache]);
 
   /**
    * Load older (paginated) messages and prepend to serverMessages.
@@ -823,6 +965,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     }
 
     if (acceptance.generationChanged) {
+      commitRealtimeStream(sessionId);
       const previousStreamId = slot.realtimeStream
         ? `__streaming_${sessionId}_${slot.realtimeStream.generation}`
         : null;
@@ -834,35 +977,26 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     }
     slot.realtimeCursor = acceptance.cursor;
 
+    if (event.kind !== 'stream_delta') commitRealtimeStream(sessionId);
+
     const previousStream = slot.realtimeStream;
     slot.realtimeStream = reduceRealtimeStream(previousStream, {
       kind: event.kind,
       generation: event.generation,
       content: event.content,
       timestamp: event.timestamp,
+      provider: event.provider,
     });
 
     if (event.kind === 'stream_delta') {
-      const stream = slot.realtimeStream!;
-      const streamMessage: NormalizedMessage = {
-        ...event,
-        id: `__streaming_${sessionId}_${event.generation}`,
-        kind: 'stream_delta',
-        content: stream.content,
-        timestamp: stream.startedAt,
-      };
-      slot.realtimeMessages = upsertMessageById(slot.realtimeMessages, streamMessage);
-      persistRealtimeMessage(sessionId, streamMessage);
+      scheduleRealtimeStreamCommit(sessionId);
+      return { status: 'accepted', sessionId, generation: event.generation, seq: event.seq };
     } else if (event.kind === 'stream_end' || event.kind === 'complete') {
       if (previousStream?.generation === event.generation) {
         const streamId = `__streaming_${sessionId}_${event.generation}`;
         const index = slot.realtimeMessages.findIndex((message) => message.id === streamId);
         if (index >= 0) {
-          const finalized: NormalizedMessage = {
-            ...slot.realtimeMessages[index],
-            kind: 'text',
-            role: 'assistant',
-          };
+          const finalized = finalizeRealtimeStreamMessage(slot.realtimeMessages[index], event);
           slot.realtimeMessages = [...slot.realtimeMessages];
           slot.realtimeMessages[index] = finalized;
           persistRealtimeMessage(sessionId, finalized);
@@ -881,7 +1015,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     bumpViewRevision(slot);
     notify(sessionId);
     return { status: 'accepted', sessionId, generation: event.generation, seq: event.seq };
-  }, [deleteCachedRealtimeMessage, getSlot, notify, persistRealtimeMessage]);
+  }, [commitRealtimeStream, deleteCachedRealtimeMessage, getSlot, notify, persistRealtimeMessage, scheduleRealtimeStreamCommit]);
 
   const getRealtimeCursor = useCallback((sessionId: string): RealtimeCursor | null => {
     return storeRef.current.get(sessionId)?.realtimeCursor ?? null;
@@ -899,13 +1033,14 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
    */
   const refreshFromServer = useCallback(async (
     sessionId: string,
+    options: RefreshFromServerOptions = {},
   ) => {
     const slot = getSlot(sessionId);
     const fetchTicket = ++slot._fetchSeq;
     const generation = storeGenerationRef.current;
     const namespace = userNamespaceRef.current;
     try {
-      const result = await historyOwnerRef.current!.read(sessionId);
+      const result = await historyOwnerRef.current!.read(sessionId, { force: options.force });
       if (result.notModified) return;
       const data = result.data;
 
@@ -1114,6 +1249,15 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     });
   }, [cache, logCacheFailure]);
 
+  const refreshCacheStorageStatus = useCallback(async (requestPersistence = false) => {
+    if (requestPersistence) await requestCachePersistence();
+    const status = await inspectBrowserStorage();
+    const failure = cache.failureKind === 'none' ? status.failure : cache.failureKind;
+    const next = { ...status, failure };
+    setCacheStorageStatus(next);
+    return next;
+  }, [cache, requestCachePersistence]);
+
   const prioritizeSession = useCallback((sessionId: string | null) => {
     if (sessionId) activeSessionIdRef.current = sessionId;
   }, []);
@@ -1126,11 +1270,12 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
    * Update session status.
    */
   const setStatus = useCallback((sessionId: string, status: SessionStatus) => {
+    commitRealtimeStream(sessionId);
     const slot = getSlot(sessionId);
     slot.status = status;
     bumpViewRevision(slot);
     notify(sessionId);
-  }, [getSlot, notify]);
+  }, [commitRealtimeStream, getSlot, notify]);
 
   /**
    * Check if a session's data is stale (>30s old).
@@ -1199,6 +1344,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
    * Clear realtime messages for a session (e.g., after stream completes and server fetch catches up).
    */
   const clearRealtime = useCallback((sessionId: string) => {
+    commitRealtimeStream(sessionId);
     const slot = storeRef.current.get(sessionId);
     if (slot) {
       const previousRealtimeMessages = slot.realtimeMessages;
@@ -1213,7 +1359,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
       }
       notify(sessionId);
     }
-  }, [deleteCachedRealtimeMessage, notify]);
+  }, [commitRealtimeStream, deleteCachedRealtimeMessage, notify]);
 
   /**
    * Get merged messages for a session (for rendering).
@@ -1229,25 +1375,47 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     return storeRef.current.get(sessionId);
   }, []);
 
+  const getCanonicalResponseMetadata = useCallback((
+    sessionId: string,
+  ): CanonicalResponseMetadataSnapshot => {
+    return getCanonicalResponseMetadataSnapshot(storeRef.current.get(sessionId)?.serverMessages ?? EMPTY);
+  }, []);
+
+  const isCanonicalResponseMetadataHydrated = useCallback((
+    sessionId: string,
+    baseline: CanonicalResponseMetadataSnapshot,
+  ): boolean => {
+    return isCanonicalResponseMetadataReady(baseline, getCanonicalResponseMetadata(sessionId));
+  }, [getCanonicalResponseMetadata]);
+
   const getSessionSnapshot = useCallback((sessionId: string): SessionSnapshot => {
-    const slot = storeRef.current.get(sessionId) ?? createEmptySlot();
-    return {
-      messages: slot.merged,
-      status: slot.status,
-      total: slot.total,
-      hasMore: slot.hasMore,
-      fetchedAt: slot.fetchedAt,
-      offset: slot.offset,
-      tokenUsage: slot.tokenUsage,
-      revision: slot.viewRevision,
-      canonicalRevision: slot.canonicalRevision,
+    const slot = storeRef.current.get(sessionId);
+    const previous = snapshotRef.current.get(sessionId);
+    if (previous && slot && previous.revision === slot.viewRevision) return previous;
+    if (previous && !slot) return previous;
+    const source = slot ?? createEmptySlot();
+    const snapshot = {
+      messages: source.merged,
+      status: source.status,
+      total: source.total,
+      hasMore: source.hasMore,
+      fetchedAt: source.fetchedAt,
+      offset: source.offset,
+      tokenUsage: source.tokenUsage,
+      revision: source.viewRevision,
+      canonicalRevision: source.canonicalRevision,
+      hasDisplayableMessages: source.merged.length > 0,
+      isCanonicalLoading: source._canonicalFetchInFlight !== null,
     };
+    snapshotRef.current.set(sessionId, snapshot);
+    return snapshot;
   }, []);
 
   return useMemo(() => ({
     getSlot,
     has,
     hydrateFromCache,
+    warmSession,
     fetchFromServer,
     fetchMore,
     appendRealtime,
@@ -1267,6 +1435,8 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     recordCachedMetadata,
     cleanupCache,
     requestCachePersistence,
+    refreshCacheStorageStatus,
+    cacheStorageStatus,
     persistMessage,
     prioritizeSession,
     getActiveSessionId,
@@ -1279,17 +1449,20 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     getMessages,
     getSessionSlot,
     getSessionSnapshot,
+    getCanonicalResponseMetadata,
+    isCanonicalResponseMetadataHydrated,
   }), [
-    getSlot, has, hydrateFromCache, fetchFromServer, fetchMore,
+    getSlot, has, hydrateFromCache, warmSession, fetchFromServer, fetchMore,
     appendRealtime, appendRealtimeBatch, ingestRealtimeEvent, getRealtimeCursor,
     getSubscriptionTarget, recoverSession, refreshFromServer,
     synchronizeSession, getCachedRevision, getCachedMetadata, recordCachedMetadata,
-    cleanupCache, requestCachePersistence,
+    cleanupCache, requestCachePersistence, refreshCacheStorageStatus, cacheStorageStatus,
     cacheCoordinator, getCacheStats,
     forceSyncCache, clearCache,
     persistMessage, prioritizeSession, getActiveSessionId,
     setActiveSession, setStatus, isStale, updateStreaming, finalizeStreaming,
     clearRealtime, getMessages, getSessionSlot, getSessionSnapshot,
+    getCanonicalResponseMetadata, isCanonicalResponseMetadataHydrated,
   ]);
 }
 

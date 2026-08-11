@@ -7,9 +7,27 @@ import { Button } from '../../../shared/view/ui';
 import SettingsSidebar from '../view/SettingsSidebar';
 import { useSettingsController } from '../hooks/useSettingsController';
 import { useWebPush } from '../../../hooks/useWebPush';
-import type { SettingsProps } from '../types/types';
+import type { SettingsMainTab, SettingsProps } from '../types/types';
+
+const settingsTabLoaders: Record<SettingsMainTab, () => Promise<unknown>> = {
+  agents: () => import('../view/tabs/agents-settings/AgentsSettingsTab'), skills: () => import('../view/tabs/SkillsSettingsTab'),
+  appearance: () => import('../view/tabs/AppearanceSettingsTab'), git: () => import('../view/tabs/git-settings/GitSettingsTab'),
+  api: () => import('../view/tabs/api-settings/CredentialsSettingsTab'), voice: () => import('../view/tabs/VoiceSettingsTab'),
+  browser: () => import('../view/tabs/browser-use-settings/BrowserUseSettingsTab'), plugins: () => import('../../plugins/view/PluginSettingsTab'),
+  notifications: () => import('../view/tabs/NotificationsSettingsTab'), cache: () => import('../view/tabs/CacheSettingsTab'),
+  'docker-management': () => import('../view/tabs/DockerManagementSettingsTab'), about: () => import('../view/tabs/AboutTab'),
+};
+const settingsWarmPromises = new Map<SettingsMainTab, Promise<unknown>>();
+function warmSettingsTab(tab: SettingsMainTab) {
+  const existing = settingsWarmPromises.get(tab);
+  if (existing) return existing;
+  const promise = settingsTabLoaders[tab]();
+  settingsWarmPromises.set(tab, promise);
+  return promise;
+}
 
 const AgentsSettingsTab = lazy(() => import('../view/tabs/agents-settings/AgentsSettingsTab'));
+const SkillsSettingsTab = lazy(() => import('../view/tabs/SkillsSettingsTab'));
 const AppearanceSettingsTab = lazy(() => import('../view/tabs/AppearanceSettingsTab'));
 const CredentialsSettingsTab = lazy(() => import('../view/tabs/api-settings/CredentialsSettingsTab'));
 const VoiceSettingsTab = lazy(() => import('../view/tabs/VoiceSettingsTab'));
@@ -160,7 +178,7 @@ function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents'
 
         {/* Body: sidebar + content */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
-          <SettingsSidebar activeTab={activeTab} onChange={setActiveTab} />
+          <SettingsSidebar activeTab={activeTab} onChange={(tab) => { void warmSettingsTab(tab); setActiveTab(tab); }} />
 
           {/* Content */}
           <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -193,6 +211,8 @@ function SettingsContent({ isOpen, onClose, projects = [], initialTab = 'agents'
                   projects={projects}
                 />
               )}
+
+              {activeTab === 'skills' && <SkillsSettingsTab projects={projects} />}
 
               {activeTab === 'browser' && <BrowserUseSettingsTab />}
 

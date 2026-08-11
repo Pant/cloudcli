@@ -6,7 +6,12 @@ import { useQuickSettingsDrag } from '../hooks/useQuickSettingsDrag';
 
 import QuickSettingsHandle from './QuickSettingsHandle';
 
-const QuickSettingsPanelView = lazy(() => import('./QuickSettingsPanelView'));
+let quickSettingsWarmPromise: Promise<typeof import('./QuickSettingsPanelView')> | undefined;
+function warmQuickSettingsPanel() {
+  quickSettingsWarmPromise ??= import('./QuickSettingsPanelView');
+  return quickSettingsWarmPromise;
+}
+const QuickSettingsPanelView = lazy(warmQuickSettingsPanel);
 
 export default function QuickSettingsPanelTrigger() {
   const [invoked, setInvoked] = useState(false);
@@ -32,6 +37,7 @@ export default function QuickSettingsPanelTrigger() {
         onClick={handleToggle}
         onMouseDown={startDrag}
         onTouchStart={startDrag}
+        onWarm={warmQuickSettingsPanel}
       />
       {invoked && (
         <Suspense fallback={null}>

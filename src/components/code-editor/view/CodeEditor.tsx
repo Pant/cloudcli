@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 import { usePaletteOps } from '../../../contexts/paletteOps';
 import { useTheme } from '../../../contexts/useTheme';
+import { useReloadSafety } from '../../../contexts/ReloadSafetyContext';
 import { useCodeEditorDocument } from '../hooks/useCodeEditorDocument';
 import { useCodeEditorSettings } from '../hooks/useCodeEditorSettings';
 import { useEditorKeyboardShortcuts } from '../hooks/useEditorKeyboardShortcuts';
@@ -48,6 +49,7 @@ export default function CodeEditor({
 }: CodeEditorProps) {
   const { t } = useTranslation('codeEditor');
   const paletteOps = usePaletteOps();
+  const { setReloadBlocker, confirmReload } = useReloadSafety();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDiff, setShowDiff] = useState(Boolean(file.diffInfo));
   const [markdownPreview, setMarkdownPreview] = useState(false);
@@ -81,10 +83,28 @@ export default function CodeEditor({
     handleSave,
     handleReload,
     handleDownload,
+    isDirty,
+    recovery,
+    hasRecoveryConflict,
+    restoreRecovery,
+    discardRecovery,
   } = useCodeEditorDocument({
     file,
     projectPath,
   });
+
+  const blockerId = useMemo(() => `editor:${fileProjectId ?? 'unknown'}:${file.path}`, [file.path, fileProjectId]);
+  useEffect(() => {
+    setReloadBlocker(blockerId, isDirty);
+    return () => setReloadBlocker(blockerId, false);
+  }, [blockerId, isDirty, setReloadBlocker]);
+
+  const guardedClose = useCallback(() => {
+    if (confirmReload('Close this file and keep its recovery copy for later?')) onClose();
+  }, [confirmReload, onClose]);
+  const guardedReload = useCallback(() => {
+    if (!isDirty || confirmReload('Reload from the server? Your recovery copy will be retained.')) void handleReload();
+  }, [confirmReload, handleReload, isDirty]);
 
   const isMarkdownFile = useMemo(() => {
     const extension = file.name.split('.').pop()?.toLowerCase();
@@ -206,7 +226,7 @@ export default function CodeEditor({
 
   useEditorKeyboardShortcuts({
     onSave: handleSave,
-    onClose,
+    onClose: guardedClose,
     dependency: content,
   });
 
@@ -230,7 +250,7 @@ export default function CodeEditor({
         projectId={fileProjectId}
         isSidebar={isSidebar}
         isFullscreen={isFullscreen}
-        onClose={onClose}
+         onClose={guardedClose}
         onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
         labels={{
           loading: t('filePreview.loading', 'Loading preview...'),
@@ -251,7 +271,7 @@ export default function CodeEditor({
         file={file}
         isSidebar={isSidebar}
         isFullscreen={isFullscreen}
-        onClose={onClose}
+         onClose={guardedClose}
         onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
         title={t('binaryFile.title', 'Binary File')}
         message={t('binaryFile.message', 'The file "{{fileName}}" cannot be displayed in the text editor because it is a binary file.', { fileName: file.name })}
@@ -289,9 +309,9 @@ export default function CodeEditor({
             onOpenSettings={() => paletteOps.openSettings('appearance')}
             onDownload={handleDownload}
             onSave={handleSave}
-            onReload={handleReload}
+             onReload={guardedReload}
             onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
-            onClose={onClose}
+             onClose={guardedClose}
             labels={{
               showingChanges: t('header.showingChanges'),
               editMarkdown: t('actions.editMarkdown'),
@@ -313,6 +333,13 @@ export default function CodeEditor({
           {saveError && (
             <div className="border-b border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300">
               {saveError}
+            </div>
+          )}
+          {recovery && (
+            <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+              <span>{hasRecoveryConflict ? 'Recovered edits were based on an older server version.' : 'Recovered unsaved edits are available.'}</span>
+              <button type="button" className="underline" onClick={restoreRecovery}>Restore</button>
+              <button type="button" className="underline" onClick={() => void discardRecovery()}>Discard</button>
             </div>
           )}
 

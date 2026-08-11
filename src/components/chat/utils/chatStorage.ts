@@ -2,27 +2,22 @@ import type { ClaudeSettings } from '../types/types';
 
 export const CLAUDE_SETTINGS_KEY = 'claude-settings';
 
+export type StorageWriteOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'quota' | 'unavailable' };
+
 export const safeLocalStorage = {
-  setItem: (key: string, value: string) => {
+  setItem: (key: string, value: string): StorageWriteOutcome => {
     try {
       localStorage.setItem(key, value);
+      return { ok: true };
     } catch (error: any) {
       if (error?.name === 'QuotaExceededError') {
-        console.warn('localStorage quota exceeded, clearing old data');
-
-        const keys = Object.keys(localStorage);
-        const draftKeys = keys.filter((k) => k.startsWith('draft_input_') || k.startsWith('queued_message_'));
-        draftKeys.forEach((k) => {
-          localStorage.removeItem(k);
-        });
-
-        try {
-          localStorage.setItem(key, value);
-        } catch (retryError) {
-          console.error('Failed to save to localStorage even after cleanup:', retryError);
-        }
+        console.warn('localStorage quota exceeded; data was not persisted');
+        return { ok: false, reason: 'quota' };
       } else {
         console.error('localStorage error:', error);
+        return { ok: false, reason: 'unavailable' };
       }
     }
   },
@@ -101,8 +96,8 @@ export function readQueuedMessage(sessionId: string): StoredQueuedMessage | null
   return raw.trim() ? { content: raw } : null;
 }
 
-export function writeQueuedMessage(sessionId: string, message: StoredQueuedMessage): void {
-  safeLocalStorage.setItem(queuedMessageKey(sessionId), JSON.stringify(message));
+export function writeQueuedMessage(sessionId: string, message: StoredQueuedMessage): StorageWriteOutcome {
+  return safeLocalStorage.setItem(queuedMessageKey(sessionId), JSON.stringify(message));
 }
 
 /** Patches only mutable provider preferences on an existing queued message. */
@@ -122,8 +117,7 @@ export function patchQueuedMessageOptions(
       ...patch,
     },
   };
-  writeQueuedMessage(sessionId, patched);
-  return patched;
+  return writeQueuedMessage(sessionId, patched).ok ? patched : null;
 }
 
 export function clearQueuedMessage(sessionId: string): void {

@@ -20,7 +20,7 @@ const EMPTY_STATS: CacheStats = { sessionCount: 0, messageCount: 0 };
 
 export default function CacheSettingsTab() {
   const { t } = useTranslation('settings');
-  const { getCacheStats, forceSyncCache, clearCache } = useSessionStoreContext();
+  const { getCacheStats, forceSyncCache, clearCache, cacheStorageStatus, refreshCacheStorageStatus } = useSessionStoreContext();
   const [stats, setStats] = useState<CacheStats>(EMPTY_STATS);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState(false);
@@ -43,7 +43,10 @@ export default function CacheSettingsTab() {
 
   useEffect(() => {
     void refreshStats();
-  }, [refreshStats]);
+    void refreshCacheStorageStatus(false);
+  }, [refreshStats, refreshCacheStorageStatus]);
+
+  const formatBytes = (value: number | null) => value === null ? t('cache.unknown') : new Intl.NumberFormat(undefined, { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 }).format(value / 1_000_000);
 
   const isBusy = syncState === 'pending' || clearState === 'pending';
 
@@ -124,6 +127,9 @@ export default function CacheSettingsTab() {
                   {stats.messageCount}
                 </span>
               </SettingsRow>
+              <SettingsRow label={t('cache.usageLabel')}><span data-testid="cache-storage-usage">{formatBytes(cacheStorageStatus.usage)} / {formatBytes(cacheStorageStatus.quota)}</span></SettingsRow>
+              <SettingsRow label={t('cache.persistenceLabel')}><span data-testid="cache-persistence-status">{t(`cache.persistence.${cacheStorageStatus.persistence}`)}</span></SettingsRow>
+              <SettingsRow label={t('cache.statusLabel')}><span data-testid="cache-failure-status">{t(`cache.status.${cacheStorageStatus.failure}`)}</span></SettingsRow>
             </>
           )}
         </SettingsCard>

@@ -8,13 +8,14 @@ import type {
   PermissionGrantResult,
   Provider,
   QuestionForm,
+  QuestionFormAnswers,
 } from '../../types/types';
 import { formatUsageLimitText } from '../../utils/chatFormatting';
+import { formatResponseMetadata } from '../../utils/responseMetadata';
 import {
   hasUnterminatedQuestionForm,
   splitQuestionFormSegments,
 } from '../../utils/questionForms';
-import { findSubsequentQuestionFormAnswers } from '../../utils/questionFormTranscript';
 import type { Project } from '../../../../types/app';
 import { ToolRenderer, ToolErrorDisplay, shouldHideToolResult } from '../../tools';
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '../../../../shared/view/ui';
@@ -44,11 +45,11 @@ type MessageComponentProps = {
   showThinking?: boolean;
   selectedProject?: Project | null;
   provider: Provider | string;
-  transcriptMessages: ChatMessage[];
-  messageIndex: number;
+  questionFormAnswers?: ReadonlyMap<string, QuestionFormAnswers>;
   onSubmitQuestionForm: QuestionFormSubmitHandler;
   messageKey?: string;
   ownsMessageAnchor?: boolean;
+  ownsResponseMetadataFooter?: boolean;
 };
 
 type InteractiveOption = {
@@ -58,6 +59,24 @@ type InteractiveOption = {
 };
 
 const COPY_HIDDEN_TOOL_NAMES = new Set(['Bash', 'Edit', 'Write', 'ApplyPatch']);
+
+export function ResponseMetadataFooter({ metadata }: { metadata: ChatMessage['responseMetadata'] }) {
+  const formatted = formatResponseMetadata(metadata);
+  if (!formatted) return null;
+
+  return (
+    <div className="mt-1 grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-[10px] leading-tight text-gray-400 tabular-nums dark:text-gray-500 sm:text-[11px]">
+      <span aria-hidden />
+      <time className="whitespace-nowrap text-center" dateTime={metadata?.timestamp}>
+        {formatted.timestamp}
+      </time>
+      <span className="justify-self-end whitespace-nowrap text-right">
+        <span className="font-medium">Input</span> {formatted.inputTokens}
+        <span className="ml-2 font-medium">Output</span> {formatted.outputTokens}
+      </span>
+    </div>
+  );
+}
 
 function isQuestionFormAssistantMessage(message: ChatMessage): boolean {
   return message.type === 'assistant'
@@ -81,7 +100,7 @@ function getSegmentedAssistantCopyText(
     .trim();
 }
 
-const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider, transcriptMessages, messageIndex, onSubmitQuestionForm, messageKey, ownsMessageAnchor = true }: MessageComponentProps) => {
+const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, showRawParameters, showThinking, selectedProject, provider, questionFormAnswers, onSubmitQuestionForm, messageKey, ownsMessageAnchor = true, ownsResponseMetadataFooter = true }: MessageComponentProps) => {
   const { t } = useTranslation('chat');
   const isGrouped = prevMessage && prevMessage.type === message.type &&
     ((prevMessage.type === 'assistant') ||
@@ -117,6 +136,9 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
     assistantCopyContent.trim().length > 0 &&
     !isCommandOrFileEditToolResponse &&
     !message.isThinking;
+  const responseMetadata = ownsResponseMetadataFooter && provider === 'opencode' && message.type === 'assistant'
+    ? message.responseMetadata
+    : undefined;
 
 
   const formattedTime = useMemo(() => new Date(message.timestamp).toLocaleTimeString(), [message.timestamp]);
@@ -151,6 +173,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 <div dir="auto" className="break-words font-serif text-sm">
                   <Markdown
                     breaks
+                    isStreaming={message.isStreaming}
                     className="prose prose-sm prose-invert max-w-none font-serif [&_a]:text-blue-100 [&_a]:underline"
                   >
                     {message.content}
@@ -386,11 +409,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   <div className="space-y-3">
                     {questionFormSegments.map((segment, segmentIndex) => {
                       if (segment.kind === 'form') {
-                        const submittedAnswers = findSubsequentQuestionFormAnswers(
-                          segment.form,
-                          transcriptMessages,
-                          messageIndex,
-                        );
+                        const submittedAnswers = questionFormAnswers?.get(segment.form.id);
 
                         return (
                           <QuestionFormCard
@@ -447,7 +466,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
 
                   // Normal rendering for non-JSON content
                   return message.type === 'assistant' ? (
-                    <Markdown className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert">
+                    <Markdown isStreaming={message.isStreaming} className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert">
                       {content}
                     </Markdown>
                   ) : (
@@ -470,6 +489,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 {!isGrouped && <span>{formattedTime}</span>}
               </div>
             )}
+            <ResponseMetadataFooter metadata={responseMetadata} />
           </div>
         </div>
       )}

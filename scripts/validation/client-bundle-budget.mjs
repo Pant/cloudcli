@@ -1,9 +1,13 @@
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
 import { createGzip } from 'node:zlib';
 
 export const MAX_GZIP_BYTES = 100_000;
+// Initial resources referenced by dist/index.html. Keep these explicit and deterministic.
+export const MAX_INITIAL_JS_GZIP_BYTES = 350_000;
+export const MAX_INITIAL_CSS_GZIP_BYTES = 80_000;
+export const MAX_INITIAL_TOTAL_GZIP_BYTES = 430_000;
 
 async function collectJavaScriptFiles(directory) {
   const files = [];
@@ -43,7 +47,20 @@ export async function validateClientBundle(targetDirectory = 'dist') {
   }
 
   const largest = results.reduce((max, result) => result.bytes > max.bytes ? result : max);
-  console.log(`Client bundle budget passed: ${files.length} JavaScript files; largest ${relative(target, largest.path)} at ${largest.bytes} bytes gzip (limit ${MAX_GZIP_BYTES}).`);
+  const html = await readFile(resolve(target, 'index.html'), 'utf8');
+  const initialPaths = [...html.matchAll(/<(?:script|link)\b[^>]+(?:src|href)=["']([^"']+\.(?:js|css))["']/g)]
+    .map((match) => match[1].replace(/^\.\//, '').replace(/^\//, ''));
+  const initial = await Promise.all(initialPaths.map(async (path) => ({ path, bytes: await gzipSize(resolve(target, path)) })));
+  const initialJs = initial.filter(({ path }) => path.endsWith('.js')).reduce((sum, item) => sum + item.bytes, 0);
+  const initialCss = initial.filter(({ path }) => path.endsWith('.css')).reduce((sum, item) => sum + item.bytes, 0);
+  const initialTotal = initialJs + initialCss;
+  const aggregateFailures = [
+    initialJs > MAX_INITIAL_JS_GZIP_BYTES && `initial JavaScript ${initialJs} > ${MAX_INITIAL_JS_GZIP_BYTES}`,
+    initialCss > MAX_INITIAL_CSS_GZIP_BYTES && `initial CSS ${initialCss} > ${MAX_INITIAL_CSS_GZIP_BYTES}`,
+    initialTotal > MAX_INITIAL_TOTAL_GZIP_BYTES && `initial total ${initialTotal} > ${MAX_INITIAL_TOTAL_GZIP_BYTES}`,
+  ].filter(Boolean);
+  if (aggregateFailures.length) throw new Error(`Client aggregate gzip budget exceeded:\n  ${aggregateFailures.join('\n  ')}`);
+  console.log(`Client bundle budget passed: ${files.length} JavaScript files; largest ${relative(target, largest.path)} at ${largest.bytes} bytes gzip (limit ${MAX_GZIP_BYTES}). Initial JS ${initialJs}/${MAX_INITIAL_JS_GZIP_BYTES}, CSS ${initialCss}/${MAX_INITIAL_CSS_GZIP_BYTES}, total ${initialTotal}/${MAX_INITIAL_TOTAL_GZIP_BYTES} bytes gzip.`);
   return results;
 }
 

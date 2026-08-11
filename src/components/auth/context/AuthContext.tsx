@@ -33,6 +33,16 @@ const clearStoredToken = () => {
   localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
 };
 
+const CACHED_USER_KEY = 'cloudcli:offline-user';
+const readCachedUser = (): AuthUser | null => {
+  try {
+    const value = localStorage.getItem(CACHED_USER_KEY);
+    if (!value) return null;
+    const user = JSON.parse(value) as AuthUser;
+    return typeof user?.username === 'string' && user.username ? user : null;
+  } catch { return null; }
+};
+
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => readStoredToken());
@@ -40,17 +50,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isOfflineSession, setIsOfflineSession] = useState(false);
 
   const setSession = useCallback((nextUser: AuthUser, nextToken: string) => {
     setUser(nextUser);
     setToken(nextToken);
     persistToken(nextToken);
+    try { localStorage.setItem(CACHED_USER_KEY, JSON.stringify(nextUser)); } catch { /* best effort */ }
+    setIsOfflineSession(false);
   }, []);
 
   const clearSession = useCallback(() => {
     setUser(null);
     setToken(null);
     clearStoredToken();
+    localStorage.removeItem(CACHED_USER_KEY);
+    setIsOfflineSession(false);
   }, []);
 
   const checkOnboardingStatus = useCallback(async () => {
@@ -122,6 +137,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setError(null);
 
       const statusResponse = await api.auth.status();
+      if (!statusResponse.ok) throw new Error(`Auth status unavailable (${statusResponse.status})`);
       const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);
 
       if (statusPayload?.needsSetup) {
@@ -148,10 +164,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       setUser(userPayload.user);
+      try { localStorage.setItem(CACHED_USER_KEY, JSON.stringify(userPayload.user)); } catch { /* best effort */ }
+      setIsOfflineSession(false);
       await checkOnboardingStatus();
     } catch (caughtError) {
       console.error('[Auth] Auth status check failed:', caughtError);
-      setError(AUTH_ERROR_MESSAGES.authStatusCheckFailed);
+      const cachedUser = token ? readCachedUser() : null;
+      if (cachedUser) {
+        setUser(cachedUser);
+        setNeedsSetup(false);
+        setHasCompletedOnboarding(true);
+        setIsOfflineSession(true);
+        setError(null);
+      } else {
+        setError(AUTH_ERROR_MESSAGES.authStatusCheckFailed);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -270,6 +297,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       needsSetup,
       hasCompletedOnboarding,
       error,
+      isOfflineSession,
       login,
       register,
       logout,
@@ -279,6 +307,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       error,
       hasCompletedOnboarding,
       isLoading,
+      isOfflineSession,
       login,
       logout,
       needsSetup,

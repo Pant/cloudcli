@@ -1,11 +1,15 @@
 import { fileURLToPath, URL } from 'node:url'
+import { readFile, writeFile } from 'node:fs/promises'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { getConnectableHost, normalizeLoopbackHost } from './shared/networkHosts.js'
 
 export default defineConfig(({ mode }) => {
+  const clientBuildId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '')
+  const base = env.VITE_BASE_URL || '/'
+  let generatedShell = []
 
   const configuredHost = env.HOST || '0.0.0.0'
   // if the host is not a loopback address, it should be used directly. 
@@ -19,7 +23,35 @@ export default defineConfig(({ mode }) => {
   const serverPort = env.SERVER_PORT || env.PORT || 3001
 
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'cloudcli-client-build-id',
+        transformIndexHtml(html) {
+          return html.replace('<head>', `<head>\n    <meta name="cloudcli-client-build" content="${clientBuildId}" />`)
+        },
+        generateBundle(_options, bundle) {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'cloudcli-version.json',
+            source: JSON.stringify({ build: clientBuildId })
+          })
+          generatedShell = ['index.html', 'manifest.json', 'cloudcli-version.json', ...Object.keys(bundle)
+            .filter((fileName) => fileName.startsWith('assets/') && /\.(?:js|css)$/.test(fileName))]
+        },
+        async closeBundle() {
+          const workerPath = fileURLToPath(new URL('./dist/sw.js', import.meta.url))
+          const source = await readFile(workerPath, 'utf8')
+          await writeFile(workerPath, source
+            .replace('__CLOUDCLI_BUILD_ID__', clientBuildId)
+            .replace('__CLOUDCLI_SHELL__', JSON.stringify(generatedShell)))
+        }
+      }
+    ],
+    base,
+    define: {
+      __CLOUDCLI_CLIENT_BUILD_ID__: JSON.stringify(clientBuildId)
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

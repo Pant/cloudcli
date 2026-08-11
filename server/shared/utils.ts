@@ -108,6 +108,41 @@ export function configureDynamicResponseCaching(app: Express): void {
   });
 }
 
+/** Cache policy used by server index for HTML and other mutable application identity resources. */
+export const REVALIDATE_CACHE_CONTROL = 'no-cache, no-store, must-revalidate';
+
+/**
+ * Applies role-based cache headers to files served by server index. Hashed Vite
+ * assets are immutable; application identity/install resources always revalidate.
+ */
+export function setStaticResourceCacheHeaders(response: Response, filePath: string): void {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const fileName = path.posix.basename(normalizedPath);
+  const isHashedAsset = /\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[^/]+$/.test(normalizedPath);
+  const isHtml = fileName.endsWith('.html');
+  const isInstallResource = fileName === 'sw.js'
+    || fileName === 'manifest.json'
+    || fileName === 'cloudcli-version.json'
+    || normalizedPath.includes('/icons/')
+    || normalizedPath.includes('/screenshots/')
+    || /^favicon(?:\.|-)/.test(fileName)
+    || /^logo(?:\.|-)/.test(fileName);
+
+  if (isHashedAsset) {
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return;
+  }
+
+  if (isHtml || isInstallResource) {
+    response.setHeader('Cache-Control', REVALIDATE_CACHE_CONTROL);
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+    return;
+  }
+
+  response.setHeader('Cache-Control', 'no-cache, must-revalidate');
+}
+
 /**
  * Wraps arbitrary data in the standard API success envelope.
  *
@@ -169,6 +204,12 @@ export class AppError extends Error {
  * requested directory's direct children.
  */
 export const FILE_TREE_MAX_DEPTH = 10;
+
+/** Default number of direct children returned by the paginated File Tree endpoint. */
+export const FILE_TREE_DEFAULT_PAGE_SIZE = 150;
+
+/** Maximum direct children accepted by File Tree routes and services per page. */
+export const FILE_TREE_MAX_PAGE_SIZE = 250;
 
 // ---------------------------
 //----------------- WORKSPACE PATH VALIDATION UTILITIES ------------
@@ -832,8 +873,20 @@ export async function findProviderSkillMarkdownFiles(
   options: { recursive?: boolean } = {},
 ): Promise<string[]> {
   const skillFiles: string[] = [];
+  const visitedDirectories = new Set<string>();
+  const resolvedRoot = await realpath(rootDir).catch(() => null);
 
   const collectRecursive = async (dirPath: string): Promise<void> => {
+    const resolvedDirectory = await realpath(dirPath).catch(() => null);
+    if (
+      !resolvedRoot
+      || !resolvedDirectory
+      || (resolvedDirectory !== resolvedRoot && !resolvedDirectory.startsWith(`${resolvedRoot}${path.sep}`))
+      || visitedDirectories.has(resolvedDirectory)
+    ) {
+      return;
+    }
+    visitedDirectories.add(resolvedDirectory);
     let entries;
     try {
       entries = await readdir(dirPath, { withFileTypes: true });
@@ -851,7 +904,7 @@ export async function findProviderSkillMarkdownFiles(
       // Directories without SKILL.md are expected while walking plugin trees.
     }
 
-    for (const entry of entries) {
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (entry.isDirectory() || entry.isSymbolicLink()) {
         await collectRecursive(path.join(dirPath, entry.name));
       }

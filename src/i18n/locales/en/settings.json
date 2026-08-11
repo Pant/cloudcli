@@ -104,6 +104,7 @@
   "mainTabs": {
     "label": "Settings",
     "agents": "Agents",
+    "skills": "Skills",
     "appearance": "Appearance",
     "git": "Git",
     "apiTokens": "API & Tokens",
@@ -123,6 +124,12 @@
     "statsDescription": "Only this account's local histories are counted. Other accounts and server histories are preserved.",
     "sessionCountLabel": "Cached sessions",
     "messageCountLabel": "Cached messages",
+    "usageLabel": "Browser storage usage / quota",
+    "persistenceLabel": "Storage persistence",
+    "statusLabel": "Cache status",
+    "unknown": "Unknown",
+    "persistence": { "unknown": "Checking", "unsupported": "Not supported", "granted": "Persistent", "denied": "Best effort (may be removed by the browser)" },
+    "status": { "none": "Available", "unsupported": "Not supported", "denied": "Persistence was not granted", "quota": "Storage quota reached", "blocked": "Blocked by another open CloudCLI tab", "open": "Cache could not be opened", "transaction": "A cache operation failed" },
     "loading": "Loading cache statistics...",
     "loadError": "Unable to load cache statistics.",
     "syncSectionTitle": "Synchronize histories",
@@ -171,6 +178,19 @@
       "pending": "Requesting shutdown...",
       "accepted": "Shutdown accepted. CloudCLI will become unavailable until started externally.",
       "error": "Shutdown request was not accepted. Try again later."
+    },
+    "logs": {
+      "label": "Logs",
+      "description": "Follow live output from the Docker stack.",
+      "action": "View logs",
+      "title": "Docker logs",
+      "connecting": "Connecting to live logs...",
+      "connected": "Following live logs.",
+      "ended": "The log stream ended.",
+      "error": "Unable to connect to live logs. Close and try again.",
+      "empty": "Waiting for log output...",
+      "clear": "Clear",
+      "close": "Close"
     }
   },
   "notifications": {

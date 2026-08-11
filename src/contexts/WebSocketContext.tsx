@@ -4,11 +4,16 @@ import { useAuth } from '../components/auth/context/authContextContract';
 import { IS_PLATFORM } from '../constants/config';
 import { incrementDiagnosticMetric, logDiagnostic } from '../lib/logger';
 import { expireAuthSession, isAuthTokenExpired } from '../utils/api';
+import { useReloadSafety } from './ReloadSafetyContext';
 
 import {
   getWebSocketRetryDelay,
   getWebSocketTransportState,
+  getClientBuildVersionUrl,
   isCurrentWebSocketLifecycle,
+  shouldArmWebSocketReload,
+  shouldReloadForClientBuild,
+  parseClientBuildResource,
   shouldRetryWebSocketClose,
 } from './webSocketTransport';
 import WebSocketContext from './webSocketContextValue';
@@ -39,6 +44,14 @@ const buildWebSocketUrl = (token: string | null) => {
   return `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`; // OSS mode: Use same host:port that served the page
 };
 
+const WEBSOCKET_RELOAD_GRACE_MS = 8_000;
+const WEBSOCKET_RELOAD_READINESS_MS = 10_000;
+const WEBSOCKET_RELOAD_POLL_MS = 1_000;
+const WEBSOCKET_RELOAD_FETCH_TIMEOUT_MS = 1_500;
+const WEBSOCKET_RELOAD_SESSION_KEY = 'cloudcli:websocket-reload-consumed';
+const CLIENT_BUILD_POLL_MS = 30_000;
+const CLIENT_BUILD_FETCH_TIMEOUT_MS = 5_000;
+
 const useWebSocketProviderState = (): WebSocketContextType => {
   const wsRef = useRef<WebSocket | null>(null);
   const lifecycleRef = useRef(0);
@@ -51,12 +64,12 @@ const useWebSocketProviderState = (): WebSocketContextType => {
    * re-renders of the provider tree.
    */
   const listenersRef = useRef(new Set<ServerEventListener>());
-  const [latestMessage, setLatestMessage] = useState<ServerEvent | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [replayingSubscriptions, setReplayingSubscriptions] = useState(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isLoading: isAuthLoading, token, user } = useAuth();
+  const { confirmReload } = useReloadSafety();
 
   const dispatch = useCallback((event: ServerEvent) => {
     if (event.kind === 'chat_subscribed' && typeof event.sessionId === 'string') {
@@ -74,7 +87,6 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         console.error('WebSocket listener error:', error);
       }
     }
-    setLatestMessage(event);
   }, []);
 
   useEffect(() => {
@@ -82,7 +94,68 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     lifecycleRef.current = lifecycle;
     let intentionalClose = false;
     let retryAttempt = 0;
+    let reloadTimeout: ReturnType<typeof setTimeout> | null = null;
+    let reloadAbortController: AbortController | null = null;
     const canConnect = IS_PLATFORM || (!isAuthLoading && Boolean(user));
+
+    const reloadWasConsumed = () => {
+      try {
+        return window.sessionStorage.getItem(WEBSOCKET_RELOAD_SESSION_KEY) === 'true';
+      } catch {
+        return true;
+      }
+    };
+
+    const clearReload = () => {
+      if (reloadTimeout !== null) {
+        clearTimeout(reloadTimeout);
+        reloadTimeout = null;
+      }
+      reloadAbortController?.abort();
+      reloadAbortController = null;
+    };
+
+    const reloadPage = () => {
+      clearReload();
+      try {
+        window.sessionStorage.setItem(WEBSOCKET_RELOAD_SESSION_KEY, 'true');
+      } catch {
+        // Reload is armed only when storage access proved available.
+      }
+      if (confirmReload('CloudCLI reconnected after a server restart. Reload now?')) window.location.reload();
+    };
+
+    const pollReadinessAndReload = (deadline: number) => {
+      if (!isCurrentWebSocketLifecycle(lifecycleRef.current, lifecycle) || intentionalClose) return;
+      if (Date.now() >= deadline) {
+        reloadPage();
+        return;
+      }
+
+      const controller = new AbortController();
+      reloadAbortController = controller;
+      const fetchTimeout = setTimeout(() => controller.abort(), WEBSOCKET_RELOAD_FETCH_TIMEOUT_MS);
+      void fetch('/health', { signal: controller.signal })
+        .then((response) => {
+          if (response.ok) reloadPage();
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          clearTimeout(fetchTimeout);
+          if (reloadAbortController === controller) reloadAbortController = null;
+          if (!isCurrentWebSocketLifecycle(lifecycleRef.current, lifecycle) || intentionalClose || reloadTimeout === null) return;
+          reloadTimeout = setTimeout(() => pollReadinessAndReload(deadline), WEBSOCKET_RELOAD_POLL_MS);
+        });
+    };
+
+    const armReload = () => {
+      reloadTimeout = setTimeout(() => {
+        reloadTimeout = setTimeout(
+          () => pollReadinessAndReload(Date.now() + WEBSOCKET_RELOAD_READINESS_MS),
+          0,
+        );
+      }, WEBSOCKET_RELOAD_GRACE_MS);
+    };
 
     const clearRetry = () => {
       if (reconnectTimeoutRef.current !== null) {
@@ -108,6 +181,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
         websocket.onopen = () => {
           if (wsRef.current !== websocket || !isCurrentWebSocketLifecycle(lifecycleRef.current, lifecycle)) return;
+          clearReload();
           retryAttempt = 0;
           hasConnectedRef.current = true;
           setIsConnected(true);
@@ -138,6 +212,14 @@ const useWebSocketProviderState = (): WebSocketContextType => {
           setReplayingSubscriptions(0);
           wsRef.current = null;
           logDiagnostic({ level: 'warn', area: 'websocket', event: 'connection_closed', connectionEpoch: connectionEpochRef.current, outcome: intentionalClose ? 'intentional' : 'disconnected', code: String(closeEvent.code), metadata: { clean: closeEvent.wasClean } });
+          if (shouldArmWebSocketReload({
+            intentional: intentionalClose,
+            isCurrentSocket,
+            canConnect,
+            hasConnected: hasConnectedRef.current,
+            reloadPending: reloadTimeout !== null,
+            reloadConsumed: reloadWasConsumed(),
+          })) armReload();
           if (!shouldRetryWebSocketClose({ intentional: intentionalClose, isCurrentSocket, canConnect })) return;
           clearRetry();
           const delay = getWebSocketRetryDelay(retryAttempt, Math.random());
@@ -174,6 +256,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       intentionalClose = true;
       lifecycleRef.current += 1;
       clearRetry();
+      clearReload();
       const activeSocket = wsRef.current;
       if (activeSocket) {
         activeSocket.onopen = null;
@@ -184,7 +267,62 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         wsRef.current = null;
       }
     };
-  }, [dispatch, isAuthLoading, token, user]);
+  }, [confirmReload, dispatch, isAuthLoading, token, user]);
+
+  useEffect(() => {
+    let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+    let abortController: AbortController | null = null;
+    let reloadPending = false;
+
+    const schedulePoll = (delay = CLIENT_BUILD_POLL_MS) => {
+      if (pollTimeout !== null) clearTimeout(pollTimeout);
+      pollTimeout = setTimeout(pollForClientBuild, delay);
+    };
+
+    const pollForClientBuild = () => {
+      pollTimeout = null;
+      if (document.visibilityState === 'hidden' || reloadPending) {
+        schedulePoll();
+        return;
+      }
+
+      const controller = new AbortController();
+      abortController = controller;
+      const fetchTimeout = setTimeout(() => controller.abort(), CLIENT_BUILD_FETCH_TIMEOUT_MS);
+      const versionUrl = getClientBuildVersionUrl(document.baseURI);
+      void fetch(versionUrl, { cache: 'no-store', signal: controller.signal })
+        .then((response) => response.ok ? response.json() as Promise<{ build?: unknown }> : null)
+        .then((resource) => {
+          const servedBuildId = parseClientBuildResource(resource);
+          if (!shouldReloadForClientBuild({
+            currentBuildId: __CLOUDCLI_CLIENT_BUILD_ID__,
+            servedBuildId,
+            reloadPending,
+          })) return;
+          if (!confirmReload('A newer CloudCLI build is available. Reload now?')) return;
+          reloadPending = true;
+          window.location.reload();
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          clearTimeout(fetchTimeout);
+          if (abortController === controller) abortController = null;
+          if (!reloadPending) schedulePoll();
+        });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !reloadPending) schedulePoll(0);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    schedulePoll();
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (pollTimeout !== null) clearTimeout(pollTimeout);
+      abortController?.abort();
+    };
+  }, [confirmReload]);
 
   const sendMessage = useCallback((message: unknown) => {
     const socket = wsRef.current;
@@ -201,8 +339,14 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         setReplayingSubscriptions(replayingSessionsRef.current.size);
         logDiagnostic({ level: 'info', area: 'websocket', event: 'replay_requested', sessionId: message.sessionId, connectionEpoch: connectionEpochRef.current, generation: 'generation' in message && typeof message.generation === 'number' ? message.generation : undefined, seq: 'lastSeq' in message && typeof message.lastSeq === 'number' ? message.lastSeq : undefined });
       }
-      socket.send(JSON.stringify(message));
-      return true;
+      try {
+        socket.send(JSON.stringify(message));
+        return true;
+      } catch (error) {
+        logDiagnostic({ level: 'warn', area: 'websocket', event: 'send_rejected', connectionEpoch: connectionEpochRef.current, outcome: 'transport_error' });
+        console.warn('WebSocket send failed:', error);
+        return false;
+      }
     } else {
       logDiagnostic({ level: 'warn', area: 'websocket', event: 'send_rejected', connectionEpoch: connectionEpochRef.current, outcome: 'not_connected' });
       console.warn('WebSocket not connected');
@@ -239,11 +383,10 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     ws: wsRef.current,
     sendMessage,
     subscribe,
-    latestMessage,
     isConnected,
     connectionEpoch,
     transportState,
-  }), [sendMessage, subscribe, latestMessage, isConnected, connectionEpoch, transportState]);
+  }), [sendMessage, subscribe, isConnected, connectionEpoch, transportState]);
 
   return value;
 };

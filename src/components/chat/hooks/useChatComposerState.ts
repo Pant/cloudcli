@@ -218,6 +218,11 @@ type ChatSubmission = {
   allowCommands?: boolean;
 };
 
+export const acceptedPermissionRequestIds = (
+  requestIds: string[],
+  send: (requestId: string) => boolean,
+) => requestIds.filter(send);
+
 export type SendQuestionFormAnswer = (content: string, attachments?: File[]) => Promise<boolean>;
 
 const restoreQueuedDraft = (sessionKey: string): QueuedDraft | null => {
@@ -299,7 +304,7 @@ export function useChatComposerState({
     ((
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
       queuedSubmission?: QueuedDraft,
-    ) => Promise<void>) | null
+    ) => Promise<boolean>) | null
   >(null);
   const inputValueRef = useRef(input);
   const selectedProjectId = selectedProject?.projectId;
@@ -528,6 +533,7 @@ export function useChatComposerState({
     handleToggleCommandMenu,
     handleCommandInputChange,
     handleCommandMenuKeyDown,
+    loadRemoteCatalogs,
   } = useSlashCommands({
     selectedProject,
     provider,
@@ -817,11 +823,21 @@ export function useChatComposerState({
         if (queuedSessionKey) {
           // Write the claim ticket synchronously after upload; this closes the
           // gap before React's persistence effect runs.
-          writeQueuedMessage(queuedSessionKey, {
+          const persisted = writeQueuedMessage(queuedSessionKey, {
             content: durableDraft.content,
             options: durableDraft.options,
             attachments: durableDraft.uploadedAttachments,
           });
+          if (!persisted.ok) {
+            addMessage({
+              type: 'error',
+              content: persisted.reason === 'quota'
+                ? 'Unable to queue this message because browser storage is full.'
+                : 'Unable to queue this message in browser storage.',
+              timestamp: new Date(),
+            });
+            return false;
+          }
         }
 
         // The upload is asynchronous. If the user changed sessions while it
@@ -832,8 +848,7 @@ export function useChatComposerState({
             processingSessionsRef.current
             && !processingSessionsRef.current.has(queuedSessionKey)
           ) {
-            clearQueuedMessage(queuedSessionKey);
-            sendMessage({
+            const accepted = sendMessage({
               type: 'chat.send',
               sessionId: queuedSessionKey,
               content: durableDraft.content,
@@ -842,7 +857,10 @@ export function useChatComposerState({
                 attachments: durableDraft.uploadedAttachments ?? [],
               },
             });
-            onSessionProcessing?.(queuedSessionKey, { statusText: null, canInterrupt: true });
+            if (accepted) {
+              clearQueuedMessage(queuedSessionKey);
+              onSessionProcessing?.(queuedSessionKey, { statusText: null, canInterrupt: true });
+            }
           }
           return true;
         }
@@ -975,6 +993,22 @@ export function useChatComposerState({
         timestamp: new Date(),
       };
 
+      const accepted = sendMessage({
+        type: 'chat.send',
+        sessionId: targetSessionId,
+        content: messageContent,
+        options: {
+          ...(submission.options ?? buildSendOptions(messageContent)),
+          attachments: uploadedAttachments,
+        },
+      });
+      if (!accepted) {
+        return false;
+      }
+      if (submission.isQueuedSubmission) {
+        clearQueuedMessage(targetSessionId);
+      }
+
       addMessage(userMessage);
       // Mark this request as processing in the per-session activity map (the
       // single source of truth the indicator derives from). The id is always
@@ -986,19 +1020,6 @@ export function useChatComposerState({
 
       setIsUserScrolledUp(false);
       setTimeout(() => scrollToBottom(), 100);
-
-      // One message shape for every provider. The backend resolves the
-      // provider, project path, and provider-native resume id from the
-      // session row; `options` only carries composer-level preferences.
-      sendMessage({
-        type: 'chat.send',
-        sessionId: targetSessionId,
-        content: messageContent,
-        options: {
-          ...(submission.options ?? buildSendOptions(messageContent)),
-          attachments: uploadedAttachments,
-        },
-      });
 
       setInput('');
       inputValueRef.current = '';
@@ -1041,7 +1062,7 @@ export function useChatComposerState({
       queuedSubmission?: QueuedDraft,
     ) => {
       event.preventDefault();
-      await submitChatMessage({
+      return submitChatMessage({
         content: queuedSubmission?.content ?? inputValueRef.current,
         attachments: queuedSubmission?.attachments ?? attachedFiles,
         uploadedAttachments: queuedSubmission?.uploadedAttachments,
@@ -1107,11 +1128,15 @@ export function useChatComposerState({
         setQueuedDraft(null);
         return;
       }
-      setQueuedDraft(null);
       setInput(queuedDraft.content);
       inputValueRef.current = queuedDraft.content;
       setAttachedFiles(queuedDraft.attachments);
-      handleSubmitRef.current?.(createFakeSubmitEvent(), queuedDraft);
+      const submission = handleSubmitRef.current?.(createFakeSubmitEvent(), queuedDraft);
+      if (submission) {
+        void submission.then((accepted) => {
+          if (accepted) setQueuedDraft(null);
+        });
+      }
     }, delay);
     return () => clearTimeout(timer);
   }, [isLoading, queuedDraft, sessionKey, setInput]);
@@ -1369,7 +1394,7 @@ export function useChatComposerState({
         return;
       }
 
-      validIds.forEach((requestId) => {
+      const acceptedIds = acceptedPermissionRequestIds(validIds, (requestId) =>
         sendMessage({
           type: 'chat.permission-response',
           requestId,
@@ -1377,11 +1402,10 @@ export function useChatComposerState({
           updatedInput: decision?.updatedInput,
           message: decision?.message,
           rememberEntry: decision?.rememberEntry,
-        });
-      });
+        }));
 
       setPendingPermissionRequests((previous) =>
-        previous.filter((request) => !validIds.includes(request.requestId)),
+        previous.filter((request) => !acceptedIds.includes(request.requestId)),
       );
     },
     [sendMessage, setPendingPermissionRequests],
@@ -1392,9 +1416,10 @@ export function useChatComposerState({
   const handleInputFocusChange = useCallback(
     (focused: boolean) => {
       setIsInputFocused(focused);
+      if (focused) void loadRemoteCatalogs();
       onInputFocusChange?.(focused);
     },
-    [onInputFocusChange],
+    [loadRemoteCatalogs, onInputFocusChange],
   );
 
   return {

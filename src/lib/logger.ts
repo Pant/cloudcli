@@ -31,6 +31,16 @@ export type DiagnosticEvent = {
   metadata?: Record<string, unknown>;
 };
 
+export type PerformanceDiagnostic = {
+  name: string;
+  value: number;
+  rating?: 'good' | 'needs-improvement' | 'poor';
+  route: string;
+  displayMode: 'browser' | 'standalone' | 'minimal-ui' | 'fullscreen' | 'window-controls-overlay' | 'unknown';
+  navigationType: 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'unknown';
+  buildId: string;
+};
+
 type DiagnosticInput = Omit<DiagnosticEvent, 'timestamp'> & { timestamp?: string };
 
 const MAX_EVENTS = 750;
@@ -84,6 +94,10 @@ export function logDiagnostic(input: DiagnosticInput): void {
   } catch {
     // Diagnostics must never affect application behavior.
   }
+}
+
+export function logPerformanceDiagnostic(sample: PerformanceDiagnostic): void {
+  logDiagnostic({ level: 'info', area: 'performance', event: 'measurement', durationMs: sample.value, metadata: sample });
 }
 
 export function incrementDiagnosticMetric(metric: DiagnosticMetric, amount = 1): void {

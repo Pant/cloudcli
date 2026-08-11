@@ -6,6 +6,18 @@ import { safeLocalStorage } from '../utils/chatStorage';
 import type { LLMProvider, Project } from '../../../types/app';
 
 const COMMAND_QUERY_DEBOUNCE_MS = 150;
+export const BUILT_IN_COMMANDS: SlashCommand[] = [
+  ['/help', 'Show help documentation for Claude Code'],
+  ['/models', 'View available models for the current provider'],
+  ['/cost', 'Display token usage information'],
+  ['/memory', 'Open CLAUDE.md memory file for editing'],
+  ['/config', 'Open settings and configuration'],
+  ['/status', 'Show system status and version information'],
+].map(([name, description]) => ({ name, description, namespace: 'builtin', type: 'built-in', metadata: { type: 'builtin' } }));
+
+const remoteCatalogRequests = new Map<string, Promise<SlashCommand[]>>();
+
+export const clearRemoteCatalogRequestsForTests = () => remoteCatalogRequests.clear();
 
 export interface SlashCommand {
   name: string;
@@ -101,6 +113,49 @@ const mapSkillToSlashCommand = (skill: ProviderSkill): SlashCommand => ({
   },
 });
 
+export async function loadSlashCommandCatalogs({
+  selectedProject,
+  provider,
+  fetcher = authenticatedFetch,
+}: {
+  selectedProject: Project;
+  provider: LLMProvider;
+  fetcher?: typeof authenticatedFetch;
+}): Promise<SlashCommand[]> {
+  const workspacePath = selectedProject.fullPath || selectedProject.path || '';
+  const cacheKey = `${selectedProject.projectId}:${provider}:${workspacePath}`;
+  let request = remoteCatalogRequests.get(cacheKey);
+  if (request) return request;
+
+  const skillsParams = new URLSearchParams();
+  if (workspacePath) skillsParams.set('workspacePath', workspacePath);
+  request = (async () => {
+    const [response, skillsResponse] = await Promise.all([
+      fetcher('/api/commands/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectPath: workspacePath || selectedProject.path }),
+      }),
+      fetcher(`/api/providers/${encodeURIComponent(provider)}/skills${skillsParams.toString() ? `?${skillsParams.toString()}` : ''}`),
+    ]);
+    if (!response.ok) throw new Error('Failed to fetch commands');
+    const data = await response.json();
+    const skillsData = skillsResponse.ok ? ((await skillsResponse.json()) as ProviderSkillsResponse) : null;
+    const allCommands = [
+      ...BUILT_IN_COMMANDS,
+      ...dedupeProviderSkills(skillsData?.data?.skills || []).map(mapSkillToSlashCommand),
+      ...((data.custom || []) as SlashCommand[]).map((command) => ({ ...command, type: 'custom' })),
+    ];
+    const history = readCommandHistory(selectedProject.projectId);
+    return [...allCommands].sort((a, b) => (history[b.name] || 0) - (history[a.name] || 0));
+  })().catch((error) => {
+    remoteCatalogRequests.delete(cacheKey);
+    throw error;
+  });
+  remoteCatalogRequests.set(cacheKey, request);
+  return request;
+}
+
 const filterSlashCommands = (
   commands: SlashCommand[],
   query: string,
@@ -143,7 +198,7 @@ export function useSlashCommands({
   textareaRef,
   onExecuteCommand,
 }: UseSlashCommandsOptions) {
-  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(BUILT_IN_COMMANDS);
   const [filteredCommands, setFilteredCommands] = useState<SlashCommand[]>([]);
   const [showCommandMenu, setShowCommandMenu] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
@@ -167,81 +222,18 @@ export function useSlashCommands({
     clearCommandQueryTimer();
   }, [clearCommandQueryTimer]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchCommands = async () => {
-      if (!selectedProject) {
-        setSlashCommands([]);
-        setFilteredCommands([]);
-        return;
-      }
-
-      try {
-        const workspacePath = selectedProject.fullPath || selectedProject.path || '';
-        const response = await authenticatedFetch('/api/commands/list', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            projectPath: workspacePath || selectedProject.path,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch commands');
-        }
-
-        const data = await response.json();
-        const skillsParams = new URLSearchParams();
-        if (workspacePath) {
-          skillsParams.set('workspacePath', workspacePath);
-        }
-
-        const skillsResponse = await authenticatedFetch(
-          `/api/providers/${encodeURIComponent(provider)}/skills${skillsParams.toString() ? `?${skillsParams.toString()}` : ''}`,
-        );
-        const skillsData = skillsResponse.ok
-          ? ((await skillsResponse.json()) as ProviderSkillsResponse)
-          : null;
-        const skillCommands = dedupeProviderSkills(skillsData?.data?.skills || [])
-          .map(mapSkillToSlashCommand);
-        const allCommands: SlashCommand[] = [
-          ...((data.builtIn || []) as SlashCommand[]).map((command) => ({
-            ...command,
-            type: 'built-in',
-          })),
-          ...skillCommands,
-          ...((data.custom || []) as SlashCommand[]).map((command) => ({
-            ...command,
-            type: 'custom',
-          })),
-        ];
-
-        const parsedHistory = readCommandHistory(selectedProject.projectId);
-        const sortedCommands = [...allCommands].sort((commandA, commandB) => {
-          const commandAUsage = parsedHistory[commandA.name] || 0;
-          const commandBUsage = parsedHistory[commandB.name] || 0;
-          return commandBUsage - commandAUsage;
-        });
-
-        if (!cancelled) {
-          setSlashCommands(sortedCommands);
-        }
-      } catch (error) {
+  const loadRemoteCatalogs = useCallback(() => {
+      if (!selectedProject) return Promise.resolve(BUILT_IN_COMMANDS);
+      return loadSlashCommandCatalogs({ selectedProject, provider }).catch((error) => {
         console.error('Error fetching slash commands:', error);
-        if (!cancelled) {
-          setSlashCommands([]);
-        }
-      }
-    };
-
-    fetchCommands();
-    return () => {
-      cancelled = true;
-    };
+        return BUILT_IN_COMMANDS;
+      }).then(setSlashCommands);
   }, [selectedProject, provider]);
+
+  useEffect(() => {
+    setSlashCommands(BUILT_IN_COMMANDS);
+    setFilteredCommands(BUILT_IN_COMMANDS);
+  }, [selectedProject?.projectId, provider]);
 
   useEffect(() => {
     if (!showCommandMenu) {
@@ -372,10 +364,11 @@ export function useSlashCommands({
 
     if (isOpening) {
       setFilteredCommands(slashCommands);
+      void loadRemoteCatalogs();
     }
 
     textareaRef.current?.focus();
-  }, [showCommandMenu, slashCommands, textareaRef]);
+  }, [loadRemoteCatalogs, showCommandMenu, slashCommands, textareaRef]);
 
   const handleCommandInputChange = useCallback(
     (newValue: string, cursorPos: number) => {
@@ -408,6 +401,7 @@ export function useSlashCommands({
 
       setSlashPosition(slashPos);
       setShowCommandMenu(true);
+      void loadRemoteCatalogs();
       setSelectedCommandIndex(-1);
 
       clearCommandQueryTimer();
@@ -415,7 +409,7 @@ export function useSlashCommands({
         setCommandQuery(query);
       }, COMMAND_QUERY_DEBOUNCE_MS);
     },
-    [resetCommandMenuState, clearCommandQueryTimer],
+    [resetCommandMenuState, clearCommandQueryTimer, loadRemoteCatalogs],
   );
 
   const handleCommandMenuKeyDown = useCallback(
@@ -490,5 +484,6 @@ export function useSlashCommands({
     handleToggleCommandMenu,
     handleCommandInputChange,
     handleCommandMenuKeyDown,
+    loadRemoteCatalogs,
   };
 }

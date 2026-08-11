@@ -11,6 +11,8 @@ import type {
   ProjectSession,
 } from '../types/app';
 import { KeyedServerState } from '../lib/serverState';
+import { useSessionStoreContext } from '../stores/sessionStoreContext';
+import { useAuth } from '../components/auth/context/authContextContract';
 
 import type { SessionActivityMap, SessionLifecycleMap } from './useSessionProtection';
 import {
@@ -73,6 +75,7 @@ type NewSessionIntentActions = {
 };
 
 type SessionSelectionIntentActions = {
+  warmSession?: (sessionId: string) => void;
   selectProject: (project: Project) => void;
   selectSession: (session: ProjectSession) => void;
   clearAttention: (sessionId: string) => void;
@@ -96,6 +99,7 @@ export const applySessionSelectionIntent = (
   actions: SessionSelectionIntentActions,
 ) => {
   actions.clearAttention(session.id);
+  actions.warmSession?.(session.id);
   actions.selectProject(project);
   actions.selectSession(session);
   actions.showChat?.();
@@ -137,6 +141,21 @@ type SessionDetailsApiPayload = {
 type ProjectSessionPage = Pick<Project, 'sessions' | 'sessionMeta'>;
 
 const DEFAULT_PROVIDER: LLMProvider = 'claude';
+const OFFLINE_PROJECT_LIMIT = 40;
+const OFFLINE_SESSION_LIMIT = 80;
+const offlineProjectsKey = (account: string) => `cloudcli:offline-navigation:${account}`;
+const accountKey = (user: { id?: number | string; username: string } | null) => String(user?.id ?? user?.username ?? '');
+const boundProjects = (projects: Project[]) => projects.slice(0, OFFLINE_PROJECT_LIMIT).map((project) => ({
+  ...project,
+  sessions: getProjectSessions(project).slice(0, OFFLINE_SESSION_LIMIT),
+}));
+const readOfflineProjects = (account: string): Project[] => {
+  if (!account) return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(offlineProjectsKey(account)) ?? '[]');
+    return Array.isArray(parsed) ? parsed as Project[] : [];
+  } catch { return []; }
+};
 
 const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
@@ -245,7 +264,10 @@ export function useProjectsState({
   activeSessions,
   lifecycleSessions = new Map(),
 }: UseProjectsStateArgs) {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { user } = useAuth();
+  const offlineAccount = accountKey(user);
+  const sessionStore = useSessionStoreContext();
+  const [projects, setProjects] = useState<Project[]>(() => readOfflineProjects(offlineAccount));
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
   const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
@@ -366,6 +388,9 @@ export function useProjectsState({
         setIsLoadingProjects(true);
       }
       const projectData = await projectOwnerRef.current!.read('root');
+      if (offlineAccount) {
+        try { localStorage.setItem(offlineProjectsKey(offlineAccount), JSON.stringify(boundProjects(projectData))); } catch { /* bounded best effort */ }
+      }
 
       setProjects((prevProjects) => {
         const mergedProjects = mergeExpandedSessionPages(prevProjects, projectData);
@@ -385,7 +410,7 @@ export function useProjectsState({
         setIsLoadingProjects(false);
       }
     }
-  }, []);
+  }, [offlineAccount]);
 
   useEffect(() => () => projectOwnerRef.current?.dispose(), []);
 
@@ -832,6 +857,7 @@ export function useProjectsState({
     (session: ProjectSession, project?: Project) => {
       if (!project) {
         clearSessionAttention(session.id);
+        void sessionStore.warmSession(session.id);
         setSelectedSession(session);
         if (activeTab === 'browser') setActiveTab('chat');
         navigate(`/session/${session.id}`);
@@ -840,6 +866,7 @@ export function useProjectsState({
       const selectedSessionWithProject = { ...session, __projectId: project.projectId };
       applySessionSelectionIntent(project, selectedSessionWithProject, {
         clearAttention: clearSessionAttention,
+        warmSession: (selectedSessionId) => { void sessionStore.warmSession(selectedSessionId); },
         selectProject: setSelectedProject,
         selectSession: setSelectedSession,
         showChat: activeTab === 'browser'
@@ -851,7 +878,7 @@ export function useProjectsState({
           : undefined,
       });
     },
-    [activeTab, clearSessionAttention, isMobile, navigate, selectedProject?.projectId],
+    [activeTab, clearSessionAttention, isMobile, navigate, selectedProject?.projectId, sessionStore],
   );
 
   const handleNewSession = useCallback(

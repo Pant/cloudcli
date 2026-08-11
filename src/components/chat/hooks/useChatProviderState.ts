@@ -30,6 +30,14 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
 const PROVIDER_MODEL_CATALOG_STORAGE_KEY = 'provider-model-catalog';
 
+export const getProviderStartupOrder = (selectedProvider: LLMProvider) => ({
+  immediate: [selectedProvider],
+  deferred: PROVIDERS.filter((candidate) => candidate !== selectedProvider),
+});
+
+export const providerModelsUrl = (provider: LLMProvider, bypassCache = false) =>
+  `/api/providers/${provider}/models${bypassCache ? '?bypassCache=true' : ''}`;
+
 const readStoredProvider = (): LLMProvider => {
   const storedProvider = localStorage.getItem('selected-provider');
   return PROVIDERS.includes(storedProvider as LLMProvider)
@@ -212,7 +220,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     localStorage.setItem(`${targetProvider}-effort`, effort);
   }, []);
 
-  const loadProviderModels = useCallback(async (options: { bypassCache?: boolean } = {}) => {
+  const loadProviderModels = useCallback(async (options: { bypassCache?: boolean; providers?: LLMProvider[] } = {}) => {
     const requestId = providerModelsRequestIdRef.current + 1;
     providerModelsRequestIdRef.current = requestId;
     const isHardRefresh = options.bypassCache === true;
@@ -224,7 +232,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     }
 
     try {
-      const providersByPriority = [
+      const providersByPriority = options.providers ?? [
         provider,
         ...PROVIDERS.filter((candidate) => candidate !== provider),
       ];
@@ -232,13 +240,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         providersByPriority,
         async (p): Promise<ProviderModelCatalogEntry | null> => {
           try {
-            const params = new URLSearchParams();
-            if (options.bypassCache) {
-              params.set('bypassCache', 'true');
-            }
-
-            const queryString = params.toString();
-            const response = await authenticatedFetch(`/api/providers/${p}/models${queryString ? `?${queryString}` : ''}`);
+            const response = await authenticatedFetch(providerModelsUrl(p, options.bypassCache));
             const body = (await response.json()) as ProviderModelsApiResponse;
             if (!body.success || !body.data?.models || !body.data?.cache) {
               return null;
@@ -284,11 +286,17 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   }, [provider]);
 
   useEffect(() => {
-    // Refresh the dynamic provider catalogs as soon as the chat page mounts.
-    // This keeps newly configured models available without requiring the user
-    // to open the model menu or invoke the manual refresh action first.
-    void loadProviderModels({ bypassCache: true });
-  }, [loadProviderModels]);
+    void loadProviderModels({ providers: [provider] });
+
+    const startupOrder = getProviderStartupOrder(provider);
+    const loadRemaining = () => void loadProviderModels({ providers: startupOrder.deferred });
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(loadRemaining);
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = window.setTimeout(loadRemaining, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [loadProviderModels, provider]);
 
   useEffect(() => {
     let cancelled = false;

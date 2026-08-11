@@ -81,6 +81,23 @@
     "reportIssue": "Report Issue",
     "starOnGithub": "Star on GitHub"
   },
+  "selection": {
+    "toggle": "Select sessions",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "deleteSelected": "Archive or delete selected sessions",
+    "selected": "Selected session",
+    "notSelected": "Session not selected",
+    "confirmTitle": "Archive or delete selected sessions",
+    "confirmCount_one": "{{count}} session selected.",
+    "confirmCount_other": "{{count}} sessions selected.",
+    "archiveSelected": "Archive selected",
+    "deletePermanently": "Delete permanently",
+    "failurePartial_one": "1 session could not be updated and remains selected.",
+    "failurePartial_other": "{{count}} sessions could not be updated and remain selected.",
+    "failureAll_one": "The selected session could not be updated.",
+    "failureAll_other": "None of the {{count}} selected sessions could be updated."
+  },
   "branding": {
     "openSource": "Open Source"
   },

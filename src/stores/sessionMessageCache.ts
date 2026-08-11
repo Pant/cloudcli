@@ -48,6 +48,19 @@ export interface CacheStats {
   messageCount: number;
 }
 
+export type CacheFailureKind = 'none' | 'unsupported' | 'denied' | 'quota' | 'blocked' | 'open' | 'transaction';
+
+export interface CacheStorageStatus {
+  persistence: 'unknown' | 'unsupported' | 'granted' | 'denied';
+  usage: number | null;
+  quota: number | null;
+  failure: CacheFailureKind;
+}
+
+export const EMPTY_CACHE_STORAGE_STATUS: CacheStorageStatus = {
+  persistence: 'unknown', usage: null, quota: null, failure: 'none',
+};
+
 export interface ReplaceAuthoritativeSessionOptions {
   userNamespace: string;
   sessionId: string;
@@ -213,11 +226,38 @@ export async function requestPersistentStorage(): Promise<boolean> {
   }
 }
 
+export async function inspectBrowserStorage(): Promise<CacheStorageStatus> {
+  const storage = globalThis.navigator?.storage;
+  if (!storage) return { ...EMPTY_CACHE_STORAGE_STATUS, persistence: 'unsupported', failure: 'unsupported' };
+  let persistence: CacheStorageStatus['persistence'] = 'unsupported';
+  let usage: number | null = null;
+  let quota: number | null = null;
+  try {
+    if (typeof storage.persisted === 'function') persistence = await storage.persisted() ? 'granted' : 'denied';
+    if (typeof storage.estimate === 'function') {
+      const estimate = await storage.estimate();
+      usage = typeof estimate.usage === 'number' ? estimate.usage : null;
+      quota = typeof estimate.quota === 'number' ? estimate.quota : null;
+    }
+    return { persistence, usage, quota, failure: persistence === 'denied' ? 'denied' : 'none' };
+  } catch {
+    return { persistence, usage, quota, failure: 'transaction' };
+  }
+}
+
+function classifyStorageFailure(error: unknown, fallback: CacheFailureKind): CacheFailureKind {
+  const name = error instanceof DOMException || error instanceof Error ? error.name : '';
+  if (name === 'QuotaExceededError') return 'quota';
+  if (name === 'InvalidStateError' || name === 'TransactionInactiveError' || name === 'AbortError') return 'transaction';
+  return fallback;
+}
+
 export class SessionMessageCacheRepository {
   private readonly dbName: string;
   private readonly indexedDBFactory?: IDBFactory;
   private databasePromise: Promise<IDBDatabase | null> | null = null;
   private disabled = false;
+  private failure: CacheFailureKind = 'none';
 
   constructor(options: SessionMessageCacheOptions = {}) {
     this.dbName = options.dbName ?? SESSION_MESSAGE_CACHE_DB_NAME;
@@ -231,19 +271,29 @@ export class SessionMessageCacheRepository {
     return this.disabled;
   }
 
+  get failureKind(): CacheFailureKind { return this.failure; }
+
+  private recordFailure(error: unknown, fallback: CacheFailureKind): void {
+    this.failure = classifyStorageFailure(error, fallback);
+  }
+
   async requestPersistentStorage(): Promise<boolean> {
     return requestPersistentStorage();
   }
 
   private async openDatabase(): Promise<IDBDatabase | null> {
-    if (this.disabled || !this.indexedDBFactory) return null;
+    if (this.disabled || !this.indexedDBFactory) {
+      if (!this.indexedDBFactory) this.failure = 'unsupported';
+      return null;
+    }
     if (this.databasePromise) return this.databasePromise;
 
     this.databasePromise = new Promise<IDBDatabase | null>((resolve) => {
       let request: IDBOpenDBRequest;
       try {
         request = this.indexedDBFactory!.open(this.dbName, SESSION_MESSAGE_CACHE_DB_VERSION);
-      } catch {
+      } catch (error) {
+        this.recordFailure(error, 'open');
         this.disabled = true;
         resolve(null);
         return;
@@ -274,6 +324,7 @@ export class SessionMessageCacheRepository {
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => {
+        this.recordFailure(request.error, 'open');
         this.disabled = true;
         resolve(null);
       };
@@ -281,6 +332,7 @@ export class SessionMessageCacheRepository {
       // A blocked upgrade should not hold chat hostage. Persistence is
       // optional, so disable this repository until a later instance retries.
       request.onblocked = () => {
+        this.failure = 'blocked';
         this.disabled = true;
         resolve(null);
       };
@@ -322,7 +374,8 @@ export class SessionMessageCacheRepository {
       ]);
       await complete;
       return { messages, metadata };
-    } catch {
+    } catch (error) {
+      this.recordFailure(error, 'transaction');
       return null;
     }
   }
@@ -409,7 +462,8 @@ export class SessionMessageCacheRepository {
       cursorRequest.onerror = () => transaction.abort();
       await transactionComplete(transaction);
       return true;
-    } catch {
+    } catch (error) {
+      this.recordFailure(error, 'transaction');
       return false;
     }
   }
@@ -458,7 +512,8 @@ export class SessionMessageCacheRepository {
       metadataRequest.onerror = () => transaction.abort();
       await transactionComplete(transaction);
       return true;
-    } catch {
+    } catch (error) {
+      this.recordFailure(error, 'transaction');
       return false;
     }
   }

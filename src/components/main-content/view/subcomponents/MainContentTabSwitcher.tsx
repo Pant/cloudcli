@@ -1,4 +1,4 @@
-import { MessageSquare, Terminal, Folder, GitBranch, MonitorPlay, type LucideIcon } from 'lucide-react';
+import { MessageSquare, Terminal, Folder, GitBranch, MonitorPlay, BookOpen, type LucideIcon } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -6,6 +6,26 @@ import { Tooltip, PillBar, Pill } from '../../../../shared/view/ui';
 import type { AppTab } from '../../../../types/app';
 import { usePlugins } from '../../../../contexts/plugins';
 import PluginIcon from '../../../plugins/view/PluginIcon';
+
+const featureLoaders: Partial<Record<AppTab, () => Promise<unknown>>> = {
+  chat: () => import('../../../chat/view/ChatInterface'),
+  shell: () => import('../../../standalone-shell/view/StandaloneShell'),
+  files: () => import('../../../file-tree/view/FileTree'),
+  git: () => import('../../../git-panel/view/GitPanel'),
+  docs: () => import('../../../docs-ui/view/DocsUiPanel'),
+  browser: () => import('../../../browser-use/view/BrowserUsePanel'),
+};
+const featureWarmPromises = new Map<AppTab, Promise<unknown>>();
+
+function warmMainContentFeature(tab: AppTab) {
+  const loader = featureLoaders[tab];
+  if (!loader) return undefined;
+  const existing = featureWarmPromises.get(tab);
+  if (existing) return existing;
+  const promise = loader();
+  featureWarmPromises.set(tab, promise);
+  return promise;
+}
 
 type MainContentTabSwitcherProps = {
   activeTab: AppTab;
@@ -35,6 +55,7 @@ const BASE_TABS: BuiltInTab[] = [
   { kind: 'builtin', id: 'shell', labelKey: 'tabs.shell', icon: Terminal },
   { kind: 'builtin', id: 'files', labelKey: 'tabs.files', icon: Folder },
   { kind: 'builtin', id: 'git',   labelKey: 'tabs.git',   icon: GitBranch },
+  { kind: 'builtin', id: 'docs',  labelKey: 'tabs.docs',  icon: BookOpen },
 ];
 
 const BROWSER_TAB: BuiltInTab = {
@@ -77,9 +98,10 @@ export default function MainContentTabSwitcher({
 
         return (
           <Tooltip key={tab.id} content={displayLabel} position="bottom">
+            <div onPointerEnter={() => { void warmMainContentFeature(tab.id); }} onFocus={() => { void warmMainContentFeature(tab.id); }}>
             <Pill
               isActive={isActive}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => { void warmMainContentFeature(tab.id); setActiveTab(tab.id); }}
               className="px-2.5 py-[5px]"
             >
               {tab.kind === 'builtin' ? (
@@ -93,6 +115,7 @@ export default function MainContentTabSwitcher({
               )}
               <span className="hidden lg:inline">{displayLabel}</span>
             </Pill>
+            </div>
           </Tooltip>
         );
       })}

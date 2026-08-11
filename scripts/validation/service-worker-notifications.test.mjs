@@ -4,6 +4,9 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const workerSource = await readFile(new URL('../../public/sw.js', import.meta.url), 'utf8');
+const executableWorkerSource = workerSource
+  .replace('__CLOUDCLI_BUILD_ID__', 'test-build')
+  .replace('__CLOUDCLI_SHELL__', '[]');
 
 const runPush = async (payload, rejectRichOptions = false) => {
   const listeners = new Map();
@@ -11,6 +14,7 @@ const runPush = async (payload, rejectRichOptions = false) => {
   const self = {
     addEventListener: (name, listener) => listeners.set(name, listener),
     registration: {
+      scope: 'https://cloudcli.test/',
       showNotification: async (title, options) => {
         calls.push({ title, options });
         if (rejectRichOptions && calls.length === 1 && ('vibrate' in options || 'actions' in options)) {
@@ -22,11 +26,12 @@ const runPush = async (payload, rejectRichOptions = false) => {
     skipWaiting: () => {},
     location: { origin: 'https://cloudcli.test' },
   };
-  vm.runInNewContext(workerSource, {
+  vm.runInNewContext(executableWorkerSource, {
     self,
     caches: { open: async () => ({ addAll: async () => {} }), keys: async () => [], match: async () => null },
     fetch: async () => {},
     Response,
+    URL,
   });
   let pending;
   listeners.get('push')({
