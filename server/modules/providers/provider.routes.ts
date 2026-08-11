@@ -16,6 +16,7 @@ import type {
   McpTransport,
   ProviderSkillCreateFile,
   ProviderSkillCreateInput,
+  ProviderSkillAccessUpdateInput,
   ProviderAgentPreferencesPatch,
   UpsertProviderAgentInput,
   UpsertProviderMcpServerInput,
@@ -144,6 +145,28 @@ const parseMcpTransport = (value: unknown): McpTransport => {
     code: 'INVALID_MCP_TRANSPORT',
     statusCode: 400,
   });
+};
+
+const parseProviderSkillAccessPayload = (payload: unknown): ProviderSkillAccessUpdateInput => {
+  if (!payload || typeof payload !== 'object') {
+    throw new AppError('Request body must be an object.', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  const body = payload as Record<string, unknown>;
+  const name = readOptionalQueryString(body.name);
+  if (!name) throw new AppError('name is required.', { code: 'PROVIDER_SKILL_NAME_REQUIRED', statusCode: 400 });
+  if (typeof body.enabled !== 'boolean') {
+    throw new AppError('enabled must be a boolean.', { code: 'INVALID_PROVIDER_SKILL_ENABLED', statusCode: 400 });
+  }
+  if (body.scope !== 'user' && body.scope !== 'project') {
+    throw new AppError('scope must be "user" or "project".', { code: 'INVALID_PROVIDER_SKILL_SCOPE', statusCode: 400 });
+  }
+  const workspacePath = readOptionalQueryString(body.workspacePath);
+  if (body.scope === 'project' && !workspacePath) {
+    throw new AppError('workspacePath is required for project scope.', {
+      code: 'PROVIDER_SKILL_WORKSPACE_REQUIRED', statusCode: 400,
+    });
+  }
+  return { name, enabled: body.enabled, scope: body.scope, workspacePath };
 };
 
 const parseMcpUpsertPayload = (payload: unknown): UpsertProviderMcpServerInput => {
@@ -540,6 +563,18 @@ router.delete(
     const result = await providerAgentsService.removeProviderAgent(
       provider,
       readPathParam(req.params.name, 'name'),
+    );
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
+router.patch(
+  '/:provider/skills/access',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const result = await providerSkillsService.updateProviderSkillAccess(
+      provider,
+      parseProviderSkillAccessPayload(req.body),
     );
     res.json(createApiSuccessResponse(result));
   }),

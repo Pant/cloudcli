@@ -9,6 +9,13 @@ export interface SessionMessageLoadingOwner {
   isCurrent: (token: SessionMessageLoadToken, identityKey: string) => boolean;
 }
 
+export function shouldBlockSessionMessageDisplay(args: {
+  hasDisplayableMessages: boolean;
+  isCanonicalLoading: boolean;
+}): boolean {
+  return !args.hasDisplayableMessages && args.isCanonicalLoading;
+}
+
 export function createSessionMessageLoadingOwner(): SessionMessageLoadingOwner {
   let generation = 0;
 

@@ -90,10 +90,15 @@ export function createWebSocketServer(
   dependencies: WebSocketServerDependencies
 ): WebSocketServer {
   const wss = new WebSocketServer({
-    server,
+    noServer: true,
     verifyClient: ((
       info: Parameters<VerifyClientCallbackSync<AuthenticatedWebSocketRequest>>[0]
     ) => verifyWebSocketClient(info, dependencies.verifyClient)),
+  });
+
+  server.on('upgrade', (request, socket, head) => {
+    if (new URL(request.url ?? '/', 'http://localhost').pathname === '/api/docs-ui/api') return;
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
   });
 
   wss.on('connection', (ws, request) => {

@@ -27,6 +27,10 @@ function getTabTitle(activeTab: AppTab, t: (key: string) => string, pluginDispla
     return t('tabs.browser');
   }
 
+  if (activeTab === 'docs') {
+    return t('tabs.docs');
+  }
+
   return 'Project';
 }
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 import test from 'node:test';
 import {
   CLOUDCLI_PROTOCOL_VERSION,
@@ -83,6 +84,24 @@ test('keeps synchronous history failure precedence and exact paths compatible', 
   const result = parseSessionHistoryEnvelope({ protocolVersion: 1, success: true, requestId: 123, data: { revision: '', messages: [{ ...message, sessionId: undefined }], total: 'bad', hasMore: false, offset: 0, limit: null } });
   assert.equal(result.ok, false);
   if (!result.ok) assert.deepEqual({ code: result.error.code, path: result.error.path }, { code: 'INVALID_FIELD', path: '$.data.messages[0].sessionId' });
+});
+
+test('strictly validates representative 100- and 200-message histories comfortably under one second', () => {
+  for (const messageCount of [100, 200]) {
+    const messages = Array.from({ length: messageCount }, (_, index) => ({ ...message, id: `m${index}`, seq: index, generation: 1 }));
+    const input = { protocolVersion: 1, success: true, data: { revision: 'rev-1', messages, total: messageCount, hasMore: false, offset: 0, limit: null } };
+    const startedAt = performance.now();
+    let parsed: ReturnType<typeof parseSessionHistoryEnvelope> | undefined;
+    for (let iteration = 0; iteration < 100; iteration += 1) parsed = parseSessionHistoryEnvelope(input);
+    const elapsedMs = performance.now() - startedAt;
+
+    assert.ok(parsed?.ok);
+    if (parsed?.ok) {
+      assert.equal(parsed.value.data.messages, messages);
+      assert.equal(parsed.value.data.messages[messageCount - 1], messages[messageCount - 1]);
+    }
+    assert.ok(elapsedMs < 1_000, `${messageCount}-message history took ${elapsedMs.toFixed(3)} ms for 100 parses`);
+  }
 });
 
 test('parses lifecycle snapshots and rejects malformed required fields', () => {

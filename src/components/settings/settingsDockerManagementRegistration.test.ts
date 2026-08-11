@@ -5,9 +5,11 @@ import { SETTINGS_MAIN_TABS } from './constants/constants';
 import { KNOWN_MAIN_TABS, normalizeMainTab } from './hooks/useSettingsController';
 import {
   DockerManagementRequestError,
+  appendBoundedDockerLogs,
   requestDockerBuild,
   requestDockerDown,
   requestDockerRestart,
+  streamDockerLogs,
 } from './services/dockerManagementApi';
 
 test('docker management is registered and accepted as a settings initial tab', () => {
@@ -19,6 +21,37 @@ test('docker management is registered and accepted as a settings initial tab', (
     label: 'Docker Management',
     keywords: 'docker management build restart containers',
   });
+});
+
+test('docker logs helper uses the fixed GET endpoint and decodes chunks incrementally', async () => {
+  const calls: Array<{ url: string; options?: RequestInit }> = [];
+  const chunks = [new TextEncoder().encode('hello '), new TextEncoder().encode('world')];
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks.shift();
+      if (chunk) controller.enqueue(chunk);
+      else controller.close();
+    },
+  });
+  const output: string[] = [];
+  await streamDockerLogs((chunk) => output.push(chunk), undefined, async (url, options) => {
+    calls.push({ url, options });
+    return new Response(stream, { status: 200 });
+  });
+  assert.deepEqual(calls, [{ url: '/api/settings/docker-management/logs', options: { method: 'GET', signal: undefined } }]);
+  assert.deepEqual(output, ['hello ', 'world']);
+});
+
+test('docker logs retention is bounded and stream cancellation cancels its reader', async () => {
+  assert.equal(appendBoundedDockerLogs('1234', '5678', 5), '45678');
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode('chunk')); },
+    cancel() { cancelled = true; },
+  });
+  const controller = new AbortController();
+  await streamDockerLogs(() => controller.abort(), controller.signal, async () => new Response(stream));
+  assert.equal(cancelled, true);
 });
 
 test('docker management helpers POST only to fixed endpoints without consuming response bodies', async () => {

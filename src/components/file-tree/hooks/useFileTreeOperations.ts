@@ -291,7 +291,7 @@ export function useFileTreeOperations({
     const response = await api.getFiles(selectedProject.projectId, {
       targetPath: folder.path,
       depth: 10,
-      includeMetadata: true,
+      includeMetadata: false,
     });
     if (!response.ok) {
       const errorText = await response.text();

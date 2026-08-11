@@ -4,6 +4,8 @@ import type {
   ProviderSkillCreateInput,
   ProviderSkillListOptions,
   ProviderSkillRemoveInput,
+  ProviderSkillAccessUpdateInput,
+  ProviderSkillAccessUpdateResult,
 } from '@/shared/types.js';
 
 export const providerSkillsService = {
@@ -35,5 +37,14 @@ export const providerSkillsService = {
   ): Promise<{ removed: boolean; provider: string; directoryName: string }> {
     const provider = providerRegistry.resolveProvider(providerName);
     return provider.skills.removeSkill(input);
+  },
+
+  /** Updates one provider skill's effective access at the requested scope. */
+  async updateProviderSkillAccess(
+    providerName: string,
+    input: ProviderSkillAccessUpdateInput,
+  ): Promise<ProviderSkillAccessUpdateResult> {
+    const provider = providerRegistry.resolveProvider(providerName);
+    return provider.skills.updateSkillAccess(input);
   },
 };

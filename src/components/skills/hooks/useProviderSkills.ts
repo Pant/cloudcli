@@ -5,6 +5,8 @@ import type {
   ApiResponse,
   ProviderSkill,
   ProviderSkillCreatePayload,
+  ProviderSkillAccessUpdatePayload,
+  ProviderSkillAccessUpdateResponse,
   ProviderSkillsResponse,
   SkillsProject,
   SkillsProvider,
@@ -16,7 +18,7 @@ type SkillsCacheEntry = {
   updatedAt: number;
 };
 
-type ProjectTarget = {
+export type ProjectTarget = {
   projectId: string;
   displayName: string;
   path: string;
@@ -75,7 +77,7 @@ const normalizeScope = (value: unknown): SkillsScope => (
   isSkillsScope(value) ? value : 'user'
 );
 
-const createProjectTargets = (projects: SkillsProject[]): ProjectTarget[] => {
+export const createProjectTargets = (projects: SkillsProject[]): ProjectTarget[] => {
   const seenPaths = new Set<string>();
 
   const targets = projects.reduce<ProjectTarget[]>((acc, project) => {
@@ -96,7 +98,7 @@ const createProjectTargets = (projects: SkillsProject[]): ProjectTarget[] => {
   return targets.sort((left, right) => left.path.localeCompare(right.path));
 };
 
-const normalizeSkill = (
+export const normalizeSkill = (
   provider: SkillsProvider,
   skill: Partial<ProviderSkill>,
   project?: ProjectTarget,
@@ -119,6 +121,7 @@ const normalizeSkill = (
     projectPath: shouldAttachProject
       ? project?.path ?? skill.projectPath
       : skill.projectPath,
+    enabled: skill.enabled !== false,
   };
 };
 
@@ -210,6 +213,61 @@ const clearProviderSkillCache = (provider: SkillsProvider): void => {
       skillsCache.delete(cacheKey);
     }
   }
+};
+
+export const updateProviderSkillAccess = async (
+  provider: SkillsProvider,
+  payload: ProviderSkillAccessUpdatePayload,
+): Promise<ProviderSkillAccessUpdateResponse> => {
+  const response = await authenticatedFetch(`/api/providers/${provider}/skills/access`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  const data = await toResponseJson<ApiResponse<ProviderSkillAccessUpdateResponse>>(response);
+  if (!response.ok || !data.success) {
+    throw new Error(getApiErrorMessage(data, 'Failed to update skill access'));
+  }
+  return data.data;
+};
+
+export const invalidateProviderSkillCache = clearProviderSkillCache;
+
+export const fetchOpenCodeSkills = async (project?: ProjectTarget): Promise<ProviderSkill[]> => (
+  fetchProviderSkills('opencode', project)
+);
+
+type OpenCodeSkillAccessMutationArgs = {
+  skill: ProviderSkill;
+  enabled: boolean;
+  project?: ProjectTarget;
+  skills: ProviderSkill[];
+  updateAccess?: typeof updateProviderSkillAccess;
+  invalidateCache?: typeof invalidateProviderSkillCache;
+  refetch?: () => Promise<ProviderSkill[]>;
+  onUpdated?: (skills: ProviderSkill[]) => void;
+};
+
+export const mutateOpenCodeSkillAccess = async ({
+  skill,
+  enabled,
+  project,
+  skills,
+  updateAccess = updateProviderSkillAccess,
+  invalidateCache = invalidateProviderSkillCache,
+  refetch = () => fetchOpenCodeSkills(project),
+  onUpdated,
+}: OpenCodeSkillAccessMutationArgs): Promise<ProviderSkill[]> => {
+  await updateAccess('opencode', {
+    name: skill.name,
+    enabled,
+    scope: project ? 'project' : 'user',
+    workspacePath: project?.path,
+  });
+  const updatedSkills = skills.map((row) => row.name === skill.name ? { ...row, enabled } : row);
+  onUpdated?.(updatedSkills);
+  invalidateCache('opencode');
+  await refetch();
+  return updatedSkills;
 };
 
 type UseProviderSkillsArgs = {

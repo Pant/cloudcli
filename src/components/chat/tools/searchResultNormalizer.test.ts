@@ -51,6 +51,30 @@ test('parses newline-separated glob paths and ignores summary prose', () => {
   );
 });
 
+test('removes trailing line-count metadata from textual and structured paths', () => {
+  assert.deepEqual(
+    normalizeSearchToolResult({
+      content: 'idrc.py (193 lines):\nsrc/report (final).ts\nsrc/schema:current.ts',
+      toolUseResult: {
+        filenames: [
+          '/home/dev/.config/opencode/skills/docs/scripts/docs.py (1457 lines):',
+          'src/single.ts (1 line)',
+        ],
+      },
+    }),
+    {
+      files: [
+        '/home/dev/.config/opencode/skills/docs/scripts/docs.py',
+        'src/single.ts',
+        'idrc.py',
+        'src/report (final).ts',
+        'src/schema:current.ts',
+      ],
+      count: 5,
+    },
+  );
+});
+
 test('parses grep path-and-line records and deduplicates matches', () => {
   assert.deepEqual(
     normalizeSearchToolResult({

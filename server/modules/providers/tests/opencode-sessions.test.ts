@@ -7,6 +7,7 @@ import test from 'node:test';
 import Database from 'better-sqlite3';
 
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
+import { OpenCodeProvider } from '@/modules/providers/list/opencode/opencode.provider.js';
 import { OpenCodeSessionSynchronizer } from '@/modules/providers/list/opencode/opencode-session-synchronizer.provider.js';
 import { extractCompletedOpenCodeTask, OpenCodeSessionsProvider } from '@/modules/providers/list/opencode/opencode-sessions.provider.js';
 import { getProjectSessionsPage } from '@/modules/projects/index.js';
@@ -640,6 +641,30 @@ test('OpenCode sessions provider unwraps current JSON events and canonicalizes t
   assert.equal(text[0]?.content, 'nested response');
 });
 
+test('OpenCode sessions provider attaches exact valid step metadata and rejects malformed usage', () => {
+  const provider = new OpenCodeSessionsProvider();
+  const valid = provider.normalizeMessage({
+    type: 'step_finish',
+    timestamp: 1_700_000_003_000,
+    messageID: 'message-live',
+    part: {
+      type: 'step-finish',
+      tokens: { input: 12, output: 7, reasoning: 3, cache: { read: 20, write: 2 } },
+    },
+  }, 'open-session-live');
+  assert.deepEqual(valid[0]?.responseMetadata, {
+    inputTokens: 14,
+    outputTokens: 7,
+    timestamp: '2023-11-14T22:13:23.000Z',
+  });
+
+  for (const tokens of [undefined, { input: 1, output: 'bad', reasoning: 0, cache: { read: 0, write: 0 } }]) {
+    const malformed = provider.normalizeMessage({ type: 'step_finish', part: { tokens } }, 'open-session-live');
+    assert.equal(malformed[0]?.kind, 'stream_end');
+    assert.equal(malformed[0]?.responseMetadata, undefined);
+  }
+});
+
 test('OpenCode completed Task extractor accepts aliases and rejects non-success updates', () => {
   const completed = {
     type: 'tool_use',
@@ -699,6 +724,12 @@ test('OpenCode sessions provider reads sqlite history and token usage', { concur
     assert.equal(history.messages[3]?.toolName, 'Bash');
     assert.deepEqual(history.messages[3]?.toolInput, { command: 'npm test' });
     assert.deepEqual(history.messages[3]?.toolResult, { content: 'ok', isError: false });
+    assert.equal(history.messages.slice(0, 3).every((message) => message.responseMetadata === undefined), true);
+    assert.deepEqual(history.messages[3]?.responseMetadata, {
+      inputTokens: 1_029,
+      outputTokens: 365,
+      timestamp: '2023-11-14T22:13:23.000Z',
+    });
     assert.deepEqual(history.tokenUsage, {
       used: 42,
       windowTokens: 160_626,
@@ -720,58 +751,126 @@ test('OpenCode sessions provider reads sqlite history and token usage', { concur
   }
 });
 
-test('OpenCode history attaches the active model context maximum to token usage', { concurrency: false }, async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-context-'));
+test('OpenCode history derives incremental per-call metadata without corrupting chronological predecessors', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-response-metadata-'));
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
 
   try {
     await createOpenCodeDatabase(tempRoot, workspacePath);
-    const provider = new OpenCodeSessionsProvider({
-      getCurrentActiveModel: async () => ({ model: 'openai/known-context' }),
-      getContextWindowForModel: async (modelId) => (
-        modelId === 'openai/known-context' ? 128_000 : undefined
-      ),
+    const db = new Database(path.join(tempRoot, '.local', 'share', 'opencode', 'opencode.db'));
+    try {
+      const insertMessage = db.prepare('INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)');
+      const insertPart = db.prepare('INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)');
+      insertMessage.run('message-second', 'open-session-1', 1_700_000_005_000, 1_700_000_006_000, JSON.stringify({
+        role: 'assistant',
+        time: { created: 1_700_000_005_000 },
+        tokens: { total: 160_661, input: 1_020, output: 7, reasoning: 3, cache: { read: 159_631, write: 4 } },
+      }));
+      insertPart.run('part-second-text', 'message-second', 'open-session-1', 1_700_000_006_000, 1_700_000_006_000, JSON.stringify({ type: 'text', text: 'Second call.' }));
+      insertMessage.run('message-zero', 'open-session-1', 1_700_000_006_500, 1_700_000_006_500, JSON.stringify({
+        role: 'assistant', tokens: { total: 0, input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      }));
+      insertMessage.run('message-non-renderable', 'open-session-1', 1_700_000_006_700, 1_700_000_006_700, JSON.stringify({
+        role: 'assistant', tokens: { total: 160_700, input: 9, output: 5, reasoning: 0, cache: { read: 159_686, write: 0 } },
+      }));
+      insertMessage.run('message-after-hidden', 'open-session-1', 1_700_000_006_800, 1_700_000_006_800, JSON.stringify({
+        role: 'assistant', tokens: { total: 160_730, input: 10, output: 10, reasoning: 0, cache: { read: 160_710, write: 0 } },
+      }));
+      insertPart.run('part-after-hidden', 'message-after-hidden', 'open-session-1', 1_700_000_006_800, 1_700_000_006_800, JSON.stringify({ type: 'text', text: 'After hidden call.' }));
+      insertMessage.run('message-missing-total', 'open-session-1', 1_700_000_006_900, 1_700_000_006_900, JSON.stringify({
+        role: 'assistant', tokens: { input: 12, output: 6, reasoning: 0, cache: { read: 999_999, write: 3 } },
+      }));
+      insertPart.run('part-missing-total', 'message-missing-total', 'open-session-1', 1_700_000_006_900, 1_700_000_006_900, JSON.stringify({ type: 'text', text: 'Missing total.' }));
+      insertMessage.run('message-malformed', 'open-session-1', 1_700_000_007_000, 1_700_000_007_000, JSON.stringify({
+        role: 'assistant', tokens: { input: 3, output: 'bad', cache: { read: 2 } },
+      }));
+      insertPart.run('part-malformed-text', 'message-malformed', 'open-session-1', 1_700_000_007_000, 1_700_000_007_000, JSON.stringify({ type: 'text', text: 'Still render malformed.' }));
+      insertMessage.run('message-legacy', 'open-session-1', 1_700_000_008_000, 1_700_000_008_000, JSON.stringify({ role: 'assistant' }));
+      insertPart.run('part-legacy-text', 'message-legacy', 'open-session-1', 1_700_000_008_000, 1_700_000_008_000, JSON.stringify({ type: 'text', text: 'Still render legacy.' }));
+      insertMessage.run('message-compacted', 'open-session-1', 1_700_000_009_000, 1_700_000_009_000, JSON.stringify({
+        role: 'assistant', tokens: { total: 100, input: 8, output: 5, reasoning: 0, cache: { read: 87, write: 2 } },
+      }));
+      insertPart.run('part-compacted', 'message-compacted', 'open-session-1', 1_700_000_009_000, 1_700_000_009_000, JSON.stringify({ type: 'text', text: 'Compacted call.' }));
+    } finally {
+      db.close();
+    }
+
+    const history = await new OpenCodeSessionsProvider().fetchHistory('open-session-1');
+    const second = history.messages.find((message) => message.content === 'Second call.');
+    assert.deepEqual(second?.responseMetadata, {
+      inputTokens: 25,
+      outputTokens: 7,
+      timestamp: '2023-11-14T22:13:25.000Z',
     });
-
-    const history = await provider.fetchHistory('open-session-1');
-
-    assert.equal(history.tokenUsage && (history.tokenUsage as { total?: number }).total, 128_000);
-    assert.equal(history.total, 4);
-    assert.equal(history.messages.length, 4);
+    assert.deepEqual(history.messages.find((message) => message.content === 'After hidden call.')?.responseMetadata, {
+      inputTokens: 20,
+      outputTokens: 10,
+      timestamp: '2023-11-14T22:13:26.800Z',
+    });
+    assert.deepEqual(history.messages.find((message) => message.content === 'Missing total.')?.responseMetadata, {
+      inputTokens: 15,
+      outputTokens: 6,
+      timestamp: '2023-11-14T22:13:26.900Z',
+    });
+    assert.deepEqual(history.messages.find((message) => message.content === 'Compacted call.')?.responseMetadata, {
+      inputTokens: 10,
+      outputTokens: 5,
+      timestamp: '2023-11-14T22:13:29.000Z',
+    });
+    for (const content of ['Still render malformed.', 'Still render legacy.']) {
+      const message = history.messages.find((candidate) => candidate.content === content);
+      assert.ok(message);
+      assert.equal(message.responseMetadata, undefined);
+    }
+    assert.equal(history.messages.filter((message) => message.responseMetadata !== undefined).length, 5);
+    assert.deepEqual(history.tokenUsage, {
+      used: 42,
+      windowTokens: 100,
+      inputTokens: 13,
+      outputTokens: 20,
+      breakdown: { input: 13, output: 20 },
+    });
   } finally {
     restoreHomeDir();
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('OpenCode history keeps current token usage when context metadata is unavailable', { concurrency: false }, async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-no-context-'));
+test('registered OpenCode history does not invoke or await model context discovery', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-decoupled-'));
   const workspacePath = path.join(tempRoot, 'workspace');
   await mkdir(workspacePath, { recursive: true });
   const restoreHomeDir = patchHomeDir(tempRoot);
 
   try {
     await createOpenCodeDatabase(tempRoot, workspacePath);
-    const provider = new OpenCodeSessionsProvider({
-      getCurrentActiveModel: async () => ({ model: 'openai/unknown-context' }),
-      getContextWindowForModel: async () => {
-        throw new Error('model metadata unavailable');
-      },
-    });
+    const provider = new OpenCodeProvider();
+    let modelDiscoveryCalls = 0;
+    provider.models.getCurrentActiveModel = async () => {
+      modelDiscoveryCalls += 1;
+      return new Promise(() => {});
+    };
+    provider.models.getContextWindowForModel = async () => {
+      modelDiscoveryCalls += 1;
+      return new Promise(() => {});
+    };
 
-    const history = await provider.fetchHistory('open-session-1');
+    const history = await Promise.race([
+      provider.sessions.fetchHistory('open-session-1'),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('history waited for model discovery')), 250);
+      }),
+    ]);
 
+    assert.equal(modelDiscoveryCalls, 0);
     assert.deepEqual(history.tokenUsage, {
       used: 42,
       windowTokens: 160_626,
       inputTokens: 13,
       outputTokens: 20,
-      breakdown: {
-        input: 13,
-        output: 20,
-      },
+      breakdown: { input: 13, output: 20 },
     });
     assert.equal(history.total, 4);
     assert.equal(history.messages.length, 4);

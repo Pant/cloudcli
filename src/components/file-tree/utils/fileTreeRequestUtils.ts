@@ -1,4 +1,4 @@
-import type { FileTreeGeneration, FileTreeNode, FileTreeRequestOptions } from '../types/types';
+import type { FileTreeGeneration, FileTreeNode, FileTreePageRequestOptions } from '../types/types';
 
 import {
   createFileTreeGeneration,
@@ -6,18 +6,32 @@ import {
   nextFileTreeGeneration,
 } from './fileTreeUtils';
 
-export type FileTreeRequestPlan = Pick<FileTreeRequestOptions, 'targetPath' | 'depth' | 'includeMetadata'>;
+export const EXPLORER_PAGE_SIZE = 150;
 
-/** The explorer requests one metadata-rich directory page without traversing descendants. */
-export function createExplorerDirectoryRequestPlan(targetPath?: string): FileTreeRequestPlan {
+export type FileTreeRequestPlan = Pick<
+  FileTreePageRequestOptions,
+  'targetPath' | 'includeMetadata' | 'offset' | 'limit'
+>;
+
+/** The explorer first requests one structural directory page without traversing descendants. */
+export function createExplorerDirectoryRequestPlan(targetPath?: string, offset = 0): FileTreeRequestPlan {
   return {
     ...(targetPath ? { targetPath } : {}),
-    depth: 0,
+    includeMetadata: false,
+    offset,
+    limit: EXPLORER_PAGE_SIZE,
+  };
+}
+
+/** Hydrate the same bounded page after its structural entries are visible. */
+export function createExplorerMetadataRequestPlan(targetPath?: string, offset = 0): FileTreeRequestPlan {
+  return {
+    ...createExplorerDirectoryRequestPlan(targetPath, offset),
     includeMetadata: true,
   };
 }
 
-/** Root is always refreshed before branches so a removed directory cannot retain stale children. */
+/** Refresh resets root and each loaded branch to its bounded first page. */
 export function planLoadedBranchRefresh(items: FileTreeNode[]): FileTreeRequestPlan[] {
   return [
     createExplorerDirectoryRequestPlan(),

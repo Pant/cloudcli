@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
-import { buildSessionUpsertedEvent } from '@/modules/providers/index.js';
+import { buildSessionUpsertedEvent, getSessionWatcherPolicy } from '@/modules/providers/index.js';
 import { closeSessionsWatcher, flushSessionWatcherUpdatesForTest } from '@/modules/providers/services/sessions-watcher.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
 import { connectedClients } from '@/modules/websocket/index.js';
@@ -204,6 +204,26 @@ test('watcher queue deduplicates affected session ids and excludes unrelated his
     const upserts = connection.frames.filter((frame) => frame.kind === 'session_upserted');
     assert.deepEqual(upserts.map((frame) => frame.sessionId), ['affected-native']);
     assert.equal(upserts.some((frame) => frame.sessionId === 'unrelated-native'), false);
+  });
+});
+
+test('watcher policy uses native events by default and bounds configurable coalescing latency', () => {
+  assert.deepEqual(getSessionWatcherPolicy({}), {
+    debounceMs: 100,
+    maxWaitMs: 500,
+    usePolling: false,
+    pollIntervalMs: 250,
+  });
+  assert.deepEqual(getSessionWatcherPolicy({
+    CLOUDCLI_SESSION_WATCH_DEBOUNCE_MS: '5',
+    CLOUDCLI_SESSION_WATCH_MAX_WAIT_MS: '9000',
+    CLOUDCLI_SESSION_WATCH_USE_POLLING: 'true',
+    CLOUDCLI_SESSION_WATCH_POLL_INTERVAL_MS: '50',
+  }), {
+    debounceMs: 25,
+    maxWaitMs: 2_000,
+    usePolling: true,
+    pollIntervalMs: 100,
   });
 });
 

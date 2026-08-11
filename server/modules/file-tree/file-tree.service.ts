@@ -4,13 +4,17 @@ import ignore from 'ignore';
 
 import type {
   FileTreeNode,
+  FileTreePageOptions,
+  FileTreePageResult,
   FileTreeServiceDependencies,
   FileTreeServices,
   FileTreeUploadedFile,
 } from '@/shared/types.js';
 import {
   AppError,
+  FILE_TREE_DEFAULT_PAGE_SIZE,
   FILE_TREE_MAX_DEPTH,
+  FILE_TREE_MAX_PAGE_SIZE,
   FORBIDDEN_WORKSPACE_PATHS,
   normalizeProjectPath,
 } from '@/shared/utils.js';
@@ -34,6 +38,7 @@ const COMMON_WORKSPACE_DIRECTORY_NAMES = [
 ];
 
 type FileTreeEntryFilter = (entryPath: string, isDirectory: boolean) => boolean;
+type FileSystemOperationPriority = 'structural' | 'metadata';
 
 function createFileTreeError(message: string, statusCode: number, code: string): AppError {
   return new AppError(message, { statusCode, code });
@@ -100,21 +105,25 @@ function expandWorkspacePath(workspaceRoot: string, inputPath: string): string {
 
 function createConcurrencyLimiter(maximumConcurrency: number) {
   let activeOperations = 0;
-  const pendingOperations: Array<() => void> = [];
+  const pendingOperations: Record<FileSystemOperationPriority, Array<() => void>> = {
+    structural: [],
+    metadata: [],
+  };
 
-  async function acquire(): Promise<void> {
+  async function acquire(priority: FileSystemOperationPriority): Promise<void> {
     if (activeOperations < maximumConcurrency) {
       activeOperations += 1;
       return;
     }
 
     await new Promise<void>((resolve) => {
-      pendingOperations.push(resolve);
+      pendingOperations[priority].push(resolve);
     });
   }
 
   function release(): void {
-    const nextOperation = pendingOperations.shift();
+    const nextOperation = pendingOperations.structural.shift()
+      ?? pendingOperations.metadata.shift();
     if (nextOperation) {
       nextOperation();
       return;
@@ -182,7 +191,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
   ): Promise<FileTreeNode[]> {
     let entries;
     try {
-      await acquire();
+       await acquire('structural');
       try {
         entries = await fileSystem.readdir(directoryPath);
       } finally {
@@ -218,7 +227,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
 
       if (includeMetadata) {
         try {
-          await acquire();
+           await acquire('metadata');
           try {
             const stats = await fileSystem.lstat(itemPath);
             const ownerPermissions = (stats.mode >> 6) & 7;
@@ -279,7 +288,107 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     }));
   }
 
+  async function listProjectFilePage(
+    projectId: string,
+    options?: FileTreePageOptions,
+  ): Promise<FileTreePageResult> {
+    const projectRoot = await resolveProjectRoot(projectId);
+    const targetPath = resolvePathInsideProject(projectRoot, options?.targetPath ?? '');
+    const requestedOffset = options?.offset ?? 0;
+    const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0;
+    const requestedLimit = options?.limit ?? FILE_TREE_DEFAULT_PAGE_SIZE;
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(FILE_TREE_MAX_PAGE_SIZE, Math.max(1, Math.floor(requestedLimit)))
+      : FILE_TREE_DEFAULT_PAGE_SIZE;
+
+    try {
+      await fileSystem.access(projectRoot);
+    } catch {
+      throw createFileTreeError(`Project path not found: ${projectRoot}`, 404, 'PROJECT_PATH_NOT_FOUND');
+    }
+
+    let includeEntry: FileTreeEntryFilter = () => true;
+    if (options?.respectGitignore) {
+      try {
+        includeEntry = createGitignoreEntryFilter(
+          projectRoot,
+          await fileSystem.readTextFile(path.join(projectRoot, '.gitignore')),
+        );
+      } catch (error) {
+        if (readErrorCode(error) !== 'ENOENT') {
+          dependencies.logger.error(`Error reading .gitignore in "${projectRoot}"`, error);
+        }
+      }
+    }
+
+    let entries;
+    try {
+       await acquire('structural');
+      try {
+        entries = await fileSystem.readdir(targetPath);
+      } finally {
+        release();
+      }
+    } catch (error) {
+      const errorCode = readErrorCode(error);
+      if (errorCode !== 'ENOENT' && errorCode !== 'EACCES' && errorCode !== 'EPERM') {
+        dependencies.logger.error(`Error reading directory "${targetPath}"`, error);
+      }
+      return { items: [], hasMore: false, nextOffset: null, total: 0 };
+    }
+
+    const visibleEntries = entries
+      .filter((entry) => {
+        const isDirectory = entry.isDirectory();
+        return !(isDirectory && IGNORED_DIRECTORY_NAMES.has(entry.name))
+          && includeEntry(path.join(targetPath, entry.name), isDirectory);
+      })
+      .sort((left, right) => {
+        if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+        return left.name.localeCompare(right.name);
+      });
+    const total = visibleEntries.length;
+    const pageEntries = visibleEntries.slice(offset, offset + limit);
+    const items = await Promise.all(pageEntries.map(async (entry): Promise<FileTreeNode> => {
+      const itemPath = path.join(targetPath, entry.name);
+      const item: FileTreeNode = {
+        name: entry.name,
+        path: itemPath,
+        type: entry.isDirectory() ? 'directory' : 'file',
+        size: 0,
+        modified: null,
+        permissions: '000',
+        permissionsRwx: '---------',
+      };
+      if (options?.includeMetadata ?? true) {
+        try {
+           await acquire('metadata');
+          try {
+            const stats = await fileSystem.lstat(itemPath);
+            const owner = (stats.mode >> 6) & 7;
+            const group = (stats.mode >> 3) & 7;
+            const other = stats.mode & 7;
+            item.size = stats.size;
+            item.modified = stats.mtime.toISOString();
+            item.permissions = `${owner}${group}${other}`;
+            item.permissionsRwx = permissionBitsToRwx(owner) + permissionBitsToRwx(group) + permissionBitsToRwx(other);
+            if (stats.isSymbolicLink()) item.isSymlink = true;
+          } finally {
+            release();
+          }
+        } catch {
+          // Metadata failures should not hide an otherwise readable page entry.
+        }
+      }
+      return item;
+    }));
+    const consumed = offset + items.length;
+    const hasMore = consumed < total;
+    return { items, hasMore, nextOffset: hasMore ? consumed : null, total };
+  }
+
   return {
+    listProjectFilePage,
     async browseWorkspace(inputPath) {
       const requestedPath = inputPath
         ? expandWorkspacePath(dependencies.workspace.rootPath, inputPath)

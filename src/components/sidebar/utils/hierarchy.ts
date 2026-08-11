@@ -240,6 +240,34 @@ export const getSessionAncestorIds = (forest: SessionForest, sessionId: string):
 };
 
 /**
+ * Returns branches that need opening for canonical child edges not present in
+ * the previous snapshot. A missing previous forest establishes a folded
+ * baseline, and explicit collapses remain authoritative.
+ */
+export const getNewSessionEdgeAncestorIds = (
+  previousForest: SessionForest | undefined,
+  currentForest: SessionForest,
+  collapsedSessionIds: ReadonlySet<string> = new Set(),
+): Set<string> => {
+  const expanded = new Set<string>();
+  if (!previousForest) {
+    return expanded;
+  }
+
+  for (const node of currentForest.nodes.values()) {
+    if (!node.parentSessionId || previousForest.nodes.get(node.id)?.parentSessionId === node.parentSessionId) {
+      continue;
+    }
+    for (const ancestorId of getSessionAncestorIds(currentForest, node.id)) {
+      if (!collapsedSessionIds.has(ancestorId)) {
+        expanded.add(ancestorId);
+      }
+    }
+  }
+  return expanded;
+};
+
+/**
  * Newly discovered session branches are intentionally folded. Explicit user
  * expansion is tracked by the sidebar controller and forced ancestor paths
  * are supplied separately to `flattenExpandedBranches`.

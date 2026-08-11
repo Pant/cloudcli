@@ -76,7 +76,9 @@ const events = [
   { type: 'text', sessionID: 'open-live-1', text: 'assistant response' },
   { type: 'tool_use', sessionID: 'open-live-1', part: { id: 'part-task', tool: 'task', callID: 'task-call-1', state: { status: 'completed', input: { description: 'Inspect notifications' }, output: 'done' } } },
   { type: 'tool_use', sessionID: 'open-live-1', part: { id: 'part-task', tool: 'Task', callID: 'task-call-1', state: { status: 'completed', input: { description: 'Inspect notifications' }, output: 'done' } } },
-  { type: 'step_finish', sessionID: 'open-live-1' },
+  { type: 'step_finish', sessionID: 'open-live-1', messageID: 'message-step-1', part: { id: 'step-1', type: 'step-finish', tokens: { input: 11, output: 5, reasoning: 2, cache: { read: 7, write: 3 } } } },
+  { type: 'step_finish', sessionID: 'open-live-1', messageID: 'message-step-2', part: { id: 'step-2', type: 'step-finish', tokens: { input: 4, output: 6, reasoning: 1, cache: { read: 8, write: 2 } } } },
+  { type: 'step_finish', sessionID: 'open-live-1', messageID: 'message-step-2', part: { id: 'step-2', type: 'step-finish', tokens: { input: 4, output: 6, reasoning: 1, cache: { read: 8, write: 2 } } } },
 ];
 
 if (process.env.OPENCODE_TEST_STDERR) process.stderr.write(process.env.OPENCODE_TEST_STDERR);
@@ -229,6 +231,16 @@ test('spawnOpenCode emits session_created before normalized live messages for ne
     assert.equal(writer.sessionId, 'open-live-1');
     assert.equal(streamEnd?.sessionId, 'open-live-1');
     assert.equal(complete?.sessionId, 'open-live-1');
+    const liveBudgets = messages.filter((message) => message.text === 'token_budget');
+    assert.equal(liveBudgets.length, 2);
+    assert.deepEqual(liveBudgets[1]?.tokenBudget, {
+      used: 49,
+      windowTokens: 21,
+      inputTokens: 30,
+      outputTokens: 11,
+      breakdown: { input: 30, output: 11 },
+    });
+    assert.ok(messages.indexOf(liveBudgets[1]) < messages.indexOf(complete!));
     assert.equal(messages.some((message) => message.kind === 'error'), false);
 
     const capture = JSON.parse(await readFile(argsCapturePath, 'utf8')) as AnyRecord;
@@ -423,12 +435,12 @@ test('spawnOpenCode attaches a known context maximum to the live token budget ev
 
     const tokenBudgetMessage = messages.find((message) => message.text === 'token_budget');
     assert.deepEqual(tokenBudgetMessage?.tokenBudget, {
-      used: 29,
+      used: 57,
       total: 128_000,
-      windowTokens: 160_626,
-      inputTokens: 17,
-      outputTokens: 7,
-      breakdown: { input: 17, output: 7 },
+      windowTokens: 28,
+      inputTokens: 35,
+      outputTokens: 12,
+      breakdown: { input: 35, output: 12 },
     });
   } finally {
     if (previousPath === undefined) {
@@ -511,11 +523,11 @@ test('spawnOpenCode keeps the live token budget current-only when context metada
 
       const tokenBudgetMessage = messages.find((message) => message.text === 'token_budget');
       assert.deepEqual(tokenBudgetMessage?.tokenBudget, {
-      used: 29,
-       windowTokens: 160_626,
-      inputTokens: 17,
-        outputTokens: 7,
-        breakdown: { input: 17, output: 7 },
+        used: 57,
+        windowTokens: 28,
+        inputTokens: 35,
+        outputTokens: 12,
+        breakdown: { input: 35, output: 12 },
       });
       assert.equal(Object.hasOwn(tokenBudgetMessage?.tokenBudget ?? {}, 'total'), false);
       assert.equal(messages.some((message) => message.kind === 'error'), false);
@@ -576,11 +588,11 @@ test('spawnOpenCode publishes a zero live token snapshot for genuinely empty dat
 
     const tokenBudgetMessage = messages.find((message) => message.text === 'token_budget');
     assert.deepEqual(tokenBudgetMessage?.tokenBudget, {
-      used: 0,
-      windowTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      breakdown: { input: 0, output: 0 },
+      used: 28,
+      windowTokens: 28,
+      inputTokens: 18,
+      outputTokens: 5,
+      breakdown: { input: 18, output: 5 },
     });
   } finally {
     if (previousPath === undefined) {

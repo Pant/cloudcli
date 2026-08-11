@@ -9,6 +9,7 @@ export { providerModelsService } from './services/provider-models.service.js';
 export { initializeSessionsWatcher } from './services/sessions-watcher.service.js';
 export { closeSessionsWatcher } from './services/sessions-watcher.service.js';
 export { buildSessionUpsertedEvent } from './services/sessions-watcher.service.js';
+export { getSessionWatcherPolicy } from './services/sessions-watcher.service.js';
 
 // sessionsService: used by authenticated provider routes and browser cache synchronization consumers.
 export { sessionsService } from './services/sessions.service.js';

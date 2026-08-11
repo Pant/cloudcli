@@ -9,6 +9,7 @@ import type { SessionActivityMap, SessionLifecycleMap } from '../../../hooks/use
 import type {
   ArchivedProjectListItem,
   ArchivedSessionListItem,
+  BulkSessionDeleteConfirmation,
   DeleteProjectConfirmation,
   ProjectSortOrder,
   SidebarSearchMode,
@@ -27,6 +28,7 @@ import {
   buildSessionForest,
   deriveRunningProjects,
   getDefaultExpandedSessionIds,
+  getNewSessionEdgeAncestorIds,
   getSessionAncestorIds,
 } from '../utils/hierarchy';
 
@@ -142,6 +144,10 @@ export function useSidebarController({
   const [deletingProjects, setDeletingProjects] = useState<Set<string>>(new Set());
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteProjectConfirmation | null>(null);
   const [sessionDeleteConfirmation, setSessionDeleteConfirmation] = useState<SessionDeleteConfirmation | null>(null);
+  const [isSessionSelectionMode, setIsSessionSelectionMode] = useState(false);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
+  const [bulkSessionDeleteConfirmation, setBulkSessionDeleteConfirmation] = useState<BulkSessionDeleteConfirmation | null>(null);
+  const [isBulkSessionDeletePending, setIsBulkSessionDeletePending] = useState(false);
   const [showVersionModal, setShowVersionModal] = useState(false);
   const [searchMode, setSearchMode] = useState<SidebarSearchMode>('projects');
   const [conversationResults, setConversationResults] = useState<ConversationSearchResults | null>(null);
@@ -159,6 +165,7 @@ export function useSidebarController({
   const migrationStartedRef = useRef(false);
   const onRefreshRef = useRef(onRefresh);
   const renamingSessionIdsRef = useRef(new Set<string>());
+  const previousSessionForestsByProjectRef = useRef(new Map<string, ReturnType<typeof buildSessionForest>>());
 
   const isSidebarCollapsed = !isMobile && !sidebarVisible;
   const activeSessionIds = useMemo(() => new Set(activeSessions.keys()), [activeSessions]);
@@ -168,15 +175,39 @@ export function useSidebarController({
     buildSessionForest(project.sessions ?? [], project.projectId)
   ), []);
 
-  // Newly discovered child branches start folded. Explicit expansions remain
-  // in `expandedSessionIdsByProject`, while forced selected/running ancestors
-  // are applied separately below.
   useEffect(() => {
+    const loadedIds = new Set(projects.flatMap((project) => getAllSessions(project).map((session) => session.id)));
+    setSelectedSessionIds((previous) => {
+      const next = new Set([...previous].filter((id) => loadedIds.has(id) && !activeSessionIds.has(id)));
+      return next.size === previous.size && [...next].every((id) => previous.has(id)) ? previous : next;
+    });
+  }, [activeSessionIds, projects]);
+
+  // Establish the initial hierarchy as a folded baseline, then reveal ancestor
+  // paths for genuinely new canonical child edges unless the user collapsed one.
+  useEffect(() => {
+    const previousForests = previousSessionForestsByProjectRef.current;
+    const currentForests = new Map<string, ReturnType<typeof buildSessionForest>>();
+    const discoveredExpansions = new Map<string, Set<string>>();
+    for (const project of projects) {
+      const forest = getSessionForest(project);
+      currentForests.set(project.projectId, forest);
+      discoveredExpansions.set(project.projectId, getNewSessionEdgeAncestorIds(
+        previousForests.get(project.projectId),
+        forest,
+        collapsedSessionIdsByProject.get(project.projectId),
+      ));
+    }
+    previousSessionForestsByProjectRef.current = currentForests;
+
     setExpandedSessionIdsByProject((previous) => {
       const next = new Map(previous);
       let changed = false;
       for (const project of projects) {
-        const forest = getSessionForest(project);
+        const forest = currentForests.get(project.projectId);
+        if (!forest) {
+          continue;
+        }
         const existing = next.get(project.projectId) ?? new Set<string>();
         const collapsed = collapsedSessionIdsByProject.get(project.projectId) ?? new Set<string>();
         const expanded = new Set(existing);
@@ -184,6 +215,9 @@ export function useSidebarController({
           if (!collapsed.has(id)) {
             expanded.add(id);
           }
+        }
+        for (const id of discoveredExpansions.get(project.projectId) ?? []) {
+          expanded.add(id);
         }
         if (expanded.size !== existing.size || [...expanded].some((id) => !existing.has(id))) {
           next.set(project.projectId, expanded);
@@ -529,10 +563,68 @@ export function useSidebarController({
 
   const handleSessionClick = useCallback(
     (session: SessionWithProvider, project: Project) => {
+      if (isSessionSelectionMode) {
+        if (activeSessionIds.has(session.id)) return;
+        setSelectedSessionIds((previous) => {
+          const next = new Set(previous);
+          if (next.has(session.id)) next.delete(session.id);
+          else next.add(session.id);
+          return next;
+        });
+        return;
+      }
       onSessionSelect(session, project);
     },
-    [onSessionSelect],
+    [activeSessionIds, isSessionSelectionMode, onSessionSelect],
   );
+
+  const toggleSessionSelectionMode = useCallback(() => {
+    setIsSessionSelectionMode((previous) => !previous);
+    setSelectedSessionIds(new Set());
+    setBulkSessionDeleteConfirmation(null);
+  }, []);
+
+  const toggleProjectSessionSelection = useCallback((project: Project) => {
+    const eligibleIds = getAllSessions(project).map((session) => session.id).filter((id) => !activeSessionIds.has(id));
+    setSelectedSessionIds((previous) => {
+      const next = new Set(previous);
+      const allSelected = eligibleIds.length > 0 && eligibleIds.every((id) => next.has(id));
+      for (const id of eligibleIds) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }, [activeSessionIds]);
+
+  const showBulkSessionDeleteConfirmation = useCallback(() => {
+    if (selectedSessionIds.size > 0) {
+      setBulkSessionDeleteConfirmation({ sessionIds: [...selectedSessionIds] });
+    }
+  }, [selectedSessionIds]);
+
+  const confirmBulkDeleteSessions = useCallback(async (hardDelete = false) => {
+    if (!bulkSessionDeleteConfirmation || isBulkSessionDeletePending) return;
+    setIsBulkSessionDeletePending(true);
+    const results = await Promise.allSettled(
+      bulkSessionDeleteConfirmation.sessionIds.map((id) => apiClient.deleteSession(id, hardDelete)),
+    );
+    const failedIds: string[] = [];
+    results.forEach((result, index) => {
+      const id = bulkSessionDeleteConfirmation.sessionIds[index];
+      if (result.status === 'fulfilled') onSessionDelete?.(id);
+      else failedIds.push(id);
+    });
+    try {
+      await Promise.all([Promise.resolve(onRefresh()), fetchArchivedSessions()]);
+    } finally {
+      setSelectedSessionIds(new Set(failedIds));
+      setBulkSessionDeleteConfirmation(null);
+      setIsBulkSessionDeletePending(false);
+      if (failedIds.length === 0) setIsSessionSelectionMode(false);
+      else alert(t(failedIds.length === results.length ? 'selection.failureAll' : 'selection.failurePartial', { count: failedIds.length }));
+    }
+  }, [bulkSessionDeleteConfirmation, fetchArchivedSessions, isBulkSessionDeletePending, onRefresh, onSessionDelete, t]);
 
   const resolveProjectStarState = useCallback(
     (projectId: string): boolean => {
@@ -1007,6 +1099,10 @@ export function useSidebarController({
     loadingMoreProjects,
     deleteConfirmation,
     sessionDeleteConfirmation,
+    isSessionSelectionMode,
+    selectedSessionIds,
+    bulkSessionDeleteConfirmation,
+    isBulkSessionDeletePending,
     showVersionModal,
     filteredProjects,
     runningSessionsCount,
@@ -1017,6 +1113,10 @@ export function useSidebarController({
     toggleProject,
     toggleSessionBranch,
     handleSessionClick,
+    toggleSessionSelectionMode,
+    toggleProjectSessionSelection,
+    showBulkSessionDeleteConfirmation,
+    confirmBulkDeleteSessions,
     toggleStarProject,
     isProjectStarred,
     getProjectSessions,
@@ -1058,6 +1158,7 @@ export function useSidebarController({
     setSearchFilter,
     setDeleteConfirmation,
     setSessionDeleteConfirmation,
+    setBulkSessionDeleteConfirmation,
     setShowVersionModal,
   };
 }

@@ -11,10 +11,22 @@ export type CompletionTokenRefreshDependencies = {
   getActiveSessionKey: () => string | null;
   /** Reconciles persisted messages before provider token storage is read. */
   refreshMessages: (sessionId: string) => Promise<unknown>;
+  /** Enables canonical metadata hydration retries for providers that need them. */
+  shouldRetryMessages?: (sessionId: string) => boolean;
+  /** Captures canonical response metadata before the first forced refresh. */
+  captureMetadataBaseline?: (sessionId: string) => unknown;
+  /** Checks whether canonical metadata newer than the baseline is hydrated. */
+  isMetadataReady?: (sessionId: string, baseline: unknown) => boolean;
+  /** Delays before attempts after the immediate first attempt. */
+  retryDelaysMs?: readonly number[];
+  /** Injectable deterministic wait used by tests. */
+  wait?: (delayMs: number) => Promise<void>;
   /** Reads one comprehensive provider token snapshot for the app session. */
   fetchTokenUsage: (sessionId: string) => Promise<unknown>;
   /** Applies a valid snapshot to the single state shared by badge and popup. */
   applySnapshot: (snapshot: Record<string, unknown>) => void;
+  /** Monotonic version of trustworthy live token snapshots for stale fallback fencing. */
+  getSnapshotVersion?: () => number;
   /** Completion refresh is supplemental; failures retain the live snapshot. */
   onError?: (error: unknown) => void;
 };
@@ -38,37 +50,66 @@ export function createCompletionTokenRefreshController(
   dependencies: CompletionTokenRefreshDependencies,
 ) {
   const latestTicketBySession = new Map<string, number>();
+  const wait = dependencies.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  }));
+  const retryDelaysMs = dependencies.retryDelaysMs ?? [150, 350, 700, 1200];
 
-  const refresh = async (sessionId: string, ticket: number, viewKey: string): Promise<void> => {
-    try {
+  const isCurrent = (sessionId: string, ticket: number, viewKey: string): boolean => (
+    latestTicketBySession.get(sessionId) === ticket
+    && dependencies.getActiveSessionKey() === viewKey
+    && dependencies.getActiveSessionId() === sessionId
+  );
+
+  const refresh = async (
+    sessionId: string,
+    ticket: number,
+    viewKey: string,
+    snapshotVersion: number,
+  ): Promise<void> => {
+    const refreshAggregateUsage = async (): Promise<void> => {
       try {
-        await dependencies.refreshMessages(sessionId);
+        const snapshot = await dependencies.fetchTokenUsage(sessionId);
+        if (
+          isCurrent(sessionId, ticket, viewKey)
+          && (dependencies.getSnapshotVersion?.() ?? snapshotVersion) === snapshotVersion
+          && isUsableSnapshot(snapshot)
+        ) {
+          dependencies.applySnapshot(snapshot);
+        }
       } catch (error) {
-        // Message persistence and token storage can settle through separate
-        // provider paths. Still attempt the authoritative token read if the
-        // transcript refresh failed; either failure retains the prior snapshot.
         dependencies.onError?.(error);
       }
-      if (
-        latestTicketBySession.get(sessionId) !== ticket
-        || dependencies.getActiveSessionKey() !== viewKey
-        || dependencies.getActiveSessionId() !== sessionId
-      ) {
-        return;
+    };
+
+    const refreshCanonicalMessages = async (): Promise<void> => {
+      const retryMessages = dependencies.shouldRetryMessages?.(sessionId) === true;
+      const baseline = retryMessages ? dependencies.captureMetadataBaseline?.(sessionId) : undefined;
+      const delays = retryMessages ? [0, ...retryDelaysMs] : [0];
+
+      for (const delayMs of delays) {
+        if (!isCurrent(sessionId, ticket, viewKey)) return;
+        if (delayMs > 0) {
+          await wait(delayMs);
+          if (!isCurrent(sessionId, ticket, viewKey)) return;
+        }
+        try {
+          await dependencies.refreshMessages(sessionId);
+        } catch (error) {
+          dependencies.onError?.(error);
+        }
+        if (!isCurrent(sessionId, ticket, viewKey)) return;
+        if (
+          retryMessages
+          && dependencies.isMetadataReady?.(sessionId, baseline) === true
+        ) {
+          break;
+        }
       }
 
-      const snapshot = await dependencies.fetchTokenUsage(sessionId);
-      if (
-        latestTicketBySession.get(sessionId) === ticket
-        && dependencies.getActiveSessionKey() === viewKey
-        && dependencies.getActiveSessionId() === sessionId
-        && isUsableSnapshot(snapshot)
-      ) {
-        dependencies.applySnapshot(snapshot);
-      }
-    } catch (error) {
-      dependencies.onError?.(error);
-    }
+    };
+
+    await Promise.all([refreshAggregateUsage(), refreshCanonicalMessages()]);
   };
 
   return {
@@ -87,7 +128,12 @@ export function createCompletionTokenRefreshController(
 
       const ticket = (latestTicketBySession.get(sessionId) ?? 0) + 1;
       latestTicketBySession.set(sessionId, ticket);
-      return refresh(sessionId, ticket, viewKey!);
+      return refresh(
+        sessionId,
+        ticket,
+        viewKey!,
+        dependencies.getSnapshotVersion?.() ?? 0,
+      );
     },
   };
 }

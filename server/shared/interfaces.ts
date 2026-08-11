@@ -13,6 +13,8 @@ import type {
   ProviderMcpServer,
   ProviderSkillCreateInput,
   ProviderSkillRemoveInput,
+  ProviderSkillAccessUpdateInput,
+  ProviderSkillAccessUpdateResult,
   ProviderAvailableAgent,
   ProviderAgentListOptions,
   ProviderAgentDefinition,
@@ -168,6 +170,9 @@ export interface IProviderSkills {
   removeSkill(
     input: ProviderSkillRemoveInput,
   ): Promise<{ removed: boolean; provider: LLMProvider; directoryName: string }>;
+
+  /** Persists a provider-native exact-name allow/deny override when supported. */
+  updateSkillAccess(input: ProviderSkillAccessUpdateInput): Promise<ProviderSkillAccessUpdateResult>;
 }
 
 // ---------------------------

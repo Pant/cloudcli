@@ -5,6 +5,8 @@
  * needed by the file-list renderer.
  */
 
+import { sanitizeFileReference } from '../../../utils/fileReference';
+
 export interface NormalizedSearchToolResult {
   files: string[];
   count: number;
@@ -102,7 +104,7 @@ function stripWrappingQuotes(value: string): string {
 }
 
 function cleanPath(value: string): string | undefined {
-  const cleaned = stripWrappingQuotes(value.replace(ANSI_ESCAPE, '').trim());
+  const cleaned = sanitizeFileReference(stripWrappingQuotes(value.replace(ANSI_ESCAPE, '').trim()));
   if (!cleaned || cleaned.length > 4096 || /[\r\n\u0000]/.test(cleaned)) return undefined;
   if (cleaned.startsWith('{') || cleaned.startsWith('[') || /^\w+:\/\//.test(cleaned)) return undefined;
   return cleaned;

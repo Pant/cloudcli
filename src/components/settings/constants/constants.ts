@@ -7,6 +7,7 @@ import {
   GitBranch,
   Info,
   KeyRound,
+  Library,
   MonitorPlay,
   Palette,
   Plug,
@@ -30,6 +31,7 @@ export type SettingsMainTabMeta = {
 
 export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   { id: 'agents', label: 'Agents', keywords: 'agents subagents claude code', icon: Bot },
+  { id: 'skills', label: 'Skills', keywords: 'skills opencode permissions global project', icon: Library },
   { id: 'appearance', label: 'Appearance', keywords: 'appearance theme dark light language', icon: Palette },
   { id: 'git', label: 'Git', keywords: 'git github commits', icon: GitBranch },
   { id: 'api', label: 'API Tokens', keywords: 'api tokens auth keys', icon: KeyRound },

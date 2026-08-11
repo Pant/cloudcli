@@ -81,6 +81,32 @@ export function replaceDirectoryChildren(
   return result;
 }
 
+/** Append a page by stable path while preserving existing order and branch identity. */
+export function appendDirectoryChildren(
+  items: FileTreeNodes,
+  targetPath: string | undefined,
+  children: FileTreeNodes,
+): FileTreeNodes {
+  const appendUnique = (existing: FileTreeNodes): FileTreeNodes => {
+    const paths = new Set(existing.map((node) => node.path));
+    const additions = children.filter((node) => !paths.has(node.path));
+    return additions.length === 0 ? existing : [...existing, ...additions];
+  };
+
+  if (isRootPath(targetPath)) {
+    return appendUnique(items);
+  }
+  if (targetPath === undefined) {
+    return items;
+  }
+
+  const node = findFileTreeNode(items, targetPath);
+  if (!node || node.type !== 'directory') {
+    return items;
+  }
+  return replaceDirectoryChildren(items, targetPath, appendUnique(node.children ?? []));
+}
+
 /**
  * Reconcile a root listing without throwing away already loaded directory
  * children.  Root requests intentionally return unloaded directory nodes;
@@ -100,6 +126,39 @@ export function replaceRootChildrenPreservingLoadedBranches(
     }
     return node;
   });
+}
+
+/** Reconcile metadata by path without replacing structure, children, or ordering. */
+export function reconcileFileTreeMetadata(
+  items: FileTreeNodes,
+  metadataItems: FileTreeNodes,
+): FileTreeNodes {
+  const metadataByPath = new Map(metadataItems.map((node) => [node.path, node]));
+  const reconcile = (nodes: FileTreeNodes): FileTreeNodes => mapNodesIfChanged(nodes, (node) => {
+    const metadata = metadataByPath.get(node.path);
+    const children = node.children ? reconcile(node.children) : node.children;
+    const metadataChanged = Boolean(metadata && (
+      node.size !== metadata.size
+      || node.modified !== metadata.modified
+      || node.permissionsRwx !== metadata.permissionsRwx
+    ));
+
+    if (!metadataChanged && children === node.children) {
+      return node;
+    }
+
+    return {
+      ...node,
+      ...(metadata ? {
+        size: metadata.size,
+        modified: metadata.modified,
+        permissionsRwx: metadata.permissionsRwx,
+      } : {}),
+      ...(children === undefined ? {} : { children }),
+    };
+  });
+
+  return reconcile(items);
 }
 
 /** Mark a directory as loaded while preserving the meaningful `[]` state. */

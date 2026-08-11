@@ -67,13 +67,11 @@ function resolveRouteErrorMessage(error: unknown): string {
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const skipSynchronization =
-      readQueryStringValue(req.query.skipSynchronization).trim() === '1' ||
-      readQueryStringValue(req.query.skipSync).trim() === '1';
+    const synchronize = readQueryStringValue(req.query.synchronize).trim() === '1';
     const sessionsLimit = readOptionalNumericQueryValue(req.query.sessionsLimit) ?? undefined;
     const sessionsOffset = readOptionalNumericQueryValue(req.query.sessionsOffset) ?? undefined;
     const projects = await getProjectsWithSessions({
-      skipSynchronization,
+      synchronize,
       sessionsLimit,
       sessionsOffset,
     });

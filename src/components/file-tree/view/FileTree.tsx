@@ -48,7 +48,7 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
     }
   }, [toast]);
 
-  const { files, loading, generation, directoryLoading, loadDirectory, loadCompleteTree, refreshFiles } = useFileTreeData(selectedProject);
+  const { files, loading, generation, directoryLoading, pageState, loadDirectory, loadNextPage, loadCompleteTree, refreshFiles } = useFileTreeData(selectedProject);
   const { viewMode, changeViewMode } = useFileTreeViewMode();
   const { expandedDirs, toggleDirectory, expandDirectories, collapseAll } = useExpandedDirectories();
   const handleSearchError = useCallback((message: string) => {
@@ -212,6 +212,8 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
           viewMode={viewMode}
           expandedDirs={expandedDirs}
           directoryLoading={directoryLoading}
+          pageState={searchQuery ? new Map() : pageState}
+          onLoadNextPage={(path) => void loadNextPage(path)}
           onItemClick={handleItemClick}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}

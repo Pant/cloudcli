@@ -57,7 +57,7 @@ type ProgressUpdate = {
 };
 
 type GetProjectsWithSessionsOptions = {
-  skipSynchronization?: boolean;
+  synchronize?: boolean;
   sessionsLimit?: number;
   sessionsOffset?: number;
 };
@@ -238,7 +238,7 @@ function broadcastProgress(progress: ProgressUpdate) {
 export async function getProjectsWithSessions(
   options: GetProjectsWithSessionsOptions = {}
 ): Promise<ProjectListItem[]> {
-  if (!options.skipSynchronization) {
+  if (options.synchronize) {
     await sessionSynchronizerService.synchronizeSessions();
   }
 
@@ -249,18 +249,13 @@ export async function getProjectsWithSessions(
     isStarred?: number;
   }>;
   const totalProjects = projectRows.length;
-  const projects: ProjectListItem[] = [];
-  let processedProjects = 0;
-
-  for (const row of projectRows) {
-    processedProjects += 1;
-
+  const projects = await Promise.all(projectRows.map(async (row, index): Promise<ProjectListItem> => {
     const projectId = row.project_id;
     const projectPath = row.project_path;
 
     broadcastProgress({
       phase: 'loading',
-      current: processedProjects,
+      current: index + 1,
       total: totalProjects,
       currentProject: projectPath,
     });
@@ -275,7 +270,7 @@ export async function getProjectsWithSessions(
       offset: options.sessionsOffset,
     });
 
-    projects.push({
+    return {
       projectId,
       path: projectPath,
       displayName,
@@ -289,8 +284,8 @@ export async function getProjectsWithSessions(
         rootOffset: sessionsPage.rootOffset,
         nextOffset: sessionsPage.nextOffset,
       },
-    });
-  }
+    };
+  }));
 
   broadcastProgress({
     phase: 'complete',
@@ -307,9 +302,9 @@ export async function getProjectsWithSessions(
  * conversation history in the archive view regardless of each session's flag.
  */
 export async function getArchivedProjectsWithSessions(
-  options: Pick<GetProjectsWithSessionsOptions, 'skipSynchronization'> = {},
+  options: Pick<GetProjectsWithSessionsOptions, 'synchronize'> = {},
 ): Promise<ArchivedProjectListItem[]> {
-  if (!options.skipSynchronization) {
+  if (options.synchronize) {
     await sessionSynchronizerService.synchronizeSessions();
   }
 

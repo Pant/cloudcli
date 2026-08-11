@@ -72,6 +72,23 @@
     "reportIssue": "Сообщить о проблеме",
     "starOnGithub": "Звезда на GitHub"
   },
+  "selection": {
+    "toggle": "Выбрать сеансы",
+    "selectAll": "Выбрать все",
+    "deselectAll": "Снять выделение",
+    "deleteSelected": "Архивировать или удалить выбранные сеансы",
+    "selected": "Сеанс выбран",
+    "notSelected": "Сеанс не выбран",
+    "confirmTitle": "Архивировать или удалить выбранные сеансы",
+    "confirmCount_one": "Выбран {{count}} сеанс.",
+    "confirmCount_other": "Выбрано сеансов: {{count}}.",
+    "archiveSelected": "Архивировать выбранные",
+    "deletePermanently": "Удалить навсегда",
+    "failurePartial_one": "Не удалось обновить 1 сеанс, он остаётся выбранным.",
+    "failurePartial_other": "Не удалось обновить {{count}} сеансов, они остаются выбранными.",
+    "failureAll_one": "Не удалось обновить выбранный сеанс.",
+    "failureAll_other": "Не удалось обновить ни один из {{count}} выбранных сеансов."
+  },
   "branding": {
     "openSource": "Открытый исходный код"
   },

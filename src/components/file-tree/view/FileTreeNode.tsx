@@ -1,11 +1,42 @@
-import type { ReactNode, RefObject } from 'react';
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { ChevronRight, Folder, FolderOpen, Loader2 } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
-import type { FileTreeNode as FileTreeNodeType, FileTreeViewMode } from '../types/types';
+import type { FileTreeNode as FileTreeNodeType, FileTreePageState, FileTreeViewMode } from '../types/types';
 import { Input } from '../../../shared/view/ui';
 
 import FileContextMenu from './FileContextMenu';
+
+export function FileTreeContinuation({ loading, onLoad, level = 0 }: {
+  loading: boolean;
+  onLoad: () => void;
+  level?: number;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting && !loading) onLoad();
+    }, { rootMargin: '200px 0px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [loading, onLoad]);
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      disabled={loading}
+      onClick={onLoad}
+      className="flex w-full items-center gap-1.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-wait"
+      style={{ paddingLeft: `${level * 16 + 22}px` }}
+    >
+      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+      {loading ? 'Loading more…' : 'Load more'}
+    </button>
+  );
+}
 
 type FileTreeNodeProps = {
   item: FileTreeNodeType;
@@ -13,6 +44,8 @@ type FileTreeNodeProps = {
   viewMode: FileTreeViewMode;
   expandedDirs: Set<string>;
   directoryLoading: Set<string>;
+  pageState: Map<string, FileTreePageState>;
+  onLoadNextPage: (path?: string) => void;
   onItemClick: (item: FileTreeNodeType) => void;
   renderFileIcon: (filename: string) => ReactNode;
   formatFileSize: (bytes?: number) => string;
@@ -68,6 +101,8 @@ export default function FileTreeNode({
   viewMode,
   expandedDirs,
   directoryLoading,
+  pageState,
+  onLoadNextPage,
   onItemClick,
   renderFileIcon,
   formatFileSize,
@@ -207,7 +242,7 @@ export default function FileTreeNode({
         rowContent
       )}
 
-      {isDirectory && isOpen && hasChildren && (
+      {isDirectory && isOpen && (hasChildren || pageState.get(item.path)?.hasMore) && (
         <div className="relative">
           <span
             className="absolute bottom-0 top-0 border-l border-border/40"
@@ -222,6 +257,8 @@ export default function FileTreeNode({
               viewMode={viewMode}
               expandedDirs={expandedDirs}
               directoryLoading={directoryLoading}
+              pageState={pageState}
+              onLoadNextPage={onLoadNextPage}
               onItemClick={onItemClick}
               renderFileIcon={renderFileIcon}
               formatFileSize={formatFileSize}
@@ -242,6 +279,13 @@ export default function FileTreeNode({
               operationLoading={operationLoading}
             />
           ))}
+          {pageState.get(item.path)?.hasMore && (
+            <FileTreeContinuation
+              level={level + 1}
+              loading={directoryLoading.has(item.path)}
+              onLoad={() => onLoadNextPage(item.path)}
+            />
+          )}
         </div>
       )}
     </div>

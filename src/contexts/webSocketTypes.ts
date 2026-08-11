@@ -50,8 +50,6 @@ export type WebSocketContextType = {
   ws: WebSocket | null;
   sendMessage: (message: unknown) => boolean;
   subscribe: SubscribeToServerEvents;
-  /** @deprecated Subscribe to the relevant event channel instead; this render-timed field can collapse burst frames. */
-  latestMessage: ServerEvent | null;
   isConnected: boolean;
   connectionEpoch: number;
   transportState: WebSocketTransportState;

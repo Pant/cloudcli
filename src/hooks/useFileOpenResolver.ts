@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 
 import { api } from '../utils/api';
+import { sanitizeFileReference } from '../utils/fileReference';
 import type { Project } from '../types/app';
 
 type FileNode = {
@@ -52,6 +53,11 @@ const findBestMatch = (files: FlatFile[], ref: string): string | null => {
   return files.find((file) => file.name === base)?.path ?? null;
 };
 
+export const resolveFileReference = (files: FlatFile[], filePath: string): string => {
+  const ref = normalize(sanitizeFileReference(filePath));
+  return findBestMatch(files, ref) ?? ref;
+};
+
 /**
  * Wraps an `onFileOpen` handler so a possibly bare/partial file reference is
  * resolved against the project's file tree (cached per project) before the file
@@ -77,7 +83,7 @@ export function useFileOpenResolver(
 
     const filesPromise = (async () => {
       try {
-        const response = await api.getFiles(projectId);
+        const response = await api.getFiles(projectId, { includeMetadata: false });
         if (!response.ok) {
           return [];
         }
@@ -97,10 +103,8 @@ export function useFileOpenResolver(
 
   return useCallback(
     (filePath: string, diffInfo?: any) => {
-      const ref = normalize(filePath).trim();
       void loadFiles().then((files) => {
-        const match = findBestMatch(files, ref);
-        onFileOpen(match ?? filePath, diffInfo);
+        onFileOpen(resolveFileReference(files, filePath), diffInfo);
       });
     },
     [loadFiles, onFileOpen],

@@ -10,6 +10,7 @@ import {
   deriveRunningSessions,
   flattenExpandedBranches,
   getDefaultExpandedSessionIds,
+  getNewSessionEdgeAncestorIds,
   getSessionAncestorIds,
 } from './hierarchy';
 
@@ -85,6 +86,36 @@ test('folds newly discovered branches while preserving explicit expansion', () =
     flattenExpandedBranches(forest, new Set(['root', 'child'])).map((row) => row.id),
     ['root', 'child', 'grandchild'],
   );
+});
+
+test('reveals only new hierarchy edges after a folded baseline and respects explicit collapses', () => {
+  const baseline = buildSessionForest([session('root', null), session('historical', 'root')]);
+  assert.deepEqual([...getNewSessionEdgeAncestorIds(undefined, baseline)], []);
+
+  const withChild = buildSessionForest([
+    session('root', null),
+    session('historical', 'root'),
+    session('child', 'root'),
+  ]);
+  assert.deepEqual([...getNewSessionEdgeAncestorIds(baseline, withChild)], ['root']);
+  assert.deepEqual([...getNewSessionEdgeAncestorIds(baseline, withChild, new Set(['root']))], []);
+
+  const withGrandchild = buildSessionForest([
+    session('root', null),
+    session('historical', 'root'),
+    session('child', 'root'),
+    session('grandchild', 'child'),
+  ]);
+  assert.deepEqual([...getNewSessionEdgeAncestorIds(withChild, withGrandchild)], ['child', 'root']);
+  assert.deepEqual([...getNewSessionEdgeAncestorIds(withGrandchild, withGrandchild)], []);
+
+  const metadataOnly = buildSessionForest([
+    session('root', null),
+    session('historical', 'root'),
+    { ...session('child', 'root'), summary: 'renamed' },
+    session('grandchild', 'child'),
+  ]);
+  assert.deepEqual([...getNewSessionEdgeAncestorIds(withGrandchild, metadataOnly)], []);
 });
 
 test('forced selected or running ancestor paths reveal folded branches', () => {

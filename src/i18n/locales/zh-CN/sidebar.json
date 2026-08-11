@@ -72,6 +72,23 @@
     "reportIssue": "报告问题",
     "starOnGithub": "在GitHub上加星"
   },
+  "selection": {
+    "toggle": "选择会话",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "deleteSelected": "归档或删除所选会话",
+    "selected": "会话已选择",
+    "notSelected": "会话未选择",
+    "confirmTitle": "归档或删除所选会话",
+    "confirmCount_one": "已选择 {{count}} 个会话。",
+    "confirmCount_other": "已选择 {{count}} 个会话。",
+    "archiveSelected": "归档所选会话",
+    "deletePermanently": "永久删除",
+    "failurePartial_one": "有 1 个会话无法更新，仍保持选中状态。",
+    "failurePartial_other": "有 {{count}} 个会话无法更新，仍保持选中状态。",
+    "failureAll_one": "无法更新所选会话。",
+    "failureAll_other": "所选的 {{count}} 个会话均无法更新。"
+  },
   "branding": {
     "openSource": "开源"
   },

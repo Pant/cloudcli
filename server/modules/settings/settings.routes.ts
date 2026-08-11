@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+
 import express from 'express';
 
 import type { createSettingsService } from './settings.service.js';
@@ -30,6 +32,23 @@ export function createSettingsRouter(
   });
   router.post('/docker-management/down', async (req, res, next) => {
     try { res.status(202).json(await service.triggerDockerDown()); } catch (error) { next(error); }
+  });
+  router.get('/docker-management/logs', async (req, res, next) => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.once('aborted', abort);
+    res.once('close', abort);
+    try {
+      const upstream = await service.getDockerLogs(controller.signal);
+      res.status(upstream.status);
+      const contentType = upstream.headers.get('content-type');
+      if (contentType) res.setHeader('content-type', contentType);
+      Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream)
+        .on('error', (error) => res.destroy(error))
+        .pipe(res);
+    } catch (error) {
+      if (!controller.signal.aborted) next(error);
+    }
   });
 
   router.get('/api-keys', respond((req) => service.listApiKeys(userId(req))));

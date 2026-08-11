@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { Activity, AlertTriangle, Check, ChevronDown, ChevronRight, CircleStop, Copy, Edit2, Loader2, MoreHorizontal, Play, RotateCcw, Trash2, X } from 'lucide-react';
+import { Activity, AlertTriangle, Check, CheckSquare, ChevronDown, ChevronRight, CircleStop, Copy, Edit2, Loader2, MoreHorizontal, Play, RotateCcw, Square, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { ActionMenu, Badge, Dialog, DialogContent, DialogTitle, Tooltip, buttonVariants } from '../../../../shared/view/ui';
@@ -11,12 +11,15 @@ import type { SessionWithProvider } from '../../types/types';
 import { createSessionViewModel } from '../../utils/utils';
 import { getSessionRowIndent, getSessionRowInteractionPolicy } from '../../utils/sessionRowPolicy';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
+import { useSessionStoreContext } from '../../../../stores/sessionStoreContext';
 
 type SidebarSessionItemProps = {
   project: Project;
   session: SessionWithProvider;
   selectedSession: ProjectSession | null;
   isProcessing: boolean;
+  isSelectionMode: boolean;
+  isSelectionSelected: boolean;
   lifecycle?: SessionLifecycleSnapshot;
   onStartSession: (sessionId: string) => Promise<void>;
   hasRunningDescendant: boolean;
@@ -88,6 +91,8 @@ export default function SidebarSessionItem({
   session,
   selectedSession,
   isProcessing,
+  isSelectionMode,
+  isSelectionSelected,
   lifecycle,
   onStartSession,
   hasRunningDescendant,
@@ -111,6 +116,7 @@ export default function SidebarSessionItem({
   onDeleteSession,
   t,
 }: SidebarSessionItemProps) {
+  const sessionStore = useSessionStoreContext();
   const sessionView = createSessionViewModel(session, currentTime, t);
   const isSelected = selectedSession?.id === session.id;
   const isEditing = editingSession === session.id;
@@ -200,9 +206,13 @@ export default function SidebarSessionItem({
   // after the projectName → projectId migration.
   const selectAndToggleSession = () => {
     onSessionSelect(session, project);
-    if (rowInteractionPolicy.togglesOnRowClick) {
+    if (!isSelectionMode && rowInteractionPolicy.togglesOnRowClick) {
       onToggleSessionBranch(session.id);
     }
+  };
+
+  const warmSessionOnIntent = () => {
+    if (!isSelectionMode) void sessionStore.warmSession(session.id);
   };
 
   const toggleSessionBranch = (event: ReactMouseEvent | ReactKeyboardEvent) => {
@@ -291,7 +301,7 @@ export default function SidebarSessionItem({
         : `Copy ${providerLabel} session ID`;
 
   return (
-    <div className="group relative" data-session-id={session.id} data-session-depth={depth}>
+    <div className="group relative" data-session-id={session.id} data-session-depth={depth} data-selection-selected={isSelectionSelected || undefined}>
       {depth > 0 && (
         <>
           <div
@@ -337,7 +347,8 @@ export default function SidebarSessionItem({
         <div
           className={cn(
             'p-2 mx-3 my-0.5 rounded-md bg-card border active:scale-[0.98] transition-all duration-150 relative',
-            isSelected ? 'bg-primary/5 border-primary/20' : '',
+             isSelected ? 'bg-primary/5 border-primary/20' : '',
+            isSelectionSelected && 'border-primary bg-primary/10 ring-1 ring-primary/30',
             !isSelected && isProcessing
               ? 'border-border/60 bg-muted/20'
               : !isSelected && sessionView.isActive
@@ -345,9 +356,12 @@ export default function SidebarSessionItem({
               : 'border-border/30',
           )}
           onClick={selectAndToggleSession}
+          role={isSelectionMode ? 'checkbox' : undefined}
+          aria-checked={isSelectionMode ? isSelectionSelected : undefined}
           style={{ paddingLeft: `${rowIndent + (!hasChildren && reserveDisclosureSpace ? 24 : 0)}px` }}
         >
           <div className="flex items-center gap-2">
+            {isSelectionMode && (isSelectionSelected ? <CheckSquare className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" /> : <Square className="h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden="true" />)}
             {hasChildren ? (
               <button
                 type="button"
@@ -543,20 +557,29 @@ export default function SidebarSessionItem({
               buttonVariants({ variant: 'ghost' }),
               'h-auto w-full justify-start rounded-md border bg-card p-2 pr-11 text-left font-normal transition-all duration-150',
               isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
+              isSelectionSelected && 'border-primary bg-primary/10 ring-1 ring-primary/30',
               !isSelected && isProcessing
                 ? 'border-border/60 bg-muted/20 hover:bg-muted/25'
                 : !isSelected && sessionView.isActive
                   ? 'border-green-500/30 bg-green-50/5 hover:bg-green-50/10 dark:bg-green-900/5 dark:hover:bg-green-900/10'
                   : 'hover:bg-accent/50',
             )}
+            onPointerEnter={warmSessionOnIntent}
+            onFocus={warmSessionOnIntent}
             // Left-click keeps in-app navigation; Ctrl/Cmd/middle-click and the
             // native right-click menu use the href to open a new tab/window.
             onClick={(event) => {
+              if (isSelectionMode) {
+                event.preventDefault();
+                selectAndToggleSession();
+                return;
+              }
               if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
               event.preventDefault();
               selectAndToggleSession();
             }}
           >
+            {isSelectionMode && <span role="checkbox" aria-checked={isSelectionSelected} aria-label={t(isSelectionSelected ? 'selection.selected' : 'selection.notSelected')} className="mr-2 flex-shrink-0">{isSelectionSelected ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4 text-muted-foreground" />}</span>}
             <div className="flex w-full min-w-0 items-center gap-2">
             <div
               className={cn(

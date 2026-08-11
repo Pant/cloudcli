@@ -5,6 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
+import { OpenCodeConfigStore } from '@/modules/providers/list/opencode/opencode-config.provider.js';
+import { OpenCodeSkillsProvider } from '@/modules/providers/list/opencode/opencode-skills.provider.js';
 
 const patchHomeDir = (nextHomeDir: string) => {
   const original = os.homedir;
@@ -450,6 +452,69 @@ test('providerSkillsService lists opencode project and user compatibility skills
   }
 });
 
+test('OpenCode skills recurse and apply ordered global/project permissions', { concurrency: false }, async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'llm-skills-opencode-access-'));
+  const workspacePath = path.join(tempRoot, 'workspace');
+  const userConfigDirectory = path.join(tempRoot, '.config', 'opencode');
+  await fs.mkdir(workspacePath, { recursive: true });
+  const restoreHomeDir = patchHomeDir(tempRoot);
+  try {
+    await writeSkill(
+      path.join(tempRoot, '.agents', 'skills', 'nested', 'deep'),
+      'duplicate-user',
+      'shared-skill',
+      'Nested user definition',
+    );
+    await writeSkill(
+      path.join(workspacePath, '.claude', 'skills', 'collection', 'nested'),
+      'duplicate-project',
+      'shared-skill',
+      'Nested project definition',
+    );
+    await fs.mkdir(userConfigDirectory, { recursive: true });
+    await fs.writeFile(path.join(userConfigDirectory, 'opencode.json'), JSON.stringify({
+      permission: { skill: { '*': 'deny', 'shared-*': 'allow', 'shared-skill': 'deny' }, bash: 'ask' },
+      provider: { preserved: true },
+    }), 'utf8');
+    await fs.writeFile(path.join(workspacePath, 'opencode.jsonc'), `{
+      // Project overrides the global exact deny.
+      "permission": { "skill": { "shared-skill": "allow" } },
+      "agent": { "preserved": true },
+    }`, 'utf8');
+
+    const provider = new OpenCodeSkillsProvider(new OpenCodeConfigStore({ userConfigDirectory }));
+    const globalSkills = await provider.listSkills();
+    assert.equal(globalSkills.filter((skill) => skill.name === 'shared-skill').length, 1);
+    assert.equal(globalSkills.find((skill) => skill.name === 'shared-skill')?.enabled, false);
+
+    const projectSkills = await provider.listSkills({ workspacePath });
+    const duplicates = projectSkills.filter((skill) => skill.name === 'shared-skill');
+    assert.equal(duplicates.length, 2);
+    assert.equal(duplicates.every((skill) => skill.enabled === true), true);
+
+    await provider.updateSkillAccess({ name: 'shared-skill', enabled: true, scope: 'user' });
+    const userConfig = JSON.parse(await fs.readFile(path.join(userConfigDirectory, 'opencode.json'), 'utf8'));
+    assert.deepEqual(Object.keys(userConfig.permission.skill), ['*', 'shared-*', 'shared-skill']);
+    assert.equal(userConfig.permission.skill['shared-skill'], 'allow');
+    assert.equal(userConfig.permission.bash, 'ask');
+    assert.deepEqual(userConfig.provider, { preserved: true });
+
+    await provider.updateSkillAccess({
+      name: 'shared-skill', enabled: false, scope: 'project', workspacePath,
+    });
+    const projectConfig = JSON.parse(await fs.readFile(path.join(workspacePath, 'opencode.jsonc'), 'utf8'));
+    assert.equal(projectConfig.permission.skill['shared-skill'], 'deny');
+    assert.deepEqual(projectConfig.agent, { preserved: true });
+    await assert.rejects(
+      provider.updateSkillAccess({ name: 'shared-skill', enabled: false, scope: 'project' }),
+      /workspacePath is required/i,
+    );
+  } finally {
+    restoreHomeDir();
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 /**
  * This test covers Cursor skill directory rules, including shared
  * `.agents/skills` project support.
@@ -688,5 +753,12 @@ test('providerSkillsService rejects managed skill creation for opencode', { conc
       directoryName: 'opencode-global-dir',
     }),
     /does not support managed global skills/i,
+  );
+
+  await assert.rejects(
+    providerSkillsService.updateProviderSkillAccess('claude', {
+      name: 'unsupported', enabled: false, scope: 'user',
+    }),
+    /does not support skill access updates/i,
   );
 });

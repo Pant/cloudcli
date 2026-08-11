@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import Database from 'better-sqlite3';
 
-import { readOpenCodeLatestAssistantWindowTokens } from '@/modules/providers/list/opencode/opencode-token-usage.provider.js';
+import {
+  readOpenCodeLatestAssistantWindowTokens,
+  readOpenCodeTokenComponents,
+} from '@/modules/providers/list/opencode/opencode-token-usage.provider.js';
 
 const createMessageDatabase = (): Database.Database => {
   const database = new Database(':memory:');
@@ -141,4 +144,12 @@ test('OpenCode current-window extraction remains non-fatal for old schemas', () 
   } finally {
     database.close();
   }
+});
+
+test('OpenCode step token extraction requires every non-negative component', () => {
+  assert.deepEqual(readOpenCodeTokenComponents({
+    input: 1, output: 2, reasoning: 3, cache: { read: 4, write: 5 },
+  }), { input: 1, output: 2, reasoning: 3, cacheRead: 4, cacheWrite: 5 });
+  assert.equal(readOpenCodeTokenComponents({ input: 1, output: 2, reasoning: 3, cache: { read: 4 } }), undefined);
+  assert.equal(readOpenCodeTokenComponents({ input: -1, output: 2, reasoning: 3, cache: { read: 4, write: 5 } }), undefined);
 });

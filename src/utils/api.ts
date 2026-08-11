@@ -79,6 +79,14 @@ export const buildFileTreeUrl = (projectId, options = {}) => {
   return `/api/file-tree/projects/${encodeURIComponent(projectId)}/files${query ? `?${query}` : ''}`;
 };
 
+export const buildFileTreePageUrl = (projectId, options = {}) => {
+  const params = new URLSearchParams(buildFileTreeQuery(options));
+  if (typeof options.offset === 'number' && Number.isFinite(options.offset)) params.set('offset', String(options.offset));
+  if (typeof options.limit === 'number' && Number.isFinite(options.limit)) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return `/api/file-tree/projects/${encodeURIComponent(projectId)}/files/page${query ? `?${query}` : ''}`;
+};
+
 // API endpoints
 export const api = {
   // Auth endpoints (no token required)
@@ -228,6 +236,14 @@ export const api = {
       ...fetchOptions
     } = options;
     return authenticatedFetch(buildFileTreeUrl(projectId, options), fetchOptions);
+  },
+  getFileTreePage: (projectId, options = {}) => {
+    const {
+      targetPath: _targetPath, path: _path, includeMetadata: _includeMetadata,
+      metadata: _metadata, respectGitignore: _respectGitignore,
+      offset: _offset, limit: _limit, ...fetchOptions
+    } = options;
+    return authenticatedFetch(buildFileTreePageUrl(projectId, options), fetchOptions);
   },
   getMentionableFiles: (projectId, options = {}) => {
     const {

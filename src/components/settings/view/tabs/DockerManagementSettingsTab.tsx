@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { Container, Hammer, Loader2, Power, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Container, FileText, Hammer, Loader2, Power, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '../../../../shared/view/ui';
-import { requestDockerBuild, requestDockerDown, requestDockerRestart } from '../../services/dockerManagementApi';
+import { Button, Dialog, DialogContent, DialogTitle } from '../../../../shared/view/ui';
+import { appendBoundedDockerLogs, requestDockerBuild, requestDockerDown, requestDockerRestart, streamDockerLogs } from '../../services/dockerManagementApi';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -16,7 +16,35 @@ export default function DockerManagementSettingsTab() {
   const [buildState, setBuildState] = useState<ActionState>('idle');
   const [restartState, setRestartState] = useState<ActionState>('idle');
   const [downState, setDownState] = useState<ActionState>('idle');
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logs, setLogs] = useState('');
+  const [logsState, setLogsState] = useState<'connecting' | 'connected' | 'ended' | 'error'>('connecting');
+  const logsViewportRef = useRef<HTMLPreElement>(null);
+  const followingRef = useRef(true);
   const isBusy = buildState === 'pending' || restartState === 'pending' || downState === 'pending';
+
+  useEffect(() => {
+    if (!logsOpen) return undefined;
+    const controller = new AbortController();
+    followingRef.current = true;
+    setLogsState('connecting');
+    void streamDockerLogs(
+      (chunk) => {
+        setLogsState('connected');
+        setLogs((current) => appendBoundedDockerLogs(current, chunk));
+      },
+      controller.signal,
+    ).then(() => setLogsState('ended')).catch(() => {
+      if (!controller.signal.aborted) setLogsState('error');
+    });
+    return () => controller.abort();
+  }, [logsOpen]);
+
+  useEffect(() => {
+    if (followingRef.current && logsViewportRef.current) {
+      logsViewportRef.current.scrollTop = logsViewportRef.current.scrollHeight;
+    }
+  }, [logs]);
 
   const runAction = async (action: Action) => {
     if (isBusy) return;
@@ -86,8 +114,40 @@ export default function DockerManagementSettingsTab() {
             </SettingsRow>
             {feedback('down', downState)}
           </div>
+          <SettingsRow label={t('dockerManagement.logs.label')} description={t('dockerManagement.logs.description')}>
+            <Button type="button" variant="outline" onClick={() => setLogsOpen(true)}>
+              <FileText aria-hidden="true" />
+              {t('dockerManagement.logs.action')}
+            </Button>
+          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
+
+      <Dialog open={logsOpen} onOpenChange={setLogsOpen}>
+        <DialogContent aria-labelledby="docker-logs-title" className="flex h-[min(80vh,44rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col overflow-hidden p-0">
+          <header className="border-b px-5 py-4">
+            <DialogTitle id="docker-logs-title" className="not-sr-only text-lg font-semibold">{t('dockerManagement.logs.title')}</DialogTitle>
+            <p className="mt-1 text-sm text-muted-foreground" role={logsState === 'error' ? 'alert' : 'status'} aria-live="polite">
+              {t(`dockerManagement.logs.${logsState}`)}
+            </p>
+          </header>
+          <pre
+            ref={logsViewportRef}
+            className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words bg-zinc-950 p-4 font-mono text-xs text-zinc-100"
+            tabIndex={0}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              followingRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+            }}
+          >
+            {logs || t('dockerManagement.logs.empty')}
+          </pre>
+          <footer className="flex justify-end gap-2 border-t px-5 py-3">
+            <Button type="button" variant="outline" onClick={() => setLogs('')}>{t('dockerManagement.logs.clear')}</Button>
+            <Button type="button" onClick={() => setLogsOpen(false)}>{t('dockerManagement.logs.close')}</Button>
+          </footer>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

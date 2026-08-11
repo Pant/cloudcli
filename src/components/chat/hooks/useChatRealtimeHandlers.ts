@@ -88,12 +88,37 @@ export function useChatRealtimeHandlers({
   // listener so back-to-back permission events can dedupe and re-arm the
   // notification sound before React finishes a rerender.
   const pendingPermissionRequestsRef = useRef(pendingPermissionRequests);
+  const handlersRef = useRef({
+    setTokenBudget,
+    setPendingPermissionRequests,
+    statusCheckSentAtRef,
+    onSessionProcessing,
+    onSessionIdle,
+    onWebSocketReconnect,
+    onRecoveryRequired,
+  });
+  handlersRef.current = {
+    setTokenBudget,
+    setPendingPermissionRequests,
+    statusCheckSentAtRef,
+    onSessionProcessing,
+    onSessionIdle,
+    onWebSocketReconnect,
+    onRecoveryRequired,
+  };
   const tokenRefreshController = useRef<ReturnType<typeof createCompletionTokenRefreshController> | null>(null);
+  const liveTokenSnapshotVersionRef = useRef(0);
   if (!tokenRefreshController.current) {
     tokenRefreshController.current = createCompletionTokenRefreshController({
       getActiveSessionId: () => activeViewSessionIdRef.current,
       getActiveSessionKey: () => activeViewSessionKeyRef.current,
-      refreshMessages: (sessionId) => sessionStore.refreshFromServer(sessionId),
+      refreshMessages: (sessionId) => sessionStore.refreshFromServer(sessionId, { force: true }),
+      shouldRetryMessages: () => provider === 'opencode',
+      captureMetadataBaseline: (sessionId) => sessionStore.getCanonicalResponseMetadata(sessionId),
+      isMetadataReady: (sessionId, baseline) => sessionStore.isCanonicalResponseMetadataHydrated(
+        sessionId,
+        baseline as ReturnType<SessionStore['getCanonicalResponseMetadata']>,
+      ),
       fetchTokenUsage: async (sessionId) => {
         const response = await authenticatedFetch(
           `/api/providers/sessions/${encodeURIComponent(sessionId)}/token-usage`,
@@ -105,6 +130,7 @@ export function useChatRealtimeHandlers({
         return body?.data ?? body;
       },
       applySnapshot: (snapshot) => setTokenBudget(snapshot),
+      getSnapshotVersion: () => liveTokenSnapshotVersionRef.current,
       onError: (error) => console.error('Failed to refresh token usage after completion:', error),
     });
   }
@@ -115,6 +141,7 @@ export function useChatRealtimeHandlers({
 
   useEffect(() => {
     const handleEvent = (msg: ServerEvent) => {
+      const handlers = handlersRef.current;
       if (!msg.kind) {
         return;
       }
@@ -124,22 +151,22 @@ export function useChatRealtimeHandlers({
 
       switch (msg.kind) {
         case 'websocket_reconnected':
-          onWebSocketReconnect?.(typeof msg.connectionEpoch === 'number' ? msg.connectionEpoch : undefined);
+          handlers.onWebSocketReconnect?.(typeof msg.connectionEpoch === 'number' ? msg.connectionEpoch : undefined);
           return;
 
         case 'chat_subscribed': {
           // Ack for chat.subscribe: authoritative processing state plus any
           // pending tool-permission prompts for the run.
           if (!sid) return;
-          if (msg.refreshRequired || msg.replayGap) onRecoveryRequired?.(sid);
+          if (msg.refreshRequired || msg.replayGap) handlers.onRecoveryRequired?.(sid);
 
           if (msg.isProcessing) {
-            onSessionProcessing?.(sid);
+            handlers.onSessionProcessing?.(sid);
           } else {
             // Idle ack: ignore it if a newer request started after the
             // subscribe was sent — the ack describes the older state.
-            onSessionIdle?.(sid, {
-              ifStartedBefore: statusCheckSentAtRef.current.get(sid),
+            handlers.onSessionIdle?.(sid, {
+              ifStartedBefore: handlers.statusCheckSentAtRef.current.get(sid),
             });
           }
 
@@ -150,7 +177,7 @@ export function useChatRealtimeHandlers({
             const hasPendingActionablePermissionRequests = hasActionablePermissionRequests(nextPendingPermissionRequests);
 
             pendingPermissionRequestsRef.current = nextPendingPermissionRequests;
-            setPendingPermissionRequests(nextPendingPermissionRequests);
+            handlers.setPendingPermissionRequests(nextPendingPermissionRequests);
 
             if (hasPendingActionablePermissionRequests && !hadActionablePermissionRequests) {
               void playNotificationSound();
@@ -164,7 +191,7 @@ export function useChatRealtimeHandlers({
           if (sid) {
             // Surface the failure in the conversation and stop the spinner —
             // the run never started (or was rejected), so no `complete` follows.
-            onSessionIdle?.(sid);
+            handlers.onSessionIdle?.(sid);
             sessionStore.appendRealtime(sid, {
               id: `protocol_error_${Date.now()}`,
               sessionId: sid,
@@ -199,7 +226,7 @@ export function useChatRealtimeHandlers({
         seq: msg.seq,
       } as NormalizedMessage);
       if (ingestion.status === 'gap') {
-        onRecoveryRequired?.(sid);
+        handlers.onRecoveryRequired?.(sid);
         return;
       }
       if (ingestion.status !== 'accepted') return;
@@ -217,10 +244,10 @@ export function useChatRealtimeHandlers({
           // with exactly one, regardless of success, failure, or abort. The
           // indicator derives from the processing map, so deleting the entry
           // hides it immediately and atomically.
-          onSessionIdle?.(sid);
+          handlers.onSessionIdle?.(sid);
           if (sid === activeViewSessionId) {
             pendingPermissionRequestsRef.current = [];
-            setPendingPermissionRequests([]);
+            handlers.setPendingPermissionRequests([]);
           }
 
           if (msg.aborted) {
@@ -275,11 +302,11 @@ export function useChatRealtimeHandlers({
               }];
 
               pendingPermissionRequestsRef.current = nextPendingPermissionRequests;
-              setPendingPermissionRequests(nextPendingPermissionRequests);
+              handlers.setPendingPermissionRequests(nextPendingPermissionRequests);
             }
           }
           if (sid) {
-            onSessionProcessing?.(sid);
+            handlers.onSessionProcessing?.(sid);
           }
           break;
         }
@@ -291,16 +318,17 @@ export function useChatRealtimeHandlers({
             );
 
             pendingPermissionRequestsRef.current = nextPendingPermissionRequests;
-            setPendingPermissionRequests(nextPendingPermissionRequests);
+            handlers.setPendingPermissionRequests(nextPendingPermissionRequests);
           }
           break;
         }
 
         case 'status': {
           if (msg.text === 'token_budget' && msg.tokenBudget && sid === activeViewSessionId) {
-            setTokenBudget(msg.tokenBudget as Record<string, unknown>);
+            liveTokenSnapshotVersionRef.current += 1;
+            handlers.setTokenBudget(msg.tokenBudget as Record<string, unknown>);
           } else if (msg.text && sid) {
-            onSessionProcessing?.(sid, {
+            handlers.onSessionProcessing?.(sid, {
               statusText: msg.text as string,
               canInterrupt: msg.canInterrupt !== false,
             });
@@ -319,16 +347,6 @@ export function useChatRealtimeHandlers({
   }, [
     subscribe,
     provider,
-    selectedSession,
-    currentSessionId,
-    setTokenBudget,
-    pendingPermissionRequests,
-    setPendingPermissionRequests,
-    statusCheckSentAtRef,
-    onSessionProcessing,
-    onSessionIdle,
-    onWebSocketReconnect,
-    onRecoveryRequired,
     sessionStore,
   ]);
 }

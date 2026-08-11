@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildFileTreeQuery, buildFileTreeUrl } from './api';
+import { buildFileTreePageUrl, buildFileTreeQuery, buildFileTreeUrl } from './api';
 
 test('builds encoded root, nested, depth, metadata, and ignore options', () => {
   const query = buildFileTreeQuery({
@@ -18,6 +18,15 @@ test('builds encoded root, nested, depth, metadata, and ignore options', () => {
     ['respectGitignore', 'true'],
   ]);
   assert.match(query, /targetPath=%2Fworkspace%2Fmy\+project%2Fsrc%3Fx%3D1/);
+});
+
+test('builds a dedicated project-safe explorer page URL', () => {
+  assert.equal(
+    buildFileTreePageUrl('project/with spaces', {
+      targetPath: 'src/nested folder', offset: 150, limit: 75, includeMetadata: false,
+    }),
+    '/api/file-tree/projects/project%2Fwith%20spaces/files/page?targetPath=src%2Fnested+folder&includeMetadata=false&offset=150&limit=75',
+  );
 });
 
 test('root requests omit the target path while supporting full-depth metadata', () => {

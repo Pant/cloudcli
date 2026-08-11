@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Plus } from 'lucide-react';
+import { CheckSquare, Plus, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
@@ -19,6 +19,10 @@ type SidebarProjectSessionsProps = {
   hasMoreSessions: boolean;
   isLoadingMoreSessions: boolean;
   activeSessions: SessionActivityMap;
+  isSessionSelectionMode?: boolean;
+  selectedSessionIds?: ReadonlySet<string>;
+  onToggleProjectSessionSelection?: () => void;
+  onRequestBulkSessionDelete?: () => void;
   sessionLifecycle?: SessionLifecycleMap;
   onStartSession?: (sessionId: string) => Promise<void>;
   attentionSessionIds: ReadonlySet<string>;
@@ -72,6 +76,10 @@ export default function SidebarProjectSessions({
   hasMoreSessions,
   isLoadingMoreSessions,
   activeSessions,
+  isSessionSelectionMode = false,
+  selectedSessionIds = new Set<string>(),
+  onToggleProjectSessionSelection = () => undefined,
+  onRequestBulkSessionDelete = () => undefined,
   sessionLifecycle,
   onStartSession,
   attentionSessionIds,
@@ -102,6 +110,9 @@ export default function SidebarProjectSessions({
     return flattenExpandedBranches(forest, expandedSessionIds, forcedExpandedSessionIds);
   }, [activeSessions, attentionSessionIds, expandedSessionIds, forcedExpandedSessionIds, project.projectId, sessions]);
   const hasSessionHierarchy = flatRows.some((row) => row.childCount > 0);
+  const eligibleSessionIds = sessions.map((session) => session.id).filter((id) => !activeSessions.has(id));
+  const selectedProjectCount = eligibleSessionIds.filter((id) => selectedSessionIds.has(id)).length;
+  const areAllEligibleSelected = eligibleSessionIds.length > 0 && selectedProjectCount === eligibleSessionIds.length;
 
   if (!isExpanded) {
     return null;
@@ -109,6 +120,16 @@ export default function SidebarProjectSessions({
 
   return (
     <div className="ml-3 space-y-1 border-l border-border pl-3">
+      {isSessionSelectionMode && (
+        <div className="flex items-center gap-1 px-1" data-selection-controls>
+          <Button variant="ghost" size="sm" className="h-7 flex-1 justify-start text-xs" onClick={onToggleProjectSessionSelection} disabled={eligibleSessionIds.length === 0} aria-pressed={areAllEligibleSelected}>
+            <CheckSquare className="mr-1.5 h-3.5 w-3.5" />{areAllEligibleSelected ? t('selection.deselectAll') : t('selection.selectAll')}
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" onClick={onRequestBulkSessionDelete} disabled={selectedProjectCount === 0} aria-label={t('selection.deleteSelected')} title={t('selection.deleteSelected')}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
       <div className="px-3 pb-1 pt-1 md:hidden">
         <button
           className="flex h-8 w-full items-center justify-center gap-2 rounded-md bg-primary text-xs font-medium text-primary-foreground transition-all duration-150 hover:bg-primary/90 active:scale-[0.98]"
@@ -147,6 +168,8 @@ export default function SidebarProjectSessions({
               }}
               selectedSession={selectedSession}
               isProcessing={row.isRunning}
+              isSelectionMode={isSessionSelectionMode}
+              isSelectionSelected={selectedSessionIds.has(row.id)}
               lifecycle={sessionLifecycle?.get(row.id)}
               onStartSession={onStartSession ?? (async () => undefined)}
               hasRunningDescendant={row.hasRunningDescendant}

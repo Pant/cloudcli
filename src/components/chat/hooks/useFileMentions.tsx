@@ -47,6 +47,19 @@ const flattenFileTree = (files: ProjectFileNode[], basePath = ''): MentionableFi
   return flattened;
 };
 
+const projectFileCache = new Map<string, MentionableFile[]>();
+
+const getActiveMentionQuery = (input: string, cursorPosition: number): string | null => {
+  const textBeforeCursor = input.slice(0, cursorPosition);
+  const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+  if (lastAtIndex === -1) {
+    return null;
+  }
+
+  const query = textBeforeCursor.slice(lastAtIndex + 1);
+  return query.includes(' ') ? null : query;
+};
+
 export function useFileMentions({ selectedProject, input, setInput, textareaRef }: UseFileMentionsOptions) {
   const [fileList, setFileList] = useState<MentionableFile[]>([]);
   const [fileMentions, setFileMentions] = useState<string[]>([]);
@@ -55,6 +68,11 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
   const [selectedFileIndex, setSelectedFileIndex] = useState(-1);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [atSymbolPosition, setAtSymbolPosition] = useState(-1);
+  const activeMentionQuery = useMemo(
+    () => getActiveMentionQuery(input, cursorPosition),
+    [input, cursorPosition],
+  );
+  const needsFileSuggestions = activeMentionQuery !== null;
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -63,23 +81,32 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
       // File list is keyed by DB projectId now; the backend resolves it to
       // the project's path before reading.
       const projectId = selectedProject?.projectId;
-      setFileList([]);
-      setFilteredFiles([]);
-      if (!projectId) {
+      if (!projectId || !needsFileSuggestions) {
         return;
       }
 
+      const cachedFiles = projectFileCache.get(projectId);
+      if (cachedFiles) {
+        setFileList(cachedFiles);
+        return;
+      }
 
       try {
         const response = await api.getMentionableFiles(projectId, {
+          includeMetadata: false,
           signal: abortController.signal,
         });
-        if (!response.ok) {
+        if (!response.ok || abortController.signal.aborted) {
           return;
         }
 
         const files = (await response.json()) as ProjectFileNode[];
-        setFileList(flattenFileTree(files));
+        if (abortController.signal.aborted) {
+          return;
+        }
+        const flattenedFiles = flattenFileTree(files);
+        projectFileCache.set(projectId, flattenedFiles);
+        setFileList(flattenedFiles);
       } catch (error) {
         // Ignore aborts from rapid project switches; we only care about the latest request.
         if ((error as { name?: string })?.name === 'AbortError') {
@@ -93,25 +120,22 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
     return () => {
       abortController.abort();
     };
+  }, [needsFileSuggestions, selectedProject?.projectId]);
+
+  useEffect(() => {
+    const projectId = selectedProject?.projectId;
+    setFileList(projectId ? projectFileCache.get(projectId) ?? [] : []);
+    setFilteredFiles([]);
   }, [selectedProject?.projectId]);
 
   useEffect(() => {
-    const textBeforeCursor = input.slice(0, cursorPosition);
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
-
-    if (lastAtIndex === -1) {
+    if (activeMentionQuery === null) {
       setShowFileDropdown(false);
       setAtSymbolPosition(-1);
       return;
     }
 
-    const textAfterAt = textBeforeCursor.slice(lastAtIndex + 1);
-    if (textAfterAt.includes(' ')) {
-      setShowFileDropdown(false);
-      setAtSymbolPosition(-1);
-      return;
-    }
-
+    const lastAtIndex = input.slice(0, cursorPosition).lastIndexOf('@');
     setAtSymbolPosition(lastAtIndex);
     setShowFileDropdown(true);
     setSelectedFileIndex(-1);
@@ -119,13 +143,13 @@ export function useFileMentions({ selectedProject, input, setInput, textareaRef 
     const matchingFiles = fileList
       .filter(
         (file) =>
-          file.name.toLowerCase().includes(textAfterAt.toLowerCase()) ||
-          file.path.toLowerCase().includes(textAfterAt.toLowerCase()),
+          file.name.toLowerCase().includes(activeMentionQuery.toLowerCase()) ||
+          file.path.toLowerCase().includes(activeMentionQuery.toLowerCase()),
       )
       .slice(0, 10);
 
     setFilteredFiles(matchingFiles);
-  }, [input, cursorPosition, fileList]);
+  }, [activeMentionQuery, input, cursorPosition, fileList]);
 
   const activeFileMentions = useMemo(() => {
     if (!input || fileMentions.length === 0) {

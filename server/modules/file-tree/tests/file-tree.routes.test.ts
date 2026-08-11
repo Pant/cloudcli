@@ -20,6 +20,7 @@ function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTree
     openFile: unexpectedOperation,
     saveTextFile: unexpectedOperation,
     listProjectFiles: unexpectedOperation,
+    listProjectFilePage: unexpectedOperation,
     createEntry: unexpectedOperation,
     renameEntry: unexpectedOperation,
     deleteEntry: unexpectedOperation,
@@ -143,6 +144,37 @@ test('project files route rejects invalid depth before invoking the service', as
   });
 
   assert.equal(listCalled, false);
+});
+
+test('project file page route parses defaults, clamps limits, and delegates separately', async () => {
+  const inputs: Parameters<FileTreeServices['listProjectFilePage']>[] = [];
+  const services = createFakeServices({
+    listProjectFilePage: async (...input) => {
+      inputs.push(input);
+      return { items: [], hasMore: false, nextOffset: null, total: 0 };
+    },
+  });
+  await withFileTreeServer(services, async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/page`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/page?targetPath=src&offset=4&limit=999&includeMetadata=false&respectGitignore=true`)).status, 200);
+  });
+  assert.deepEqual(inputs, [
+    ['project-1', { respectGitignore: false, offset: 0, limit: 150 }],
+    ['project-1', { respectGitignore: true, offset: 4, limit: 250, targetPath: 'src', includeMetadata: false }],
+  ]);
+});
+
+test('project file page route rejects invalid offsets before delegation', async () => {
+  let called = false;
+  const services = createFakeServices({ listProjectFilePage: async () => {
+    called = true;
+    return { items: [], hasMore: false, nextOffset: null, total: 0 };
+  } });
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/page?offset=-1`);
+    assert.equal(response.status, 400);
+  });
+  assert.equal(called, false);
 });
 
 test('create route parses the transport payload before invoking the service', async () => {

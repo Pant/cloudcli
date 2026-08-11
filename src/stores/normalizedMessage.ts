@@ -1,4 +1,9 @@
-import type { NormalizedMessage as WireNormalizedMessage } from '../../shared/cloudcli-contracts';
+import type {
+  NormalizedMessage as WireNormalizedMessage,
+  ResponseMetadata,
+} from '../../shared/cloudcli-contracts';
+
+export type { ResponseMetadata } from '../../shared/cloudcli-contracts';
 
 /**
  * The normalized message boundary shared by REST history, realtime events,
@@ -46,4 +51,6 @@ export interface NormalizedMessage extends WireNormalizedMessage {
   /** Cursor-specific ordering. */
   sequence?: number;
   rowid?: number;
+  /** Exact provider-reported usage and completion time for one model response. */
+  responseMetadata?: ResponseMetadata;
 }

@@ -87,6 +87,7 @@
   "mainTabs": {
     "label": "Paramètres",
     "agents": "Agents",
+    "skills": "Compétences",
     "appearance": "Apparence",
     "git": "Git",
     "apiTokens": "API & Tokens",

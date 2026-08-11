@@ -72,6 +72,23 @@
     "reportIssue": "Problem melden",
     "starOnGithub": "Stern auf GitHub"
   },
+  "selection": {
+    "toggle": "Sitzungen auswählen",
+    "selectAll": "Alle auswählen",
+    "deselectAll": "Auswahl aufheben",
+    "deleteSelected": "Ausgewählte Sitzungen archivieren oder löschen",
+    "selected": "Sitzung ausgewählt",
+    "notSelected": "Sitzung nicht ausgewählt",
+    "confirmTitle": "Ausgewählte Sitzungen archivieren oder löschen",
+    "confirmCount_one": "{{count}} Sitzung ausgewählt.",
+    "confirmCount_other": "{{count}} Sitzungen ausgewählt.",
+    "archiveSelected": "Ausgewählte archivieren",
+    "deletePermanently": "Dauerhaft löschen",
+    "failurePartial_one": "1 Sitzung konnte nicht aktualisiert werden und bleibt ausgewählt.",
+    "failurePartial_other": "{{count}} Sitzungen konnten nicht aktualisiert werden und bleiben ausgewählt.",
+    "failureAll_one": "Die ausgewählte Sitzung konnte nicht aktualisiert werden.",
+    "failureAll_other": "Keine der {{count}} ausgewählten Sitzungen konnte aktualisiert werden."
+  },
   "branding": {
     "openSource": "Open Source"
   },

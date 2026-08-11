@@ -5,6 +5,7 @@ import type { FileTreeNode } from '../types/types';
 
 import {
   createFileTreeGeneration,
+  appendDirectoryChildren,
   createRecentProjectFileTreeCache,
   collectFileTreeZipEntries,
   extractFileTreeSubtree,
@@ -17,9 +18,11 @@ import {
   replaceDirectoryChildren,
   replaceFileTreeSubtree,
   replaceRootChildrenPreservingLoadedBranches,
+  reconcileFileTreeMetadata,
 } from './fileTreeUtils';
 import {
   createExplorerDirectoryRequestPlan,
+  createExplorerMetadataRequestPlan,
   advanceExplorerRequestGeneration,
   createExplorerRequestGeneration,
   FileTreeInFlightRequests,
@@ -153,24 +156,69 @@ test('cached initial state hydrates synchronously while cache absence stays load
   });
 });
 
-test('explorer requests are shallow and metadata-enabled for root and loaded branches', () => {
+test('explorer structural requests omit metadata and hydration requests mirror each page', () => {
   assert.deepEqual(createExplorerDirectoryRequestPlan(), {
-    depth: 0,
-    includeMetadata: true,
+    includeMetadata: false,
+    offset: 0,
+    limit: 150,
   });
-  assert.deepEqual(createExplorerDirectoryRequestPlan('/project/src'), {
+  assert.deepEqual(createExplorerDirectoryRequestPlan('/project/src', 150), {
     targetPath: '/project/src',
-    depth: 0,
-    includeMetadata: true,
+    includeMetadata: false,
+    offset: 150,
+    limit: 150,
   });
 
   const tree = [directory('/project/src', [directory('/project/src/lib', [])]), directory('/project/empty', [])];
   assert.deepEqual(planLoadedBranchRefresh(tree), [
-    { depth: 0, includeMetadata: true },
-    { targetPath: '/project/src', depth: 0, includeMetadata: true },
-    { targetPath: '/project/src/lib', depth: 0, includeMetadata: true },
-    { targetPath: '/project/empty', depth: 0, includeMetadata: true },
+    { includeMetadata: false, offset: 0, limit: 150 },
+    { targetPath: '/project/src', includeMetadata: false, offset: 0, limit: 150 },
+    { targetPath: '/project/src/lib', includeMetadata: false, offset: 0, limit: 150 },
+    { targetPath: '/project/empty', includeMetadata: false, offset: 0, limit: 150 },
   ]);
+  assert.deepEqual(createExplorerMetadataRequestPlan('/project/src', 150), {
+    targetPath: '/project/src', includeMetadata: true, offset: 150, limit: 150,
+  });
+});
+
+test('metadata reconciliation preserves children, appended pages, ordering, and unrelated identity', () => {
+  const loadedChild = file('/project/src/main.ts');
+  const source = directory('/project/src', [loadedChild]);
+  const first = file('/project/a.txt');
+  const appended = file('/project/b.txt');
+  const tree = [source, first, appended];
+  const result = reconcileFileTreeMetadata(tree, [
+    { ...directory('/project/src'), modified: 'fresh' },
+    { ...file('/project/a.txt'), size: 12, permissionsRwx: 'rw-r--r--' },
+  ]);
+
+  assert.deepEqual(result.map((node) => node.path), tree.map((node) => node.path));
+  assert.equal(result[0]?.children?.[0], loadedChild);
+  assert.equal(result[0]?.modified, 'fresh');
+  assert.equal(result[1]?.size, 12);
+  assert.equal(result[2], appended);
+});
+
+test('page appends are immutable and discard duplicate paths at root and nested levels', () => {
+  const source = directory('/project/src', [file('/project/src/a.ts')]);
+  const readme = file('/project/readme.md');
+  const tree = [source, readme];
+  const nested = appendDirectoryChildren(tree, source.path, [file('/project/src/a.ts'), file('/project/src/b.ts')]);
+
+  assert.notEqual(nested, tree);
+  assert.equal(nested[1], readme);
+  assert.deepEqual(nested[0]?.children?.map((item) => item.path), [
+    '/project/src/a.ts',
+    '/project/src/b.ts',
+  ]);
+
+  const root = appendDirectoryChildren(nested, undefined, [readme, file('/project/package.json')]);
+  assert.deepEqual(root.map((item) => item.path), [
+    '/project/src',
+    '/project/readme.md',
+    '/project/package.json',
+  ]);
+  assert.equal(appendDirectoryChildren(root, undefined, [readme]), root);
 });
 
 test('root revalidation takes fresh metadata while preserving loaded children', () => {

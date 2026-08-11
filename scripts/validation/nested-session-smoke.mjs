@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
 
@@ -11,7 +12,10 @@ const cloudCliDatabaseSource = process.env.CLOUDCLI_SMOKE_CLOUD_DB
   ?? '/home/dev/.cloudcli/auth.db';
 const openCodeDatabaseSource = process.env.CLOUDCLI_SMOKE_OPENCODE_DB
   ?? '/home/dev/.local/share/opencode/opencode.db';
-const smokeRoot = await mkdtemp('/tmp/opencode/nested-session-smoke-');
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const smokeParent = path.join(repositoryRoot, '.test-output');
+await mkdir(smokeParent, { recursive: true });
+const smokeRoot = await mkdtemp(path.join(smokeParent, 'nested-session-smoke-'));
 const cloudCliDatabasePath = path.join(smokeRoot, 'cloudcli', 'auth.db');
 const fixtureHome = path.join(smokeRoot, 'home');
 const openCodeDatabasePath = path.join(fixtureHome, '.local', 'share', 'opencode', 'opencode.db');
@@ -30,6 +34,19 @@ const appIds = {
 const copyDatabase = async (sourcePath, targetPath) => {
   await mkdir(path.dirname(targetPath), { recursive: true });
   await copyFile(sourcePath, targetPath);
+};
+
+const restorePreHierarchyCloudCliFixture = () => {
+  const db = new Database(cloudCliDatabasePath);
+  try {
+    const columns = db.prepare('PRAGMA table_info(sessions)').all().map((column) => column.name);
+    if (columns.includes('provider_parent_session_id')) {
+      db.exec('ALTER TABLE sessions DROP COLUMN provider_parent_session_id');
+    }
+    db.prepare("DELETE FROM app_config WHERE key = 'opencode_hierarchy_backfill_version'").run();
+  } finally {
+    db.close();
+  }
 };
 
 const sanitizeOpenCodeFixture = () => {
@@ -104,6 +121,7 @@ let restoreHome;
 try {
   await copyDatabase(cloudCliDatabaseSource, cloudCliDatabasePath);
   await copyDatabase(openCodeDatabaseSource, openCodeDatabasePath);
+  restorePreHierarchyCloudCliFixture();
   sanitizeOpenCodeFixture();
   assertPreInitializationShape();
 

@@ -21,6 +21,19 @@ export type ProviderSkill = {
   pluginId?: string;
   projectDisplayName?: string;
   projectPath?: string;
+  enabled: boolean;
+};
+
+export type ProviderSkillAccessUpdatePayload = {
+  name: string;
+  enabled: boolean;
+  scope: 'user' | 'project';
+  workspacePath?: string;
+};
+
+export type ProviderSkillAccessUpdateResponse = ProviderSkillAccessUpdatePayload & {
+  provider: SkillsProvider;
+  access: 'allow' | 'deny';
 };
 
 export type ProviderSkillCreateEntryPayload = {

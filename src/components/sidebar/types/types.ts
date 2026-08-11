@@ -38,6 +38,10 @@ export type SessionDeleteConfirmation = {
   isArchived: boolean;
 };
 
+export type BulkSessionDeleteConfirmation = {
+  sessionIds: string[];
+};
+
 export type SidebarProps = {
   projects: Project[];
   selectedProject: Project | null;

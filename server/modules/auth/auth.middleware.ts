@@ -102,6 +102,19 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
+// Docs UI route only: adapt its HttpOnly, path-scoped iframe cookie to the normal JWT middleware.
+const authenticateDocsToken = (req, res, next) => {
+  if (!req.headers.authorization && req.headers.cookie) {
+    const token = req.headers.cookie
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith('cloudcli-docs-token='))
+      ?.slice('cloudcli-docs-token='.length);
+    if (token) req.headers.authorization = `Bearer ${token}`;
+  }
+  return authenticateToken(req, res, next);
+};
+
 // Generate JWT token
 const generateToken = (user) => {
   return jwt.sign(
@@ -157,6 +170,7 @@ const authenticateWebSocket = (token) => {
 export {
   validateApiKey,
   authenticateToken,
+  authenticateDocsToken,
   generateToken,
   authenticateWebSocket,
   JWT_SECRET

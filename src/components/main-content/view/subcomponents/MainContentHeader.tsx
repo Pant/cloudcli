@@ -18,6 +18,7 @@ export default function MainContentHeader({
   shouldShowBrowserTab,
   isMobile,
   onMenuClick,
+  onSoftReload,
 }: MainContentHeaderProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -59,6 +60,17 @@ export default function MainContentHeader({
         </div>
 
         <div className="flex min-w-0 flex-shrink items-center">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mr-1 h-7 w-7 flex-shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+            onClick={onSoftReload}
+            aria-label="Soft reload current tab"
+            title="Soft reload current tab"
+          >
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
           <div className="relative min-w-0 flex-shrink overflow-hidden sm:flex-shrink-0">
             {canScrollLeft && (
               <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-6 bg-gradient-to-r from-background to-transparent" />

@@ -87,6 +87,7 @@
   "mainTabs": {
     "label": "Ayarlar",
     "agents": "Ajanlar",
+    "skills": "Beceriler",
     "appearance": "Görünüm",
     "git": "Git",
     "apiTokens": "API ve Token'lar",

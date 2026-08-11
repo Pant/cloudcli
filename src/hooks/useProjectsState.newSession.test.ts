@@ -77,6 +77,7 @@ test('one session selection atomically establishes its project and session befor
 
   applySessionSelectionIntent(project, session, {
     clearAttention: (id) => transitions.push(`attention:${id}`),
+    warmSession: (id) => transitions.push(`warm:${id}`),
     selectProject: (selected) => transitions.push(`project:${selected.projectId}`),
     selectSession: (selected) => transitions.push(`session:${selected.id}`),
     showChat: () => transitions.push('tab:chat'),
@@ -86,6 +87,7 @@ test('one session selection atomically establishes its project and session befor
 
   assert.deepEqual(transitions, [
     'attention:session-2',
+    'warm:session-2',
     'project:project-2',
     'session:session-2',
     'tab:chat',

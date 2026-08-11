@@ -71,6 +71,10 @@ function Sidebar({
     deletingProjects,
     deleteConfirmation,
     sessionDeleteConfirmation,
+    isSessionSelectionMode,
+    selectedSessionIds,
+    bulkSessionDeleteConfirmation,
+    isBulkSessionDeletePending,
     showVersionModal,
     filteredProjects,
     archivedProjects,
@@ -80,6 +84,10 @@ function Sidebar({
     toggleProject,
     toggleSessionBranch,
     handleSessionClick,
+    toggleSessionSelectionMode,
+    toggleProjectSessionSelection,
+    showBulkSessionDeleteConfirmation,
+    confirmBulkDeleteSessions,
     toggleStarProject,
     isProjectStarred,
     getProjectSessions,
@@ -107,6 +115,7 @@ function Sidebar({
     setSearchFilter,
     setDeleteConfirmation,
     setSessionDeleteConfirmation,
+    setBulkSessionDeleteConfirmation,
     setShowVersionModal,
   } = useSidebarController({
     projects,
@@ -159,6 +168,10 @@ function Sidebar({
     getProjectSessions,
     loadingMoreProjects,
     activeSessions,
+    isSessionSelectionMode,
+    selectedSessionIds,
+    onToggleProjectSessionSelection: toggleProjectSessionSelection,
+    onRequestBulkSessionDelete: showBulkSessionDeleteConfirmation,
     sessionLifecycle,
     onStartSession,
     attentionSessionIds,
@@ -212,6 +225,10 @@ function Sidebar({
         sessionDeleteConfirmation={sessionDeleteConfirmation}
         onCancelDeleteSession={() => setSessionDeleteConfirmation(null)}
         onConfirmDeleteSession={confirmDeleteSession}
+        bulkSessionDeleteConfirmation={bulkSessionDeleteConfirmation}
+        isBulkSessionDeletePending={isBulkSessionDeletePending}
+        onCancelBulkSessionDelete={() => setBulkSessionDeleteConfirmation(null)}
+        onConfirmBulkSessionDelete={confirmBulkDeleteSessions}
         showVersionModal={showVersionModal}
         onCloseVersionModal={() => setShowVersionModal(false)}
         releaseInfo={releaseInfo}
@@ -294,6 +311,8 @@ function Sidebar({
             onRefresh={() => {
               void refreshProjects();
             }}
+            isSessionSelectionMode={isSessionSelectionMode}
+            onToggleSessionSelectionMode={toggleSessionSelectionMode}
             isRefreshing={isRefreshing}
             onCreateProject={() => setShowNewProject(true)}
             onCollapseSidebar={handleCollapseSidebar}

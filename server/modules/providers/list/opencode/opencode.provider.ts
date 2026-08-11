@@ -24,8 +24,8 @@ export class OpenCodeProvider extends AbstractProvider {
   readonly mcp: OpenCodeMcpProvider;
   readonly agents: IProviderAgents;
   readonly auth: IProviderAuth = new OpenCodeProviderAuth();
-  readonly skills: IProviderSkills = new OpenCodeSkillsProvider();
-  readonly sessions: IProviderSessions = new OpenCodeSessionsProvider(this.models);
+  readonly skills: IProviderSkills;
+  readonly sessions: IProviderSessions = new OpenCodeSessionsProvider();
   readonly sessionSynchronizer: IProviderSessionSynchronizer = new OpenCodeSessionSynchronizer();
 
   constructor() {
@@ -33,5 +33,6 @@ export class OpenCodeProvider extends AbstractProvider {
     const configStore = new OpenCodeConfigStore();
     this.mcp = new OpenCodeMcpProvider(configStore);
     this.agents = new OpenCodeAgentsProvider(configStore);
+    this.skills = new OpenCodeSkillsProvider(configStore);
   }
 }

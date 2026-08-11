@@ -24,7 +24,8 @@
     "git": "Controllo Versione",
     "tasks": "Attività",
     "browser": "Browser",
-    "computer": "Computer"
+    "computer": "Computer",
+    "docs": "Documentazione"
   },
   "status": {
     "loading": "Caricamento...",

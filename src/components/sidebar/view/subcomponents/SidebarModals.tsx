@@ -9,7 +9,7 @@ import type { Project } from '../../../../types/app';
 import type { ReleaseInfo } from '../../../../types/sharedTypes';
 import type { InstallMode } from '../../../../hooks/useVersionCheck';
 import { normalizeProjectForSettings } from '../../utils/utils';
-import type { DeleteProjectConfirmation, SessionDeleteConfirmation, SettingsProject } from '../../types/types';
+import type { BulkSessionDeleteConfirmation, DeleteProjectConfirmation, SessionDeleteConfirmation, SettingsProject } from '../../types/types';
 
 const Settings = lazy(() => import('../../../settings/view/Settings'));
 const VersionUpgradeModal = lazy(() => import('../../../version-upgrade/view'));
@@ -29,6 +29,10 @@ type SidebarModalsProps = {
   sessionDeleteConfirmation: SessionDeleteConfirmation | null;
   onCancelDeleteSession: () => void;
   onConfirmDeleteSession: (hardDelete?: boolean) => void;
+  bulkSessionDeleteConfirmation: BulkSessionDeleteConfirmation | null;
+  isBulkSessionDeletePending: boolean;
+  onCancelBulkSessionDelete: () => void;
+  onConfirmBulkSessionDelete: (hardDelete?: boolean) => void;
   showVersionModal: boolean;
   onCloseVersionModal: () => void;
   releaseInfo: ReleaseInfo | null;
@@ -65,6 +69,10 @@ export default function SidebarModals({
   sessionDeleteConfirmation,
   onCancelDeleteSession,
   onConfirmDeleteSession,
+  bulkSessionDeleteConfirmation,
+  isBulkSessionDeletePending,
+  onCancelBulkSessionDelete,
+  onConfirmBulkSessionDelete,
   showVersionModal,
   onCloseVersionModal,
   releaseInfo,
@@ -214,6 +222,18 @@ export default function SidebarModals({
           </div>,
           document.body,
         )}
+
+      {bulkSessionDeleteConfirmation && ReactDOM.createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+            <div className="p-6"><h3 className="text-lg font-semibold">{t('selection.confirmTitle')}</h3><p className="mt-2 text-sm text-muted-foreground">{t('selection.confirmCount', { count: bulkSessionDeleteConfirmation.sessionIds.length })}</p></div>
+            <div className="flex flex-col gap-2 border-t border-border bg-muted/30 p-4">
+              <Button variant="outline" disabled={isBulkSessionDeletePending} onClick={() => onConfirmBulkSessionDelete(false)}><EyeOff className="mr-2 h-4 w-4" />{t('selection.archiveSelected')}</Button>
+              <Button variant="destructive" disabled={isBulkSessionDeletePending} onClick={() => onConfirmBulkSessionDelete(true)}><Trash2 className="mr-2 h-4 w-4" />{t('selection.deletePermanently')}</Button>
+              <Button variant="ghost" disabled={isBulkSessionDeletePending} onClick={onCancelBulkSessionDelete}>{t('actions.cancel')}</Button>
+            </div>
+          </div>
+        </div>, document.body)}
 
       {showVersionModal && (
         <Suspense fallback={null}>

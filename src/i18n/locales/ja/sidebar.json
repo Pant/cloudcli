@@ -71,6 +71,23 @@
     "reportIssue": "問題を報告",
     "starOnGithub": "GitHubでスター"
   },
+  "selection": {
+    "toggle": "セッションを選択",
+    "selectAll": "すべて選択",
+    "deselectAll": "すべて選択解除",
+    "deleteSelected": "選択したセッションをアーカイブまたは削除",
+    "selected": "選択済みのセッション",
+    "notSelected": "未選択のセッション",
+    "confirmTitle": "選択したセッションをアーカイブまたは削除",
+    "confirmCount_one": "{{count}}件のセッションを選択しています。",
+    "confirmCount_other": "{{count}}件のセッションを選択しています。",
+    "archiveSelected": "選択項目をアーカイブ",
+    "deletePermanently": "完全に削除",
+    "failurePartial_one": "1件のセッションを更新できなかったため、選択されたままです。",
+    "failurePartial_other": "{{count}}件のセッションを更新できなかったため、選択されたままです。",
+    "failureAll_one": "選択したセッションを更新できませんでした。",
+    "failureAll_other": "選択した{{count}}件のセッションをいずれも更新できませんでした。"
+  },
   "branding": {
     "openSource": "オープンソース"
   },

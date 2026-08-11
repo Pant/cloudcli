@@ -27,6 +27,10 @@ export type SidebarProjectListProps = {
   onLoadMoreSessions: (projectId: string) => void;
   loadingMoreProjects: Set<string>;
   activeSessions: SessionActivityMap;
+  isSessionSelectionMode: boolean;
+  selectedSessionIds: ReadonlySet<string>;
+  onToggleProjectSessionSelection: (project: Project) => void;
+  onRequestBulkSessionDelete: () => void;
   sessionLifecycle: SessionLifecycleMap;
   onStartSession: (sessionId: string) => Promise<void>;
   attentionSessionIds: ReadonlySet<string>;
@@ -77,6 +81,10 @@ export default function SidebarProjectList({
   onLoadMoreSessions,
   loadingMoreProjects,
   activeSessions,
+  isSessionSelectionMode,
+  selectedSessionIds,
+  onToggleProjectSessionSelection,
+  onRequestBulkSessionDelete,
   sessionLifecycle,
   onStartSession,
   attentionSessionIds,
@@ -158,6 +166,10 @@ export default function SidebarProjectList({
               onDeleteSession={onDeleteSession}
               onLoadMoreSessions={onLoadMoreSessions}
               activeSessions={activeSessions}
+              isSessionSelectionMode={isSessionSelectionMode}
+              selectedSessionIds={selectedSessionIds}
+              onToggleProjectSessionSelection={onToggleProjectSessionSelection}
+              onRequestBulkSessionDelete={onRequestBulkSessionDelete}
               sessionLifecycle={sessionLifecycle}
               onStartSession={onStartSession}
               attentionSessionIds={attentionSessionIds}

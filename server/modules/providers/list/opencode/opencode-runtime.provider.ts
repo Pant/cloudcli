@@ -26,7 +26,11 @@ import {
   getOpenCodeDatabasePath,
 } from '@/shared/utils.js';
 
-import { readOpenCodeLatestAssistantWindowTokens } from './opencode-token-usage.provider.js';
+import {
+  type OpenCodeTokenComponents,
+  readOpenCodeLatestAssistantWindowTokens,
+  readOpenCodeTokenComponents,
+} from './opencode-token-usage.provider.js';
 import { createOpenCodeRunDiagnostics } from './opencode-run-diagnostics.provider.js';
 import { extractCompletedOpenCodeTask } from './opencode-sessions.provider.js';
 
@@ -93,6 +97,8 @@ type OpenCodeTokenRow = {
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
 };
+
+type OpenCodeTokenAccumulator = OpenCodeTokenComponents;
 
 type OpenCodeRunNotificationInput = {
   userId: string | number | null;
@@ -238,6 +244,43 @@ function readOpenCodeTokenUsage(sessionId: string | null): OpenCodeTokenUsage | 
   }
 }
 
+function readOpenCodeTokenBaseline(sessionId: string | null): OpenCodeTokenAccumulator | null {
+  const dbPath = getOpenCodeDatabasePath();
+  if (!sessionId || !fsSync.existsSync(dbPath)) return null;
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const row = db.prepare(`
+      SELECT tokens_input AS input, tokens_output AS output, tokens_reasoning AS reasoning,
+        tokens_cache_read AS cacheRead, tokens_cache_write AS cacheWrite
+      FROM session WHERE id = ?
+    `).get(sessionId) as OpenCodeTokenAccumulator | undefined;
+    if (!row) return null;
+    const values = [row.input, row.output, row.reasoning, row.cacheRead, row.cacheWrite];
+    if (!values.every((value) => Number.isFinite(value) && value >= 0)) return null;
+    return row;
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+function buildLiveOpenCodeTokenUsage(
+  totals: OpenCodeTokenAccumulator,
+  latestStep: OpenCodeTokenComponents,
+): OpenCodeTokenUsage {
+  const inputTokens = totals.input + totals.cacheRead;
+  return {
+    used: totals.input + totals.output + totals.reasoning + totals.cacheRead + totals.cacheWrite,
+    windowTokens: latestStep.input + latestStep.output + latestStep.reasoning
+      + latestStep.cacheRead + latestStep.cacheWrite,
+    inputTokens,
+    outputTokens: totals.output,
+    breakdown: { input: inputTokens, output: totals.output },
+  };
+}
+
 /** Used by the OpenCode provider runtime object and retained for direct runtime consumers. */
 export async function spawnOpenCode(
   command: string,
@@ -274,6 +317,14 @@ export async function spawnOpenCode(
     // (close and error handlers can both fire for spawn failures).
     let completeSent = false;
     const notifiedTaskIds = new Set<string>();
+    const emittedStepIds = new Set<string>();
+    const baseline = readOpenCodeTokenBaseline(providerSessionId);
+    const liveTotals: OpenCodeTokenAccumulator = baseline ?? {
+      input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0,
+    };
+    let resolvedContextWindow: number | undefined;
+    let liveTokenUsageSent = false;
+    let baselineSeeded = baseline !== null;
 
     const notifyTerminalState = ({
       code = null,
@@ -312,6 +363,11 @@ export async function spawnOpenCode(
       }
 
       capturedSessionId = nextSessionId;
+      if (!baselineSeeded) {
+        const discoveredBaseline = readOpenCodeTokenBaseline(nextSessionId);
+        if (discoveredBaseline) Object.assign(liveTotals, discoveredBaseline);
+        baselineSeeded = true;
+      }
       // Legacy/direct callers without an app session id re-key the process
       // under the provider-native id once it is known.
       if (!sessionId && processKey !== capturedSessionId && opencodeProcess) {
@@ -375,6 +431,35 @@ export async function spawnOpenCode(
         for (const msg of normalized) {
           ws.send(msg);
         }
+        const responseRecord = response as AnyRecord;
+        const responsePart = responseRecord.part as AnyRecord | undefined;
+        const stepTokens = responseRecord.type === 'step_finish'
+          ? readOpenCodeTokenComponents(responsePart?.tokens)
+          : undefined;
+        const stepId = typeof responsePart?.id === 'string'
+          ? responsePart.id
+          : typeof responseRecord.messageID === 'string'
+            ? responseRecord.messageID
+            : null;
+        if (stepTokens && stepId && !emittedStepIds.has(stepId)) {
+          emittedStepIds.add(stepId);
+          liveTotals.input += stepTokens.input;
+          liveTotals.output += stepTokens.output;
+          liveTotals.reasoning += stepTokens.reasoning;
+          liveTotals.cacheRead += stepTokens.cacheRead;
+          liveTotals.cacheWrite += stepTokens.cacheWrite;
+          liveTokenUsageSent = true;
+          const tokenBudget = buildLiveOpenCodeTokenUsage(liveTotals, stepTokens);
+          ws.send(createNormalizedMessage({
+            kind: 'status',
+            text: 'token_budget',
+            tokenBudget: resolvedContextWindow === undefined
+              ? tokenBudget
+              : { ...tokenBudget, total: resolvedContextWindow },
+            sessionId: sessionId || capturedSessionId || processKey,
+            provider: 'opencode',
+          }));
+        }
       } catch (error) {
         const errorContent = error instanceof Error ? error.message : String(error);
         console.error('[OpenCode] Failed to process JSON output:', errorContent);
@@ -402,6 +487,9 @@ export async function spawnOpenCode(
       // Resolve supplemental metadata while the CLI is running so a slow
       // provider catalog lookup does not unnecessarily delay run completion.
       const contextWindowPromise = context.resolveContextWindow(runnableModel).catch(() => undefined);
+      void contextWindowPromise.then((value) => {
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) resolvedContextWindow = value;
+      });
 
       const resolvedEffort = resolveOpenCodeEffort(runnableModel, effort, effortModels);
       const args = ['run', '--format', 'json'];
@@ -523,7 +611,7 @@ export async function spawnOpenCode(
         }
 
         // OpenCode's own database is keyed by the provider-native id.
-        const tokenBudget = readOpenCodeTokenUsage(capturedSessionId);
+        const tokenBudget = liveTokenUsageSent ? null : readOpenCodeTokenUsage(capturedSessionId);
         if (tokenBudget) {
           const contextWindow = await contextWindowPromise;
           const hasPositiveContextWindow = typeof contextWindow === 'number'

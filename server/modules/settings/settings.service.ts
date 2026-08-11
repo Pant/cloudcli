@@ -7,6 +7,7 @@ type NotificationPreferences = Record<string, unknown> & {
 
 type SettingsDependencies = {
   dockerManagement: {
+    logs(signal: AbortSignal): Promise<Response>;
     trigger(action: 'build' | 'restart' | 'down'): Promise<void>;
   };
   apiKeys: {
@@ -57,6 +58,9 @@ function assertFound(found: boolean, resourceName: string, code: string): void {
 /** Creates settings workflows with repositories and notification effects injected. */
 export function createSettingsService(dependencies: SettingsDependencies) {
   return {
+    getDockerLogs(signal: AbortSignal) {
+      return dependencies.dockerManagement.logs(signal);
+    },
     async triggerDockerBuild() {
       await dependencies.dockerManagement.trigger('build');
       return { success: true, accepted: true };

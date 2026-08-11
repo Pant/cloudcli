@@ -43,8 +43,33 @@ const WATCHER_IGNORED_PATTERNS = [
   '**/.DS_Store',
 ];
 
-const PROJECTS_UPDATE_DEBOUNCE_MS = 500;
-const PROJECTS_UPDATE_MAX_WAIT_MS = 2_000;
+const DEFAULT_PROJECTS_UPDATE_DEBOUNCE_MS = 100;
+const DEFAULT_PROJECTS_UPDATE_MAX_WAIT_MS = 500;
+const DEFAULT_POLL_INTERVAL_MS = 250;
+
+type SessionWatcherPolicy = {
+  debounceMs: number;
+  maxWaitMs: number;
+  usePolling: boolean;
+  pollIntervalMs: number;
+};
+
+function readBoundedMilliseconds(value: string | undefined, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, Math.floor(parsed))) : fallback;
+}
+
+/** Used by the Providers module initializer and focused tests to keep watcher latency bounded and configurable. */
+export function getSessionWatcherPolicy(environment: NodeJS.ProcessEnv = process.env): SessionWatcherPolicy {
+  const debounceMs = readBoundedMilliseconds(environment.CLOUDCLI_SESSION_WATCH_DEBOUNCE_MS, DEFAULT_PROJECTS_UPDATE_DEBOUNCE_MS, 25, 1_000);
+  const maxWaitMs = readBoundedMilliseconds(environment.CLOUDCLI_SESSION_WATCH_MAX_WAIT_MS, DEFAULT_PROJECTS_UPDATE_MAX_WAIT_MS, debounceMs, 2_000);
+  return {
+    debounceMs,
+    maxWaitMs,
+    usePolling: environment.CLOUDCLI_SESSION_WATCH_USE_POLLING === 'true',
+    pollIntervalMs: readBoundedMilliseconds(environment.CLOUDCLI_SESSION_WATCH_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, 100, 2_000),
+  };
+}
 
 const watchers: FSWatcher[] = [];
 
@@ -92,9 +117,10 @@ function schedulePendingWatcherFlush(): void {
     pendingWatcherUpdateStartedAt = now;
   }
 
+  const policy = getSessionWatcherPolicy();
   const elapsed = now - pendingWatcherUpdateStartedAt;
-  const remainingMaxWait = Math.max(0, PROJECTS_UPDATE_MAX_WAIT_MS - elapsed);
-  const delay = Math.min(PROJECTS_UPDATE_DEBOUNCE_MS, remainingMaxWait);
+  const remainingMaxWait = Math.max(0, policy.maxWaitMs - elapsed);
+  const delay = Math.min(policy.debounceMs, remainingMaxWait);
 
   clearPendingWatcherFlushTimer();
   pendingWatcherFlushTimer = setTimeout(() => {
@@ -287,15 +313,16 @@ export async function initializeSessionsWatcher(): Promise<void> {
     try {
       await fsPromises.mkdir(rootPath, { recursive: true });
 
+      const policy = getSessionWatcherPolicy();
       const watcher = chokidar.watch(rootPath, {
         ignored: WATCHER_IGNORED_PATTERNS,
         persistent: true,
         ignoreInitial: true,
         followSymlinks: false,
         depth: 6,
-        usePolling: true,
-        interval: 6_000,
-        binaryInterval: 6_000,
+        usePolling: policy.usePolling,
+        interval: policy.pollIntervalMs,
+        binaryInterval: policy.pollIntervalMs,
       });
 
       watcher

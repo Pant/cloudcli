@@ -9,6 +9,8 @@ import type {
   ProviderSkill,
   ProviderSkillListOptions,
   ProviderSkillSource,
+  ProviderSkillAccessUpdateInput,
+  ProviderSkillAccessUpdateResult,
 } from '@/shared/types.js';
 import {
   findProviderSkillMarkdownFiles,
@@ -277,6 +279,13 @@ export abstract class SkillsProvider implements IProviderSkills {
     }
 
     return { removed, provider: this.provider, directoryName };
+  }
+
+  async updateSkillAccess(_input: ProviderSkillAccessUpdateInput): Promise<ProviderSkillAccessUpdateResult> {
+    throw new AppError(`${this.provider} does not support skill access updates.`, {
+      code: 'PROVIDER_SKILL_ACCESS_UNSUPPORTED',
+      statusCode: 400,
+    });
   }
 
   protected abstract getSkillSources(workspacePath: string): Promise<ProviderSkillSource[]>;

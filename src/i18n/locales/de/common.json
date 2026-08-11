@@ -24,7 +24,8 @@
     "git": "Quellcodeverwaltung",
     "tasks": "Aufgaben",
     "browser": "Browser",
-    "computer": "Computer"
+    "computer": "Computer",
+    "docs": "Dokumentation"
   },
   "status": {
     "loading": "Lädt...",

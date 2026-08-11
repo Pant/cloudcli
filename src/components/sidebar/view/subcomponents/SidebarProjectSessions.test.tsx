@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { TFunction } from 'i18next';
 
 import type { Project, ProjectSession, SessionLifecycleSnapshot  } from '../../../../types/app';
+import { SessionStoreContext } from '../../../../stores/sessionStoreContext';
 
 const { default: SidebarProjectSessions } = await import('./SidebarProjectSessions');
 
@@ -41,8 +42,10 @@ const renderSessions = (
   expandedSessionIds = new Set(['root', 'child']),
   forcedExpandedSessionIds = new Set<string>(),
   sessionLifecycle = new Map<string, SessionLifecycleSnapshot>(),
+  isSessionSelectionMode = false,
+  selectedSessionIds = new Set<string>(),
 ) => renderToStaticMarkup(
-  React.createElement(SidebarProjectSessions, {
+  React.createElement(SessionStoreContext.Provider, { value: { warmSession: async () => undefined } as never }, React.createElement(SidebarProjectSessions, {
     project,
     isExpanded: true,
     sessions: project.sessions as never,
@@ -51,6 +54,10 @@ const renderSessions = (
     hasMoreSessions: false,
     isLoadingMoreSessions: false,
     activeSessions,
+    isSessionSelectionMode,
+    selectedSessionIds,
+    onToggleProjectSessionSelection: () => undefined,
+    onRequestBulkSessionDelete: () => undefined,
     sessionLifecycle,
     onStartSession: async () => undefined,
      attentionSessionIds,
@@ -70,7 +77,7 @@ const renderSessions = (
     onLoadMoreSessions: () => undefined,
     onNewSession: () => undefined,
     t: translate,
-  }),
+  })),
 );
 
 test('renders a flattened root/child/grandchild hierarchy with disclosure and depth styles', () => {
@@ -190,4 +197,21 @@ test('sidebar controls emit only atomic New Session and session-selection intent
   assert.match(sessionItemSource, /onSessionSelect\(session, project\);/);
   assert.doesNotMatch(sessionItemSource, /onProjectSelect\(project\);\s*onSessionSelect/);
   assert.match(sessionItemSource, /event\.metaKey \|\| event\.ctrlKey \|\| event\.shiftKey \|\| event\.altKey/);
+  assert.match(sessionItemSource, /onPointerEnter=\{warmSessionOnIntent\}/);
+  assert.match(sessionItemSource, /onFocus=\{warmSessionOnIntent\}/);
+  assert.match(sessionItemSource, /if \(!isSelectionMode\) void sessionStore\.warmSession\(session\.id\)/);
+});
+
+test('renders project selection controls and accessible selected row markup', () => {
+  const html = renderSessions(new Map(), new Set(), new Date('2026-01-01T01:00:00Z'), new Set(['root', 'child']), new Set(), new Map(), true, new Set(['root']));
+  assert.match(html, /data-selection-controls/);
+  assert.match(html, /selection\.selectAll/);
+  assert.match(html, /data-session-id="root"[^>]*data-selection-selected="true"/);
+  assert.match(html, /role="checkbox" aria-checked="true"/);
+});
+
+test('selection-mode click contract prevents navigation and branch toggling', async () => {
+  const source = await readFile(new URL('./SidebarSessionItem.tsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(isSelectionMode\) \{\s*event\.preventDefault\(\);\s*selectAndToggleSession\(\);\s*return;/);
+  assert.match(source, /if \(!isSelectionMode && rowInteractionPolicy\.togglesOnRowClick\)/);
 });

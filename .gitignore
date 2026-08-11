@@ -150,3 +150,9 @@ tasks/
 cloudcli-sidebar-app-source.tar.gz
 cloudcli-sidebar.html
 electron/*.tar.gz
+
+# Generated browser and Playwright output
+/e2e/artifacts/
+/test-results/
+/playwright-report/
+/blob-report/

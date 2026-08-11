@@ -7,7 +7,10 @@ type Dependencies = Parameters<typeof createSettingsService>[0];
 
 function dependencies(overrides: Partial<Dependencies> = {}): Dependencies {
   return {
-    dockerManagement: { trigger: async () => undefined },
+    dockerManagement: {
+      logs: async () => new Response(new Uint8Array()),
+      trigger: async () => undefined,
+    },
     apiKeys: { list: () => [], create: () => ({}), remove: () => false, toggle: () => false },
     credentials: { list: () => [], create: () => ({}), remove: () => false, toggle: () => false },
     notifications: {
@@ -34,10 +37,18 @@ test('listApiKeys redacts secret values through the service boundary', () => {
 
 test('delegates fixed Docker management workflows', async () => {
   const actions: string[] = [];
+  const response = new Response(new Uint8Array([1]));
+  let logsSignal: AbortSignal | undefined;
   const service = createSettingsService(dependencies({
-    dockerManagement: { trigger: async (action) => { actions.push(action); } },
+    dockerManagement: {
+      logs: async (signal) => { logsSignal = signal; return response; },
+      trigger: async (action) => { actions.push(action); },
+    },
   }));
 
+  const controller = new AbortController();
+  assert.equal(await service.getDockerLogs(controller.signal), response);
+  assert.equal(logsSignal, controller.signal);
   assert.deepEqual(await service.triggerDockerBuild(), { success: true, accepted: true });
   assert.deepEqual(await service.triggerDockerRestart(), { success: true, accepted: true });
   assert.deepEqual(await service.triggerDockerDown(), { success: true, accepted: true });

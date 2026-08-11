@@ -104,6 +104,7 @@
   "mainTabs": {
     "label": "설정",
     "agents": "에이전트",
+    "skills": "스킬",
     "appearance": "외관",
     "git": "Git",
     "apiTokens": "API & 토큰",

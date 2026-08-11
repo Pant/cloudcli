@@ -5,6 +5,7 @@ import { validateSessionHistoryMessageChunk } from '../../shared/cloudcli-contra
 
 import {
   parseSessionHistoryEnvelopeAsync,
+  SESSION_HISTORY_MIN_MESSAGES_PER_TASK,
   SessionHistoryWorkerPool,
   type SessionHistoryWorkerLike,
   type SessionHistoryWorkerRequest,
@@ -25,6 +26,8 @@ class ControlledWorkers {
   maximum = 0;
   pending: Array<() => void> = [];
   failConstruction = false;
+  failPostedJob = false;
+  postedSizes: number[] = [];
 
   factory = (): SessionHistoryWorkerLike => {
     if (this.failConstruction) throw new Error('unsupported');
@@ -33,10 +36,15 @@ class ControlledWorkers {
       onmessage: null,
       onerror: null,
       postMessage: (request: SessionHistoryWorkerRequest) => {
+        this.postedSizes.push(request.messages.length);
         this.active += 1;
         this.maximum = Math.max(this.maximum, this.active);
         this.pending.push(() => {
           this.active -= 1;
+          if (this.failPostedJob) {
+            worker.onerror?.({ error: new Error('worker failed'), message: 'worker failed' } as ErrorEvent);
+            return;
+          }
           worker.onmessage?.({ data: { id: request.id, result: validateSessionHistoryMessageChunk(request.messages, request.startIndex) } } as MessageEvent<SessionHistoryWorkerResponse>);
         });
       },
@@ -63,6 +71,18 @@ test('small histories remain synchronous and preserve original references', asyn
   }
 });
 
+test('representative medium histories validate under one second without workers', async () => {
+  for (const count of [100, 200]) {
+    const workers = new ControlledWorkers();
+    const pool = new SessionHistoryWorkerPool(workers.factory, 2);
+    const started = performance.now();
+    const result = await parseSessionHistoryEnvelopeAsync(envelope(Array.from({ length: count }, (_, i) => message(i))), { pool });
+    assert.equal(result.ok, true);
+    assert.equal(workers.created, 0);
+    assert.ok(performance.now() - started < 1_000);
+  }
+});
+
 test('large and simultaneous histories share bounded reusable workers', async () => {
   const workers = new ControlledWorkers();
   const pool = new SessionHistoryWorkerPool(workers.factory, 2);
@@ -75,6 +95,20 @@ test('large and simultaneous histories share bounded reusable workers', async ()
   assert.equal(results.every((result) => result.ok), true);
   assert.equal(workers.maximum, 2);
   assert.equal(workers.created, 2);
+});
+
+test('large histories use bounded coarse-grained chunk jobs', async () => {
+  const workers = new ControlledWorkers();
+  const pool = new SessionHistoryWorkerPool(workers.factory, 2);
+  const count = 2_048;
+  const pending = parseSessionHistoryEnvelopeAsync(envelope(Array.from({ length: count }, (_, i) => message(i))), { pool });
+  await new Promise((resolve) => setImmediate(resolve));
+  workers.flush();
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(workers.postedSizes.length, 4);
+  assert.ok(workers.postedSizes.every((size) => size >= SESSION_HISTORY_MIN_MESSAGES_PER_TASK));
+  assert.equal(workers.postedSizes.reduce((total, size) => total + size, 0), count);
 });
 
 test('racing chunk failures return the lowest global message index', async () => {
@@ -113,4 +147,19 @@ test('worker construction failure falls back to strict synchronous parsing', asy
   const result = await parseSessionHistoryEnvelopeAsync(envelope(rows), { pool, threshold: 1 });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.error.path, '$.data.messages[2].id');
+});
+
+test('worker runtime failure strictly revalidates only failed chunks', async () => {
+  const workers = new ControlledWorkers();
+  workers.failPostedJob = true;
+  const pool = new SessionHistoryWorkerPool(workers.factory, 2);
+  const rows = Array.from({ length: 1_024 }, (_, i) => message(i));
+  rows[700] = { ...rows[700], provider: 'bad' } as ReturnType<typeof message>;
+  const pending = parseSessionHistoryEnvelopeAsync(envelope(rows), { pool });
+  await new Promise((resolve) => setImmediate(resolve));
+  workers.flush();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.path, '$.data.messages[700].provider');
+  assert.equal(workers.postedSizes.reduce((total, size) => total + size, 0), 512);
 });

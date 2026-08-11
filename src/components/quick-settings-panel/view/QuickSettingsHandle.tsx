@@ -18,6 +18,7 @@ type QuickSettingsHandleProps = {
   onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onMouseDown: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onTouchStart: (event: ReactTouchEvent<HTMLButtonElement>) => void;
+  onWarm: () => unknown;
 };
 
 export default function QuickSettingsHandle({
@@ -27,6 +28,7 @@ export default function QuickSettingsHandle({
   onClick,
   onMouseDown,
   onTouchStart,
+  onWarm,
 }: QuickSettingsHandleProps) {
   const { t } = useTranslation('settings');
 
@@ -53,6 +55,8 @@ export default function QuickSettingsHandle({
       onClick={onClick}
       onMouseDown={onMouseDown}
       onTouchStart={onTouchStart}
+      onPointerEnter={onWarm}
+      onFocus={onWarm}
       className={`fixed ${placementClass} z-50 ${transitionClass} border bg-white dark:bg-gray-800 ${borderClass} rounded-l-md p-2 shadow-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 ${cursorClass} touch-none`}
       style={{
         ...style,

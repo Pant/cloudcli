@@ -72,6 +72,23 @@
     "reportIssue": "문제 신고",
     "starOnGithub": "GitHub에서 스타"
   },
+  "selection": {
+    "toggle": "세션 선택",
+    "selectAll": "모두 선택",
+    "deselectAll": "모두 선택 해제",
+    "deleteSelected": "선택한 세션 보관 또는 삭제",
+    "selected": "선택된 세션",
+    "notSelected": "선택되지 않은 세션",
+    "confirmTitle": "선택한 세션 보관 또는 삭제",
+    "confirmCount_one": "세션 {{count}}개가 선택되었습니다.",
+    "confirmCount_other": "세션 {{count}}개가 선택되었습니다.",
+    "archiveSelected": "선택 항목 보관",
+    "deletePermanently": "영구 삭제",
+    "failurePartial_one": "세션 1개를 업데이트하지 못해 선택된 상태로 남아 있습니다.",
+    "failurePartial_other": "세션 {{count}}개를 업데이트하지 못해 선택된 상태로 남아 있습니다.",
+    "failureAll_one": "선택한 세션을 업데이트하지 못했습니다.",
+    "failureAll_other": "선택한 세션 {{count}}개를 모두 업데이트하지 못했습니다."
+  },
   "branding": {
     "openSource": "오픈 소스"
   },

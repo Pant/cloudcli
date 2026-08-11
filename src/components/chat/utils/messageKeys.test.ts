@@ -17,3 +17,18 @@ test('split task notification rows get deterministic distinct keys', () => {
   const messages = normalizedToChatMessages([{ id: 'row-2', sessionId: 's', timestamp: '2026-01-01T00:00:00Z', provider: 'claude', kind: 'text', role: 'user', content: '<task-notification><status>completed</status><summary>done</summary><result>result</result></task-notification>' }]);
   assert.deepEqual(messages.map(getIntrinsicMessageKey), ['message-row-2-task-notification', 'message-row-2-task-result']);
 });
+
+test('response metadata survives conversion unchanged on its provider message', () => {
+  const responseMetadata = { inputTokens: 1234, outputTokens: 56, timestamp: '2026-04-08T10:30:00Z' };
+  const [message] = normalizedToChatMessages([{ id: 'row-3', sessionId: 's', timestamp: '2026-04-08T10:30:00Z', provider: 'opencode', kind: 'text', role: 'assistant', content: 'done', responseMetadata }]);
+
+  assert.equal(message.provider, 'opencode');
+  assert.strictEqual(message.responseMetadata, responseMetadata);
+});
+
+test('response metadata is not duplicated onto synthetic task notification splits', () => {
+  const messages = normalizedToChatMessages([{ id: 'row-4', sessionId: 's', timestamp: '2026-04-08T10:30:00Z', provider: 'opencode', kind: 'text', role: 'user', content: '<task-notification><status>completed</status><summary>done</summary><result>result</result></task-notification>', responseMetadata: { inputTokens: 1, outputTokens: 2, timestamp: '2026-04-08T10:30:00Z' } }]);
+
+  assert.equal(messages.length, 2);
+  assert.ok(messages.every((message) => message.responseMetadata === undefined));
+});

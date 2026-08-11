@@ -74,7 +74,7 @@ export default function BrowserUseSettingsTab() {
       });
       const data = await readJson<{ data: { settings: BrowserUseSettings } }>(response);
       setSettings(data.data.settings);
-      window.dispatchEvent(new Event('browserUseSettingsChanged'));
+      window.dispatchEvent(new CustomEvent('browserUseSettingsChanged', { detail: { enabled: data.data.settings.enabled } }));
       setIsStatusLoading(true);
       await loadStatus();
     } catch (err) {

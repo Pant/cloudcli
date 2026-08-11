@@ -31,3 +31,11 @@ test('i18n config uses lazy locale imports and startup fallback preloading', asy
   assert.match(source, /fallbackLng:\s*FALLBACK_LANGUAGE/);
   assert.doesNotMatch(source, /from ['"]\.\/locales\//);
 });
+
+test('browser bootstrap mounts immediately while saved-language resources load', async () => {
+  const source = await readFile(new URL('../main.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /void initializeI18n\(\)/);
+  assert.match(source, /<App i18n=\{i18n\}/);
+  assert.doesNotMatch(source, /initializeI18n\(\)\.then/);
+});

@@ -784,6 +784,23 @@ export type ProviderSkillRemoveInput = {
   directoryName: string;
 };
 
+/** Scoped exact-name permission update accepted by provider skill adapters. */
+export type ProviderSkillAccessUpdateInput = {
+  name: string;
+  enabled: boolean;
+  scope: 'user' | 'project';
+  workspacePath?: string;
+};
+
+/** Result of persisting one provider-native skill permission override. */
+export type ProviderSkillAccessUpdateResult = {
+  provider: LLMProvider;
+  name: string;
+  enabled: boolean;
+  access: 'allow' | 'deny';
+  scope: 'user' | 'project';
+};
+
 /**
  * Normalized skill record returned by provider skill adapters.
  *
@@ -800,6 +817,8 @@ export type ProviderSkill = {
   command: string;
   scope: ProviderSkillScope;
   sourcePath: string;
+  /** Effective OpenCode permission for the requested global/project context. */
+  enabled?: boolean;
   pluginName?: string;
   pluginId?: string;
 };
@@ -1293,6 +1312,27 @@ export type FileTreeListOptions = {
 };
 
 /**
+ * Controls one stable page of direct children for the explorer File Tree.
+ * Offset and limit are defensively normalized by the service; recursion is
+ * intentionally unavailable so page work remains bounded.
+ */
+export type FileTreePageOptions = {
+  respectGitignore?: boolean;
+  targetPath?: string;
+  offset?: number;
+  limit?: number;
+  includeMetadata?: boolean;
+};
+
+/** Stable direct-directory page returned only by the explorer paging endpoint. */
+export type FileTreePageResult = {
+  items: FileTreeNode[];
+  hasMore: boolean;
+  nextOffset: number | null;
+  total: number;
+};
+
+/**
  * Minimal directory-entry shape required during File Tree traversal.
  *
  * Production adapts Node `Dirent` objects to this structural contract. Tests
@@ -1426,6 +1466,10 @@ export type FileTreeServices = {
     projectId: string,
     options?: FileTreeListOptions,
   ): Promise<FileTreeNode[]>;
+  listProjectFilePage(
+    projectId: string,
+    options?: FileTreePageOptions,
+  ): Promise<FileTreePageResult>;
   createEntry(input: {
     projectId: string;
     parentPath: string;

@@ -1,4 +1,5 @@
 import type { Project, ProjectSession, LLMProvider } from '../../../types/app';
+import type { ResponseMetadata } from '../../../../shared/cloudcli-contracts';
 import type {
   MarkSessionIdle,
   MarkSessionProcessing,
@@ -6,6 +7,7 @@ import type {
 } from '../../../hooks/useSessionProtection';
 
 export type Provider = LLMProvider;
+export type ChatResponseMetadata = ResponseMetadata;
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'plan';
 
@@ -45,6 +47,8 @@ export interface ChatMessage {
   generation?: number;
   seq?: number;
   sourceKind?: string;
+  provider?: Provider;
+  responseMetadata?: ChatResponseMetadata;
   renderKeySuffix?: string;
   type: string;
   content?: string;

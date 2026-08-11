@@ -29,6 +29,16 @@ function createStats(directory: boolean, mode: number): FileTreeStats {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function createFakeFileSystem(
   overrides: Partial<FileTreeFileSystem> = {},
 ): FileTreeFileSystem {
@@ -418,6 +428,132 @@ test('listProjectFiles clamps excessive service depth while preserving recursive
 
   assert.deepEqual(readDirectories, [projectRoot, childDirectory, grandchildDirectory]);
   assert.deepEqual(tree[0]?.children?.[0]?.children?.map((entry) => entry.name), ['leaf.txt']);
+});
+
+test('listProjectFilePage sorts before slicing and bounds metadata for a wide directory', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  let lstatCalls = 0;
+  const entries = Array.from({ length: 1000 }, (_, index) => createDirectoryEntry(
+    `${index % 2 === 0 ? 'file' : 'dir'}-${String(999 - index).padStart(4, '0')}`,
+    index % 2 === 1,
+  ));
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    readdir: async () => entries,
+    lstat: async (candidatePath) => {
+      lstatCalls += 1;
+      return createStats(path.basename(candidatePath).startsWith('dir-'), 0o755);
+    },
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+
+  const first = await service.listProjectFilePage('project-1');
+  assert.equal(first.items.length, 150);
+  assert.equal(first.total, 1000);
+  assert.equal(first.hasMore, true);
+  assert.equal(first.nextOffset, 150);
+  assert.equal(lstatCalls, 150);
+  assert.ok(first.items.every((item) => item.type === 'directory'));
+  assert.deepEqual(
+    first.items.map((item) => item.name),
+    [...first.items.map((item) => item.name)].sort((left, right) => left.localeCompare(right)),
+  );
+
+  lstatCalls = 0;
+  const explicit = await service.listProjectFilePage('project-1', { limit: 25 });
+  assert.equal(explicit.items.length, 25);
+  assert.equal(lstatCalls, 25);
+});
+
+test('listProjectFilePage filters ignored and gitignored entries before continuation', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    readTextFile: async () => '*.log',
+    readdir: async () => [
+      createDirectoryEntry('node_modules', true),
+      createDirectoryEntry('src', true),
+      createDirectoryEntry('debug.log', false),
+      createDirectoryEntry('README.md', false),
+    ],
+    lstat: async (candidatePath) => createStats(path.basename(candidatePath) === 'src', 0o644),
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, projectRoot));
+  const page = await service.listProjectFilePage('project-1', {
+    respectGitignore: true,
+    limit: 1,
+  });
+  assert.deepEqual(page.items.map((item) => item.name), ['src']);
+  assert.deepEqual({ total: page.total, hasMore: page.hasMore, nextOffset: page.nextOffset }, {
+    total: 2, hasMore: true, nextOffset: 1,
+  });
+});
+
+for (const metadataOutcome of ['success', 'error'] as const) {
+  test(`listProjectFilePage prioritizes structural reads after metadata ${metadataOutcome}`, async () => {
+    const projectRoot = path.resolve('file-tree-test-project');
+    const firstMetadata = createDeferred<FileTreeStats>();
+    const operationOrder: string[] = [];
+    let activeOperations = 0;
+    let maximumActiveOperations = 0;
+    let metadataCalls = 0;
+    const trackOperation = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
+      operationOrder.push(name);
+      activeOperations += 1;
+      maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
+      try {
+        return await operation();
+      } finally {
+        activeOperations -= 1;
+      }
+    };
+    const fileSystem = createFakeFileSystem({
+      access: async () => undefined,
+      readdir: async () => trackOperation('readdir', async () => [
+        createDirectoryEntry('a.txt', false),
+        createDirectoryEntry('b.txt', false),
+        createDirectoryEntry('c.txt', false),
+      ]),
+      lstat: async () => trackOperation(`lstat-${metadataCalls += 1}`, async () => {
+        if (metadataCalls === 1) return firstMetadata.promise;
+        return createStats(false, 0o644);
+      }),
+    });
+    const dependencies = createDependencies(fileSystem, projectRoot);
+    dependencies.fileSystemConcurrency = 1;
+    const service = createFileTreeService(dependencies);
+
+    const metadataPage = service.listProjectFilePage('project-1');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const structuralPage = service.listProjectFilePage('project-1', { includeMetadata: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    if (metadataOutcome === 'success') {
+      firstMetadata.resolve(createStats(false, 0o644));
+    } else {
+      firstMetadata.reject(new Error('metadata unavailable'));
+    }
+
+    await structuralPage;
+    await metadataPage;
+
+    assert.deepEqual(operationOrder.slice(0, 3), ['readdir', 'lstat-1', 'readdir']);
+    assert.equal(maximumActiveOperations, 1);
+    assert.equal(metadataCalls, 3);
+  });
+}
+
+test('listProjectFilePage rejects target traversal before filesystem reads', async () => {
+  const projectRoot = path.resolve('file-tree-test-project');
+  let accessed = false;
+  const service = createFileTreeService(createDependencies(createFakeFileSystem({
+    access: async () => { accessed = true; },
+  }), projectRoot));
+  await assert.rejects(
+    service.listProjectFilePage('project-1', { targetPath: '../outside' }),
+    (error: unknown) => error instanceof AppError && error.code === 'PATH_OUTSIDE_PROJECT',
+  );
+  assert.equal(accessed, false);
 });
 
 test('readTextFile rejects traversal before invoking the filesystem adapter', async () => {

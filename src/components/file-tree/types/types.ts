@@ -30,6 +30,20 @@ export interface FileTreeRequestOptions {
   respectGitignore?: boolean;
 }
 
+export type FileTreePageRequestOptions = Omit<FileTreeRequestOptions, 'depth'> & {
+  offset?: number;
+  limit?: number;
+};
+
+export type FileTreePageResponse = {
+  items: FileTreeNode[];
+  hasMore: boolean;
+  nextOffset: number | null;
+  total: number;
+};
+
+export type FileTreePageState = Pick<FileTreePageResponse, 'hasMore' | 'nextOffset' | 'total'>;
+
 export type FileTreeGeneration = {
   projectId: string;
   generation: number;

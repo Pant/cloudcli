@@ -1,14 +1,16 @@
 import type { ReactNode, RefObject } from 'react';
 
-import type { FileTreeNode as FileTreeNodeType, FileTreeViewMode } from '../types/types';
+import type { FileTreeNode as FileTreeNodeType, FileTreePageState, FileTreeViewMode } from '../types/types';
 
-import FileTreeNode from './FileTreeNode';
+import FileTreeNode, { FileTreeContinuation } from './FileTreeNode';
 
 type FileTreeListProps = {
   items: FileTreeNodeType[];
   viewMode: FileTreeViewMode;
   expandedDirs: Set<string>;
   directoryLoading: Set<string>;
+  pageState: Map<string, FileTreePageState>;
+  onLoadNextPage: (path?: string) => void;
   onItemClick: (item: FileTreeNodeType) => void;
   renderFileIcon: (filename: string) => ReactNode;
   formatFileSize: (bytes?: number) => string;
@@ -35,6 +37,8 @@ export default function FileTreeList({
   viewMode,
   expandedDirs,
   directoryLoading,
+  pageState,
+  onLoadNextPage,
   onItemClick,
   renderFileIcon,
   formatFileSize,
@@ -64,6 +68,8 @@ export default function FileTreeList({
           viewMode={viewMode}
            expandedDirs={expandedDirs}
            directoryLoading={directoryLoading}
+           pageState={pageState}
+           onLoadNextPage={onLoadNextPage}
           onItemClick={onItemClick}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}
@@ -84,6 +90,12 @@ export default function FileTreeList({
           operationLoading={operationLoading}
         />
       ))}
+      {pageState.get('__root__')?.hasMore && (
+        <FileTreeContinuation
+          loading={directoryLoading.has('__root__')}
+          onLoad={() => onLoadNextPage()}
+        />
+      )}
     </div>
   );
 }

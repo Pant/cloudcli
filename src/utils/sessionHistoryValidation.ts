@@ -1,6 +1,7 @@
 import {
   parseSessionHistoryEnvelope,
   parseSessionHistoryEnvelopeStructure,
+  validateSessionHistoryMessageChunk,
   type ContractParseFailure,
   type ContractParseResult,
   type SessionHistoryEnvelope,
@@ -10,6 +11,7 @@ import {
 export const SESSION_HISTORY_WORKER_THRESHOLD = 256;
 export const SESSION_HISTORY_TASKS_PER_WORKER = 2;
 export const SESSION_HISTORY_MAX_WORKERS = 4;
+export const SESSION_HISTORY_MIN_MESSAGES_PER_TASK = 256;
 
 export type SessionHistoryWorkerRequest = {
   id: number;
@@ -37,6 +39,7 @@ type PoolJob = {
   reject: (reason: unknown) => void;
   abort?: () => void;
 };
+type WorkerOutcome = { result: SessionHistoryMessageChunkResult } | { error: unknown };
 
 function abortError(): DOMException {
   return new DOMException('Session history validation was aborted.', 'AbortError');
@@ -165,14 +168,29 @@ export async function parseSessionHistoryEnvelopeAsync(
   }
 
   const pool = options.pool ?? getSharedPool();
-  const taskCount = Math.min(messages.length, pool.size * SESSION_HISTORY_TASKS_PER_WORKER);
+  const taskCount = Math.min(
+    Math.ceil(messages.length / SESSION_HISTORY_MIN_MESSAGES_PER_TASK),
+    pool.size * SESSION_HISTORY_TASKS_PER_WORKER,
+  );
   const chunkSize = Math.ceil(messages.length / taskCount);
+  const chunks = Array.from({ length: taskCount }, (_, taskIndex) => {
+    const startIndex = taskIndex * chunkSize;
+    return { startIndex, messages: messages.slice(startIndex, Math.min(messages.length, startIndex + chunkSize)) };
+  });
   try {
-    const results = await Promise.all(Array.from({ length: taskCount }, (_, taskIndex) => {
-      const startIndex = taskIndex * chunkSize;
-      return pool.run({ startIndex, messages: messages.slice(startIndex, Math.min(messages.length, startIndex + chunkSize)) }, options.signal);
+    const outcomes = await Promise.all(chunks.map(async (chunk): Promise<WorkerOutcome> => {
+      try {
+        return { result: await pool.run(chunk, options.signal) };
+      } catch (error) {
+        return { error };
+      }
     }));
     if (options.signal?.aborted) throw abortError();
+    const abort = outcomes.find((outcome) => 'error' in outcome && outcome.error instanceof DOMException && outcome.error.name === 'AbortError');
+    if (abort) throw abortError();
+    const results = outcomes.map((outcome, index) => 'result' in outcome
+      ? outcome.result
+      : validateFailedChunk(chunks[index]));
     const failures = results.filter((result): result is ContractParseFailure & { messageIndex: number } => !result.ok);
     if (failures.length > 0) {
       return failures.reduce((lowest, failure) => failure.messageIndex < lowest.messageIndex ? failure : lowest);
@@ -188,4 +206,8 @@ export async function parseSessionHistoryEnvelopeAsync(
     if (options.signal?.aborted || error instanceof DOMException && error.name === 'AbortError') throw abortError();
     return parseSessionHistoryEnvelope(input);
   }
+}
+
+function validateFailedChunk(chunk: Omit<SessionHistoryWorkerRequest, 'id'>): SessionHistoryMessageChunkResult {
+  return validateSessionHistoryMessageChunk(chunk.messages, chunk.startIndex);
 }

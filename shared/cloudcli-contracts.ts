@@ -37,6 +37,13 @@ export type MessageKind =
   | 'error' | 'complete' | 'status' | 'permission_request' | 'permission_cancelled'
   | 'session_created' | 'interactive_prompt' | 'task_notification';
 
+/** Exact provider-reported usage and completion time for one model response. */
+export type ResponseMetadata = {
+  inputTokens: number;
+  outputTokens: number;
+  timestamp: string;
+};
+
 /** Provider-neutral message; deliberately contains no provider-native identifier. */
 export type NormalizedMessage = {
   id: string;
@@ -77,6 +84,7 @@ export type NormalizedMessage = {
   toolUseResult?: unknown;
   sequence?: number;
   rowid?: number;
+  responseMetadata?: ResponseMetadata;
   [key: string]: unknown;
 };
 
@@ -242,14 +250,39 @@ export function parseApiErrorEnvelope(input: unknown): ContractParseResult<ApiEr
 }
 
 export function parseNormalizedMessage(input: unknown, path = '$'): ContractParseResult<NormalizedMessage> {
-  const parsed = record(input, path); if (!parsed.ok) return parsed;
-  const value = parsed.value;
-  const invalid = requiredString(value, 'id', path) ?? requiredString(value, 'sessionId', path)
-    ?? requiredString(value, 'timestamp', path) ?? requiredString(value, 'provider', path) ?? requiredString(value, 'kind', path);
-  if (invalid) return invalid;
-  if (!providers.has(value.provider as LLMProvider)) return failure('INVALID_FIELD', `${path}.provider`, `${path}.provider is unsupported.`, 'CloudCLI provider', value.provider);
-  if (!messageKinds.has(value.kind as MessageKind)) return failure('INVALID_FIELD', `${path}.kind`, `${path}.kind is unsupported.`, 'normalized message kind', value.kind);
-  for (const key of ['seq', 'generation'] as const) if (value[key] !== undefined && requiredNumber(value, key, path)) return requiredNumber(value, key, path)!;
+  return parseNormalizedMessageAt(input, path);
+}
+
+function parseNormalizedMessageAt(input: unknown, path: string | number): ContractParseResult<NormalizedMessage> {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    const resolvedPath = typeof path === 'number' ? `$.data.messages[${path}]` : path;
+    return failure('INVALID_TYPE', resolvedPath, `${resolvedPath} must be an object.`, 'object', input);
+  }
+  const value = input as Record<string, unknown>;
+  for (const key of ['id', 'sessionId', 'timestamp', 'provider', 'kind'] as const) {
+    if (!(key in value)) {
+      const fieldPath = `${typeof path === 'number' ? `$.data.messages[${path}]` : path}.${key}`;
+      return failure('MISSING_FIELD', fieldPath, `Required field ${fieldPath} is missing.`, 'non-empty string');
+    }
+    if (typeof value[key] !== 'string' || value[key].length === 0) {
+      const fieldPath = `${typeof path === 'number' ? `$.data.messages[${path}]` : path}.${key}`;
+      return failure('INVALID_FIELD', fieldPath, `${fieldPath} must be a non-empty string.`, 'non-empty string', value[key]);
+    }
+  }
+  if (!providers.has(value.provider as LLMProvider)) {
+    const fieldPath = `${typeof path === 'number' ? `$.data.messages[${path}]` : path}.provider`;
+    return failure('INVALID_FIELD', fieldPath, `${fieldPath} is unsupported.`, 'CloudCLI provider', value.provider);
+  }
+  if (!messageKinds.has(value.kind as MessageKind)) {
+    const fieldPath = `${typeof path === 'number' ? `$.data.messages[${path}]` : path}.kind`;
+    return failure('INVALID_FIELD', fieldPath, `${fieldPath} is unsupported.`, 'normalized message kind', value.kind);
+  }
+  for (const key of ['seq', 'generation'] as const) {
+    if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isFinite(value[key]))) {
+      const fieldPath = `${typeof path === 'number' ? `$.data.messages[${path}]` : path}.${key}`;
+      return failure('INVALID_FIELD', fieldPath, `${fieldPath} must be a finite number.`, 'finite number', value[key]);
+    }
+  }
   return { ok: true, value: input as NormalizedMessage };
 }
 
@@ -271,14 +304,12 @@ export function parseSessionHistoryEnvelopeStructure(input: unknown): ContractPa
 }
 
 export function validateSessionHistoryMessageChunk(messages: readonly unknown[], startIndex = 0): SessionHistoryMessageChunkResult {
-  const validated: NormalizedMessage[] = [];
   for (let index = 0; index < messages.length; index += 1) {
     const messageIndex = startIndex + index;
-    const message = parseNormalizedMessage(messages[index], `$.data.messages[${messageIndex}]`);
+    const message = parseNormalizedMessageAt(messages[index], messageIndex);
     if (!message.ok) return { ...message, messageIndex };
-    validated.push(message.value);
   }
-  return { ok: true, value: validated };
+  return { ok: true, value: messages as NormalizedMessage[] };
 }
 
 export function parseSessionHistoryEnvelope(input: unknown): ContractParseResult<SessionHistoryEnvelope> {
@@ -289,8 +320,29 @@ export function parseSessionHistoryEnvelope(input: unknown): ContractParseResult
   const data = record(outer.value.data, '$.data'); if (!data.ok) return data;
   if (!Array.isArray(data.value.messages)) return failure('INVALID_FIELD', '$.data.messages', '$.data.messages must be an array.', 'array', data.value.messages);
   const messages = validateSessionHistoryMessageChunk(data.value.messages); if (!messages.ok) return messages;
-  const structure = parseSessionHistoryEnvelopeStructure(input); if (!structure.ok) return structure;
-  return { ok: true, value: { ...structure.value, data: { ...structure.value.data, messages: messages.value } } };
+  const invalid = requiredString(data.value, 'revision', '$.data') ?? requiredNumber(data.value, 'total', '$.data')
+    ?? requiredBoolean(data.value, 'hasMore', '$.data') ?? requiredNumber(data.value, 'offset', '$.data');
+  if (invalid) return invalid;
+  if (!('limit' in data.value)) return failure('MISSING_FIELD', '$.data.limit', 'Required field $.data.limit is missing.', 'number | null');
+  const invalidLimit = nullableNumber(data.value.limit, '$.data.limit'); if (invalidLimit) return invalidLimit;
+  if (outer.value.requestId !== undefined && typeof outer.value.requestId !== 'string') return failure('INVALID_FIELD', '$.requestId', '$.requestId must be a string.', 'string', outer.value.requestId);
+  return {
+    ok: true,
+    value: {
+      success: true,
+      protocolVersion: CLOUDCLI_PROTOCOL_VERSION,
+      ...(outer.value.requestId ? { requestId: outer.value.requestId } : {}),
+      data: {
+        revision: data.value.revision as string,
+        messages: messages.value,
+        total: data.value.total as number,
+        hasMore: data.value.hasMore as boolean,
+        offset: data.value.offset as number,
+        limit: data.value.limit as number | null,
+        ...('tokenUsage' in data.value ? { tokenUsage: data.value.tokenUsage } : {}),
+      },
+    },
+  };
 }
 
 export function parseSessionStartMutationResult(input: unknown): ContractParseResult<SessionStartMutationResult> {

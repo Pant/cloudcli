@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createSessionMessageLoadingOwner } from './sessionMessageLoading';
+import { createSessionMessageLoadingOwner, shouldBlockSessionMessageDisplay } from './sessionMessageLoading';
+
+test('warmed and cache-hydrated rows do not block while canonical validation continues', () => {
+  assert.equal(shouldBlockSessionMessageDisplay({ hasDisplayableMessages: true, isCanonicalLoading: true }), false);
+});
+
+test('an empty session blocks only while its canonical history is loading', () => {
+  assert.equal(shouldBlockSessionMessageDisplay({ hasDisplayableMessages: false, isCanonicalLoading: true }), true);
+  assert.equal(shouldBlockSessionMessageDisplay({ hasDisplayableMessages: false, isCanonicalLoading: false }), false);
+});
 
 test('New Session invalidates an in-flight session message load', () => {
   const owner = createSessionMessageLoadingOwner();

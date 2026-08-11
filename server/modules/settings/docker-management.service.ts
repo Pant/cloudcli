@@ -53,6 +53,12 @@ function upstreamError(status: number): AppError {
   });
 }
 
+function unavailableError(): AppError {
+  return new AppError('Docker management is unavailable', {
+    code: 'DOCKER_MANAGEMENT_UNAVAILABLE', statusCode: 502,
+  });
+}
+
 async function drainBody(body: ReadableStream<Uint8Array> | null): Promise<void> {
   if (!body) return;
   const reader = body.getReader();
@@ -83,6 +89,44 @@ export function createDockerManagementService(dependencies: DockerManagementDepe
   }
 
   return {
+    async logs(signal: AbortSignal): Promise<Response> {
+      if (!normalizedBaseUrl || !Number.isFinite(dependencies.timeoutMs) || dependencies.timeoutMs <= 0) {
+        throw configurationError();
+      }
+      const auth = await credentials();
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener('abort', abort, { once: true });
+      const timeout = setTimeout(abort, dependencies.timeoutMs);
+      let response: Response;
+      try {
+        response = await dependencies.fetch(`${normalizedBaseUrl}/api/logs`, {
+          method: 'GET',
+          headers: { Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}` },
+          signal: controller.signal,
+        });
+      } catch (error) {
+        signal.removeEventListener('abort', abort);
+        if (error instanceof Error && error.name === 'AbortError' && !signal.aborted) {
+          throw new AppError('Docker management request timed out', {
+            code: 'DOCKER_MANAGEMENT_TIMEOUT', statusCode: 504,
+          });
+        }
+        throw unavailableError();
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!response.ok) {
+        signal.removeEventListener('abort', abort);
+        void drainBody(response.body).catch(() => undefined);
+        throw upstreamError(response.status);
+      }
+      if (!response.body) {
+        signal.removeEventListener('abort', abort);
+        throw unavailableError();
+      }
+      return response;
+    },
     async trigger(action: DockerManagementAction): Promise<void> {
       if (!normalizedBaseUrl || !Number.isFinite(dependencies.timeoutMs) || dependencies.timeoutMs <= 0) {
         throw configurationError();
@@ -103,9 +147,7 @@ export function createDockerManagementService(dependencies: DockerManagementDepe
             code: 'DOCKER_MANAGEMENT_TIMEOUT', statusCode: 504,
           });
         }
-        throw new AppError('Docker management is unavailable', {
-          code: 'DOCKER_MANAGEMENT_UNAVAILABLE', statusCode: 502,
-        });
+        throw unavailableError();
       } finally {
         clearTimeout(timeout);
       }

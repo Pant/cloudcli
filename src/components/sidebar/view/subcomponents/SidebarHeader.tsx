@@ -1,4 +1,4 @@
-import { Activity, Archive, Folder, FolderPlus, MessageSquare, Plus, RefreshCw, Search, X, PanelLeftClose } from 'lucide-react';
+import { Activity, Archive, CheckSquare, Folder, FolderPlus, MessageSquare, Plus, RefreshCw, Search, X, PanelLeftClose } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Button, Input, Tooltip } from '../../../../shared/view/ui';
@@ -24,6 +24,8 @@ type SidebarHeaderProps = {
   searchMode: SidebarSearchMode;
   onSearchModeChange: (mode: SidebarSearchMode) => void;
   onRefresh: () => void;
+  isSessionSelectionMode: boolean;
+  onToggleSessionSelectionMode: () => void;
   isRefreshing: boolean;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
@@ -44,6 +46,8 @@ export default function SidebarHeader({
   searchMode,
   onSearchModeChange,
   onRefresh,
+  isSessionSelectionMode,
+  onToggleSessionSelectionMode,
   isRefreshing,
   onCreateProject,
   onCollapseSidebar,
@@ -96,6 +100,9 @@ export default function SidebarHeader({
           )}
 
           <div className="flex flex-shrink-0 items-center gap-0.5">
+            <Button variant="ghost" size="sm" className={cn('h-7 w-7 rounded-lg p-0', isSessionSelectionMode ? 'bg-primary/10 text-primary' : 'text-muted-foreground')} onClick={onToggleSessionSelectionMode} aria-pressed={isSessionSelectionMode} aria-label={t('selection.toggle')} title={t('selection.toggle')}>
+              <CheckSquare className="h-3.5 w-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -256,6 +263,9 @@ export default function SidebarHeader({
           )}
 
           <div className="flex flex-shrink-0 gap-1.5">
+            <button className={cn('flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50', isSessionSelectionMode && 'text-primary ring-1 ring-primary/30')} onClick={onToggleSessionSelectionMode} aria-pressed={isSessionSelectionMode} aria-label={t('selection.toggle')} title={t('selection.toggle')}>
+              <CheckSquare className="h-4 w-4" />
+            </button>
             <button
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50 transition-all active:scale-95"
               onClick={onRefresh}

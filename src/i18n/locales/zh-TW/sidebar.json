@@ -71,6 +71,23 @@
     "reportIssue": "回報問題",
     "starOnGithub": "在 GitHub 上加星"
   },
+  "selection": {
+    "toggle": "選取工作階段",
+    "selectAll": "全部選取",
+    "deselectAll": "取消全部選取",
+    "deleteSelected": "封存或刪除選取的工作階段",
+    "selected": "工作階段已選取",
+    "notSelected": "工作階段未選取",
+    "confirmTitle": "封存或刪除選取的工作階段",
+    "confirmCount_one": "已選取 {{count}} 個工作階段。",
+    "confirmCount_other": "已選取 {{count}} 個工作階段。",
+    "archiveSelected": "封存選取項目",
+    "deletePermanently": "永久刪除",
+    "failurePartial_one": "有 1 個工作階段無法更新，仍保持選取狀態。",
+    "failurePartial_other": "有 {{count}} 個工作階段無法更新，仍保持選取狀態。",
+    "failureAll_one": "無法更新選取的工作階段。",
+    "failureAll_other": "選取的 {{count}} 個工作階段皆無法更新。"
+  },
   "branding": {
     "openSource": "開源"
   },

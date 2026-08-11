@@ -3,11 +3,17 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import type {
   FileTreeListOptions,
+  FileTreePageOptions,
   FileTreeLogger,
   FileTreeServices,
   FileTreeUploadedFile,
 } from '@/shared/types.js';
-import { AppError, FILE_TREE_MAX_DEPTH } from '@/shared/utils.js';
+import {
+  AppError,
+  FILE_TREE_DEFAULT_PAGE_SIZE,
+  FILE_TREE_MAX_DEPTH,
+  FILE_TREE_MAX_PAGE_SIZE,
+} from '@/shared/utils.js';
 
 type FileTreeUploadLimits = {
   maximumFileSizeMegabytes: number;
@@ -85,6 +91,34 @@ function readFileTreeOptions(request: Request): FileTreeListOptions {
     respectGitignore,
     ...(targetPath !== null ? { targetPath } : {}),
     ...(depth !== undefined ? { depth } : {}),
+    ...(includeMetadata !== undefined ? { includeMetadata } : {}),
+  };
+}
+
+function readPageInteger(value: unknown, fieldName: string, fallback: number, maximum?: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    throw new AppError(`${fieldName} must be a non-negative integer`, {
+      code: 'INVALID_FILE_TREE_REQUEST', statusCode: 400,
+    });
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new AppError(`${fieldName} must be a safe non-negative integer`, {
+      code: 'INVALID_FILE_TREE_REQUEST', statusCode: 400,
+    });
+  }
+  return maximum === undefined ? parsed : Math.min(maximum, Math.max(1, parsed));
+}
+
+function readFileTreePageOptions(request: Request): FileTreePageOptions {
+  const targetPath = readOptionalString(request.query.targetPath);
+  const includeMetadata = readOptionalBoolean(request.query.includeMetadata, 'includeMetadata');
+  return {
+    respectGitignore: readOptionalBoolean(request.query.respectGitignore, 'respectGitignore') ?? false,
+    offset: readPageInteger(request.query.offset, 'offset', 0),
+    limit: readPageInteger(request.query.limit, 'limit', FILE_TREE_DEFAULT_PAGE_SIZE, FILE_TREE_MAX_PAGE_SIZE),
+    ...(targetPath !== null ? { targetPath } : {}),
     ...(includeMetadata !== undefined ? { includeMetadata } : {}),
   };
 }
@@ -215,6 +249,13 @@ export function createFileTreeRouter(
 
   router.get('/projects/:projectId/files', createRouteHandler(async (request, response) => {
     response.json(await services.listProjectFiles(readProjectId(request), readFileTreeOptions(request)));
+  }, logger));
+
+  router.get('/projects/:projectId/files/page', createRouteHandler(async (request, response) => {
+    response.json(await services.listProjectFilePage(
+      readProjectId(request),
+      readFileTreePageOptions(request),
+    ));
   }, logger));
 
   router.post('/projects/:projectId/files/create', createRouteHandler(async (request, response) => {

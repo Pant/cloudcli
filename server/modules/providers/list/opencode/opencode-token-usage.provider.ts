@@ -2,6 +2,14 @@ import type Database from 'better-sqlite3';
 
 import { readJsonRecord, readObjectRecord, readOptionalString } from '@/shared/utils.js';
 
+export type OpenCodeTokenComponents = {
+  input: number;
+  output: number;
+  reasoning: number;
+  cacheRead: number;
+  cacheWrite: number;
+};
+
 type OpenCodeMessageTokenRow = {
   data: string | null;
 };
@@ -14,6 +22,27 @@ const readNonNegativeTokenNumber = (value: unknown): number | undefined => {
   const parsedValue = Number(value);
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
 };
+
+/** Reads the complete v1.18 step token shape without manufacturing missing zeroes. */
+export function readOpenCodeTokenComponents(value: unknown): OpenCodeTokenComponents | undefined {
+  const tokens = readObjectRecord(value);
+  const cache = readObjectRecord(tokens?.cache);
+  const input = readNonNegativeTokenNumber(tokens?.input);
+  const output = readNonNegativeTokenNumber(tokens?.output);
+  const reasoning = readNonNegativeTokenNumber(tokens?.reasoning);
+  const cacheRead = readNonNegativeTokenNumber(cache?.read);
+  const cacheWrite = readNonNegativeTokenNumber(cache?.write);
+  if (
+    input === undefined
+    || output === undefined
+    || reasoning === undefined
+    || cacheRead === undefined
+    || cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return { input, output, reasoning, cacheRead, cacheWrite };
+}
 
 /**
  * Reads the latest trustworthy assistant current-window count from OpenCode

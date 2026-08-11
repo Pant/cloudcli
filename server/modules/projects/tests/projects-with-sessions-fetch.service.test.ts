@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
-import { getProjectSessionsPage } from '@/modules/projects/services/projects-with-sessions-fetch.service.js';
+import { getProjectSessionsPage, getProjectsWithSessions } from '@/modules/projects/services/projects-with-sessions-fetch.service.js';
 
 async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promise<void> {
   const previousDatabasePath = process.env.DATABASE_PATH;
@@ -51,6 +51,41 @@ test('project session summaries include the recorded model for first-render hydr
     assert.equal(parentSession?.agent, 'Architect');
     assert.equal(subagentSession?.model, 'cloudcli-openai/gpt-5.6-luna');
     assert.equal(subagentSession?.agent, 'Code');
+  });
+});
+
+test('ordinary project lists hydrate the existing database snapshot with the stable response shape', async () => {
+  await withIsolatedDatabase(async () => {
+    const projectPath = '/workspace/database-snapshot';
+    sessionsDb.createSession('snapshot-session', 'opencode', projectPath, 'Snapshot');
+    const project = projectsDb.getProjectPath(projectPath);
+    assert.ok(project);
+    const result = await getProjectsWithSessions();
+
+    assert.deepEqual(result, [{
+      projectId: project.project_id,
+      path: projectPath,
+      displayName: 'database-snapshot',
+      fullPath: projectPath,
+      isStarred: false,
+      sessions: [{
+        id: 'snapshot-session',
+        parentSessionId: null,
+        provider: 'opencode',
+        model: null,
+        agent: null,
+        summary: 'Snapshot',
+        messageCount: 0,
+        lastActivity: result[0]?.sessions[0]?.lastActivity,
+      }],
+      sessionMeta: {
+        hasMore: false,
+        total: 1,
+        rootTotal: 1,
+        rootOffset: 0,
+        nextOffset: 1,
+      },
+    }]);
   });
 });
 

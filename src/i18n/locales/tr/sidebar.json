@@ -72,6 +72,23 @@
     "reportIssue": "Sorun Bildir",
     "starOnGithub": "GitHub'da Yıldızla"
   },
+  "selection": {
+    "toggle": "Oturumları seç",
+    "selectAll": "Tümünü seç",
+    "deselectAll": "Tümünün seçimini kaldır",
+    "deleteSelected": "Seçili oturumları arşivle veya sil",
+    "selected": "Oturum seçildi",
+    "notSelected": "Oturum seçilmedi",
+    "confirmTitle": "Seçili oturumları arşivle veya sil",
+    "confirmCount_one": "{{count}} oturum seçildi.",
+    "confirmCount_other": "{{count}} oturum seçildi.",
+    "archiveSelected": "Seçilenleri arşivle",
+    "deletePermanently": "Kalıcı olarak sil",
+    "failurePartial_one": "1 oturum güncellenemedi ve seçili kaldı.",
+    "failurePartial_other": "{{count}} oturum güncellenemedi ve seçili kaldı.",
+    "failureAll_one": "Seçili oturum güncellenemedi.",
+    "failureAll_other": "Seçili {{count}} oturumun hiçbiri güncellenemedi."
+  },
   "branding": {
     "openSource": "Açık Kaynak"
   },

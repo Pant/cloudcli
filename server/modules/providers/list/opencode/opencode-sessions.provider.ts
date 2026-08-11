@@ -3,7 +3,7 @@ import fsSync from 'node:fs';
 import Database from 'better-sqlite3';
 
 import { parseFilesInputTag, parseImagesInputTag } from '@/shared/image-attachments.js';
-import type { IProviderModels, IProviderSessions } from '@/shared/interfaces.js';
+import type { IProviderSessions } from '@/shared/interfaces.js';
 import type { AnyRecord, FetchHistoryOptions, FetchHistoryResult, NormalizedMessage } from '@/shared/types.js';
 import {
   createNormalizedMessage,
@@ -17,7 +17,10 @@ import {
   unwrapJsonStringLiteral,
 } from '@/shared/utils.js';
 
-import { readOpenCodeLatestAssistantWindowTokens } from './opencode-token-usage.provider.js';
+import {
+  readOpenCodeLatestAssistantWindowTokens,
+  readOpenCodeTokenComponents,
+} from './opencode-token-usage.provider.js';
 
 const PROVIDER = 'opencode';
 
@@ -53,6 +56,16 @@ type OpenCodeTokenTotals = {
   reasoningTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+};
+
+type OpenCodeResponseMetadata = NonNullable<NormalizedMessage['responseMetadata']>;
+
+type OpenCodeAssistantUsage = {
+  fallbackInputTokens: number | undefined;
+  outputTokens: number | undefined;
+  promptTotal: number | undefined;
+  totalTokens: number | undefined;
+  isZeroOnly: boolean;
 };
 
 export type CompletedOpenCodeTask = { taskId: string; summary: string | null };
@@ -187,6 +200,76 @@ const hasUserRole = (value: unknown): boolean => {
   return readOptionalString(record?.role) === 'user';
 };
 
+const readNonNegativeInteger = (value: unknown): number | undefined => (
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+);
+
+const readOpenCodeResponseTimestamp = (value: unknown): string | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return normalizeProviderTimestamp(value);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    if ((Number.isFinite(numeric) && numeric > 0) || !Number.isNaN(new Date(value).getTime())) {
+      return normalizeProviderTimestamp(value);
+    }
+  }
+  return undefined;
+};
+
+const readOpenCodeAssistantUsage = (messageInfo: AnyRecord | null): OpenCodeAssistantUsage | undefined => {
+  if (readOptionalString(messageInfo?.role) !== 'assistant') return undefined;
+  const tokens = readObjectRecord(messageInfo?.tokens);
+  const cache = readObjectRecord(tokens?.cache);
+  const input = readNonNegativeInteger(tokens?.input);
+  const output = readNonNegativeInteger(tokens?.output);
+  const reasoning = readNonNegativeInteger(tokens?.reasoning);
+  const total = readNonNegativeInteger(tokens?.total);
+  const cacheRead = readNonNegativeInteger(cache?.read);
+  const cacheWrite = readNonNegativeInteger(cache?.write);
+  const promptTotal = total !== undefined && output !== undefined && reasoning !== undefined
+    && total >= output + reasoning
+    ? total - output - reasoning
+    : undefined;
+
+  return {
+    fallbackInputTokens: input !== undefined && cacheWrite !== undefined ? input + cacheWrite : undefined,
+    outputTokens: output,
+    promptTotal,
+    totalTokens: total,
+    isZeroOnly: total === 0
+      && input === 0
+      && output === 0
+      && reasoning === 0
+      && cacheRead === 0
+      && cacheWrite === 0,
+  };
+};
+
+const buildOpenCodeResponseMetadata = (
+  usage: OpenCodeAssistantUsage,
+  previousTrustworthyTotal: number | undefined,
+  messageInfo: AnyRecord | null,
+  selectedTimestamp: string,
+): OpenCodeResponseMetadata | undefined => {
+  if (usage.outputTokens === undefined) return undefined;
+  // OpenCode's input + cache-read is the full prompt window. Subtracting the
+  // preceding real assistant call total isolates input introduced by this call.
+  const delta = usage.promptTotal !== undefined && previousTrustworthyTotal !== undefined
+    ? usage.promptTotal - previousTrustworthyTotal
+    : undefined;
+  const inputTokens = delta !== undefined && delta >= 0 ? delta : usage.fallbackInputTokens;
+  if (inputTokens === undefined) return undefined;
+  const time = readObjectRecord(messageInfo?.time);
+  return {
+    inputTokens,
+    outputTokens: usage.outputTokens,
+    timestamp: readOpenCodeResponseTimestamp(time?.completed)
+      ?? readOpenCodeResponseTimestamp(time?.created)
+      ?? selectedTimestamp,
+  };
+};
+
 const isUserTextEcho = (raw: AnyRecord): boolean => {
   return readOptionalString(raw.role) === 'user'
     || hasUserRole(raw.message)
@@ -221,14 +304,6 @@ const buildTokenUsage = (
     },
   };
 };
-
-const readPositiveContextWindow = (value: unknown): number | undefined => (
-  typeof value === 'number'
-  && Number.isSafeInteger(value)
-  && value > 0
-    ? value
-    : undefined
-);
 
 const readOpenCodeSessionColumnTokenUsage = (
   db: Database.Database,
@@ -343,33 +418,6 @@ const aggregateOpenCodeSessionTokenUsage = (
 };
 
 export class OpenCodeSessionsProvider implements IProviderSessions {
-  constructor(
-    private readonly models?: Pick<IProviderModels, 'getCurrentActiveModel' | 'getContextWindowForModel'>,
-  ) {}
-
-  private async attachContextWindow(
-    tokenUsage: AnyRecord | undefined,
-    providerSessionId: string,
-  ): Promise<AnyRecord | undefined> {
-    if (!tokenUsage || !this.models?.getContextWindowForModel) {
-      return tokenUsage;
-    }
-
-    try {
-      const activeModel = await this.models.getCurrentActiveModel(providerSessionId);
-      const contextWindow = readPositiveContextWindow(
-        await this.models.getContextWindowForModel(activeModel.model),
-      );
-      return contextWindow === undefined
-        ? tokenUsage
-        : { ...tokenUsage, total: contextWindow };
-    } catch {
-      // Context metadata is supplemental; preserve history and current usage
-      // when active-model or model-limit discovery is unavailable.
-      return tokenUsage;
-    }
-  }
-
   /**
    * Normalizes live `opencode run --format json` events into frontend messages.
    */
@@ -484,12 +532,20 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
     }
 
     if (type === 'step_finish') {
+      const stepTokens = readOpenCodeTokenComponents(part?.tokens);
       return [createNormalizedMessage({
         id: baseId,
         sessionId: eventSessionId,
         timestamp,
         provider: PROVIDER,
         kind: 'stream_end',
+        ...(stepTokens ? {
+          responseMetadata: {
+            inputTokens: stepTokens.input + stepTokens.cacheWrite,
+            outputTokens: stepTokens.output,
+            timestamp,
+          },
+        } : {}),
       })];
     }
 
@@ -534,10 +590,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
       `).all(providerSessionId) as OpenCodeHistoryRow[];
 
       const normalized = this.normalizeHistoryRows(rows, sessionId);
-      const tokenUsage = await this.attachContextWindow(
-        aggregateOpenCodeSessionTokenUsage(db, providerSessionId),
-        providerSessionId,
-      );
+      const tokenUsage = aggregateOpenCodeSessionTokenUsage(db, providerSessionId);
 
       const normalizedOffset = Math.max(0, offset);
       const normalizedLimit = limit === null ? null : Math.max(0, limit);
@@ -564,12 +617,44 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
   private normalizeHistoryRows(rows: OpenCodeHistoryRow[], sessionId: string): NormalizedMessage[] {
     const normalized: NormalizedMessage[] = [];
     const emittedMessageErrors = new Set<string>();
+    const finalRenderableIndexByMessage = new Map<string, number>();
+    const responseMetadataByMessage = new Map<string, OpenCodeResponseMetadata>();
+    const processedUsageMessageIds = new Set<string>();
+    let previousTrustworthyTotal: number | undefined;
+    let hasMeaningfulTrustworthyUsage = false;
+
+    const rememberRenderable = (messageId: string): void => {
+      finalRenderableIndexByMessage.set(messageId, normalized.length - 1);
+    };
 
     for (const row of rows) {
       const timestamp = normalizeProviderTimestamp(row.part_time_created ?? row.message_time_created);
       const baseId = `${row.message_id}_${row.part_id ?? normalized.length}`;
       const messageInfo = readJsonRecord(row.message_data);
       const messageRole = readOptionalString(messageInfo?.role);
+
+      if (!processedUsageMessageIds.has(row.message_id)) {
+        processedUsageMessageIds.add(row.message_id);
+        const usage = readOpenCodeAssistantUsage(messageInfo);
+        if (usage) {
+          const metadata = buildOpenCodeResponseMetadata(
+            usage,
+            previousTrustworthyTotal,
+            messageInfo,
+            normalizeProviderTimestamp(row.message_time_created),
+          );
+          if (metadata) responseMetadataByMessage.set(row.message_id, metadata);
+
+          // Missing/malformed totals cannot become predecessors. Empty
+          // bookkeeping rows after a real call must not erase that call total.
+          if (usage.totalTokens !== undefined && usage.promptTotal !== undefined) {
+            if (!usage.isZeroOnly || !hasMeaningfulTrustworthyUsage) {
+              previousTrustworthyTotal = usage.totalTokens;
+            }
+            if (!usage.isZeroOnly) hasMeaningfulTrustworthyUsage = true;
+          }
+        }
+      }
 
       if (
         messageInfo
@@ -586,6 +671,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
           kind: 'error',
           content: formatToolContent(messageInfo.error),
         }));
+        rememberRenderable(row.message_id);
       }
 
       if (!row.part_id) {
@@ -624,6 +710,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
             images: parsedImages.attachments.length > 0 ? parsedImages.attachments : undefined,
             files: parsedFiles.attachments.length > 0 ? parsedFiles.attachments : undefined,
           }));
+          rememberRenderable(row.message_id);
         }
         continue;
       }
@@ -639,6 +726,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
             kind: 'thinking',
             content,
           }));
+          rememberRenderable(row.message_id);
         }
         continue;
       }
@@ -669,6 +757,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
         }
 
         normalized.push(toolMessage);
+        rememberRenderable(row.message_id);
         continue;
       }
 
@@ -694,7 +783,15 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
           toolInput: partData,
           toolId: row.part_id,
         }));
+        rememberRenderable(row.message_id);
       }
+    }
+
+    for (const [messageId, index] of finalRenderableIndexByMessage) {
+      const selected = normalized[index];
+      if (!selected) continue;
+      const responseMetadata = responseMetadataByMessage.get(messageId);
+      if (responseMetadata) selected.responseMetadata = responseMetadata;
     }
 
     return normalized;
