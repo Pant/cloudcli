@@ -22,7 +22,9 @@
     "saved": "已儲存！",
     "exitFullscreen": "離開全螢幕",
     "fullscreen": "全螢幕",
-    "close": "關閉"
+    "close": "關閉",
+    "enableWordWrap": "啟用自動換行",
+    "disableWordWrap": "停用自動換行"
   },
   "footer": {
     "lines": "行數：",

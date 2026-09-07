@@ -64,6 +64,7 @@ export default function CodeEditor({
 
   const {
     wordWrap,
+    setWordWrap,
     minimapEnabled,
     showLineNumbers,
     fontSize,
@@ -301,10 +302,12 @@ export default function CodeEditor({
             isMarkdownFile={isMarkdownFile}
             isHtmlPreviewFile={isHtmlPreviewFile}
             markdownPreview={markdownPreview}
+            wordWrap={wordWrap}
             saving={saving}
             reloading={reloading}
             saveSuccess={saveSuccess}
             onToggleMarkdownPreview={() => setMarkdownPreview((previous) => !previous)}
+            onToggleWordWrap={() => setWordWrap((previous) => !previous)}
             onOpenHtmlPreview={openHtmlPreview}
             onOpenSettings={() => paletteOps.openSettings('appearance')}
             onDownload={handleDownload}
@@ -317,6 +320,8 @@ export default function CodeEditor({
               editMarkdown: t('actions.editMarkdown'),
               previewMarkdown: t('actions.previewMarkdown'),
               previewHtml: t('actions.previewHtml', 'Open HTML preview in new tab'),
+              enableWordWrap: t('actions.enableWordWrap'),
+              disableWordWrap: t('actions.disableWordWrap'),
               settings: t('toolbar.settings'),
               download: t('actions.download'),
               save: t('actions.save'),

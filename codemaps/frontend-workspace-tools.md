@@ -40,7 +40,7 @@ This map covers the project-scoped file explorer, editor, Git UI, terminal surfa
 | `CodeEditorSurface` | `src/components/code-editor/view/subcomponents/CodeEditorSurface.tsx` | CodeMirror editing/diff surface. |
 | `CodeEditorMediaPreview`, `CodeEditorBinaryFile` | `src/components/code-editor/view/subcomponents/CodeEditorMediaPreview.tsx`, `src/components/code-editor/view/subcomponents/CodeEditorBinaryFile.tsx` | Safe non-text branches; previewable media uses blob reads while other binaries are not editable. |
 | `useEditorSidebar` / `EditorSidebar` | `src/components/code-editor/hooks/useEditorSidebar.ts`, `src/components/code-editor/view/EditorSidebar.tsx` | Loads and navigates the editor-side file tree. |
-| `useCodeEditorSettings`, `loadLanguageExtensions`, `loadMergeCapability` | `src/components/code-editor/hooks/useCodeEditorSettings.ts`, `src/components/code-editor/utils/editorExtensions.ts` | Persist editor preferences and lazily install language/diff capabilities. |
+| `useCodeEditorSettings`, `loadLanguageExtensions`, `loadMergeCapability` | `src/components/code-editor/hooks/useCodeEditorSettings.ts`, `src/components/code-editor/utils/editorExtensions.ts` | Persist editor preferences and lazily install language/diff capabilities; the open-file header toggles the shared word-wrap preference and `CodeEditor` applies `EditorView.lineWrapping` immediately. |
 | `EditorRecoveryStore`, `editorRecoveryStore` | `src/stores/editorRecoveryStore.ts` | IndexedDB recovery keyed by account/project/file; `get`, `put`, and `delete` fail closed when IndexedDB is unavailable and retain at most 50 records. |
 
 ### Git
@@ -118,7 +118,7 @@ When visible, `BrowserUsePanel.refresh` concurrently reads `/api/browser-use/sta
 ## Focused validation and tests
 
 - File tree merge/cache/search helpers: `src/components/file-tree/utils/fileTreeUtils.test.ts`.
-- Editor document and extensions: `src/components/code-editor/hooks/useCodeEditorDocument.test.ts`, `src/components/code-editor/utils/editorExtensions.test.ts`, `src/components/code-editor/view/EditorSidebar.test.tsx`.
+- Editor document, extensions, and header controls: `src/components/code-editor/hooks/useCodeEditorDocument.test.ts`, `src/components/code-editor/utils/editorExtensions.test.ts`, `src/components/code-editor/view/EditorSidebar.test.tsx`, `src/components/code-editor/view/subcomponents/CodeEditorHeader.test.tsx`.
 - Git repository selection and commit graph: `src/components/git-panel/utils/repositoryUtils.test.ts`, `src/components/git-panel/utils/commitGraph.test.ts`.
 - Terminal policy/keys: `src/components/shell/constants/constants.test.ts`, `src/components/shell/utils/terminalShortcutKeys.test.ts`.
 - Documentation validation performed for this map: source paths/exports were checked and the four representative flows above were traced through their defining components/hooks and API calls.

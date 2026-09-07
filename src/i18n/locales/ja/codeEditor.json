@@ -22,7 +22,9 @@
     "saved": "保存しました！",
     "exitFullscreen": "全画面を終了",
     "fullscreen": "全画面",
-    "close": "閉じる"
+    "close": "閉じる",
+    "enableWordWrap": "行の折り返しを有効化",
+    "disableWordWrap": "行の折り返しを無効化"
   },
   "footer": {
     "lines": "行数:",

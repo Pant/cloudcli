@@ -1,4 +1,4 @@
-import { Code2, Download, Eye, Maximize2, Minimize2, RefreshCw, Save, Settings as SettingsIcon, X } from 'lucide-react';
+import { Code2, Download, Eye, Maximize2, Minimize2, RefreshCw, Save, Settings as SettingsIcon, WrapText, X } from 'lucide-react';
 
 import type { CodeEditorFile } from '../../types/types';
 
@@ -9,10 +9,12 @@ type CodeEditorHeaderProps = {
   isMarkdownFile: boolean;
   isHtmlPreviewFile: boolean;
   markdownPreview: boolean;
+  wordWrap: boolean;
   saving: boolean;
   reloading: boolean;
   saveSuccess: boolean;
   onToggleMarkdownPreview: () => void;
+  onToggleWordWrap: () => void;
   onOpenHtmlPreview: () => void;
   onOpenSettings: () => void;
   onDownload: () => void;
@@ -25,6 +27,8 @@ type CodeEditorHeaderProps = {
     editMarkdown: string;
     previewMarkdown: string;
     previewHtml: string;
+    enableWordWrap: string;
+    disableWordWrap: string;
     settings: string;
     download: string;
     save: string;
@@ -45,10 +49,12 @@ export default function CodeEditorHeader({
   isMarkdownFile,
   isHtmlPreviewFile,
   markdownPreview,
+  wordWrap,
   saving,
   reloading,
   saveSuccess,
   onToggleMarkdownPreview,
+  onToggleWordWrap,
   onOpenHtmlPreview,
   onOpenSettings,
   onDownload,
@@ -104,6 +110,21 @@ export default function CodeEditorHeader({
             <Eye className="h-4 w-4" />
           </button>
         )}
+
+        <button
+          type="button"
+          onClick={onToggleWordWrap}
+          className={`flex items-center justify-center rounded-md p-1.5 transition-colors ${
+            wordWrap
+              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white'
+          }`}
+          title={wordWrap ? labels.disableWordWrap : labels.enableWordWrap}
+          aria-label={wordWrap ? labels.disableWordWrap : labels.enableWordWrap}
+          aria-pressed={wordWrap}
+        >
+          <WrapText className="h-4 w-4" />
+        </button>
 
         <button
           type="button"

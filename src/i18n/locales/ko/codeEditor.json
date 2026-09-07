@@ -24,7 +24,9 @@
     "fullscreen": "전체화면",
     "close": "닫기",
     "previewMarkdown": "마크다운 미리보기",
-    "editMarkdown": "마크다운 편집"
+    "editMarkdown": "마크다운 편집",
+    "enableWordWrap": "줄 바꿈 사용",
+    "disableWordWrap": "줄 바꿈 사용 안 함"
   },
   "footer": {
     "lines": "줄:",

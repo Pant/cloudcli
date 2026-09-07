@@ -24,7 +24,9 @@
     "fullscreen": "全屏",
     "close": "关闭",
     "previewMarkdown": "预览 Markdown",
-    "editMarkdown": "编辑 Markdown"
+    "editMarkdown": "编辑 Markdown",
+    "enableWordWrap": "启用自动换行",
+    "disableWordWrap": "禁用自动换行"
   },
   "footer": {
     "lines": "行数：",

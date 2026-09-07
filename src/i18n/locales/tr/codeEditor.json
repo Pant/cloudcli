@@ -24,7 +24,9 @@
     "fullscreen": "Tam ekran",
     "close": "Kapat",
     "previewMarkdown": "Markdown önizle",
-    "editMarkdown": "Markdown düzenle"
+    "editMarkdown": "Markdown düzenle",
+    "enableWordWrap": "Satır kaydırmayı etkinleştir",
+    "disableWordWrap": "Satır kaydırmayı devre dışı bırak"
   },
   "footer": {
     "lines": "Satır:",

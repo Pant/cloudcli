@@ -24,7 +24,9 @@
     "fullscreen": "Vollbild",
     "close": "Schließen",
     "previewMarkdown": "Markdown-Vorschau",
-    "editMarkdown": "Markdown bearbeiten"
+    "editMarkdown": "Markdown bearbeiten",
+    "enableWordWrap": "Zeilenumbruch aktivieren",
+    "disableWordWrap": "Zeilenumbruch deaktivieren"
   },
   "footer": {
     "lines": "Zeilen:",

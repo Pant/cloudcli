@@ -24,7 +24,9 @@
     "fullscreen": "Полноэкранный режим",
     "close": "Закрыть",
     "previewMarkdown": "Предпросмотр markdown",
-    "editMarkdown": "Редактировать markdown"
+    "editMarkdown": "Редактировать markdown",
+    "enableWordWrap": "Включить перенос строк",
+    "disableWordWrap": "Отключить перенос строк"
   },
   "footer": {
     "lines": "Строк:",

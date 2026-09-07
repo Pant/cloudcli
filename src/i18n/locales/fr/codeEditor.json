@@ -24,7 +24,9 @@
     "fullscreen": "Plein écran",
     "close": "Fermer",
     "previewMarkdown": "Aperçu markdown",
-    "editMarkdown": "Modifier le markdown"
+    "editMarkdown": "Modifier le markdown",
+    "enableWordWrap": "Activer le retour à la ligne",
+    "disableWordWrap": "Désactiver le retour à la ligne"
   },
   "footer": {
     "lines": "Lignes :",
