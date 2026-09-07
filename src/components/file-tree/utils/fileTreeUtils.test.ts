@@ -9,6 +9,7 @@ import {
   createRecentProjectFileTreeCache,
   collectFileTreeZipEntries,
   collectFileTreeDestinations,
+  collectFileTreePaths,
   extractFileTreeSubtree,
   findLoadedDirectoryPaths,
   formatFileSize,
@@ -348,6 +349,25 @@ test('selection helpers normalize nested paths and resolve visible nodes', () =>
   assert.deepEqual(resolveFileTreeNodes(tree, ['/project/src/main.ts', '/missing']).map((node) => node.path), [
     '/project/src/main.ts',
   ]);
+});
+
+test('complete-tree path collection includes files, directories, and nested descendants', () => {
+  const tree = [
+    directory('/project/src', [
+      file('/project/src/main.ts'),
+      directory('/project/src/lib', [file('/project/src/lib/util.ts')]),
+    ]),
+    file('/project/readme.md'),
+  ];
+
+  assert.deepEqual(collectFileTreePaths(tree), [
+    '/project/src',
+    '/project/src/main.ts',
+    '/project/src/lib',
+    '/project/src/lib/util.ts',
+    '/project/readme.md',
+  ]);
+  assert.deepEqual(collectFileTreePaths([]), []);
 });
 
 test('destination choices include root and exclude selected directory descendants', () => {

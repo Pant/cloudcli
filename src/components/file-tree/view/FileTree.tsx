@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, X, Loader2, Folder, Upload, Copy, Move, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, X, Loader2, Folder, Upload, Copy, Move, Trash2, ListChecks } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
 import { ICON_SIZE_CLASS, getFileIconData } from '../constants/fileIcons';
@@ -11,7 +11,7 @@ import { useFileTreeSearch } from '../hooks/useFileTreeSearch';
 import { useFileTreeViewMode } from '../hooks/useFileTreeViewMode';
 import { useFileTreeUpload } from '../hooks/useFileTreeUpload';
 import type { FileTreeImageSelection, FileTreeNode } from '../types/types';
-import { collectFileTreeDestinations, formatFileSize, formatRelativeTime, isImageFile } from '../utils/fileTreeUtils';
+import { collectFileTreeDestinations, collectFileTreePaths, formatFileSize, formatRelativeTime, isImageFile } from '../utils/fileTreeUtils';
 import { Project } from '../../../types/app';
 import { ScrollArea, Input } from '../../../shared/view/ui';
 
@@ -34,6 +34,8 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const newItemInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const selectedProjectIdRef = useRef(selectedProject?.projectId);
+  selectedProjectIdRef.current = selectedProject?.projectId;
 
   // Show toast notification
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
@@ -68,6 +70,8 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
     onRefresh: refreshFiles,
     showToast,
   });
+  const [selectAllLoading, setSelectAllLoading] = useState(false);
+  useEffect(() => setSelectAllLoading(false), [selectedProject?.projectId]);
 
   // File upload (drag and drop)
   const upload = useFileTreeUpload({
@@ -75,13 +79,34 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
     onRefresh: refreshFiles,
     showToast,
   });
-  const operationLoading = operations.operationLoading || upload.operationLoading;
+  const operationLoading = operations.operationLoading || upload.operationLoading || selectAllLoading;
   const [destinationTree, setDestinationTree] = useState<FileTreeNode[]>([]);
 
   useEffect(() => {
     if (!operations.batchOperation) setDestinationTree([]);
     else void loadCompleteTree().then(setDestinationTree).catch((error: Error) => showToast(error.message, 'error'));
   }, [loadCompleteTree, operations.batchOperation, showToast]);
+
+  const handleSelectAll = useCallback(async () => {
+    const projectId = selectedProject?.projectId;
+    if (!projectId || operationLoading) return;
+
+    setSelectAllLoading(true);
+    try {
+      const completeTree = await loadCompleteTree();
+      if (selectedProjectIdRef.current === projectId) {
+        operations.replaceSelection(collectFileTreePaths(completeTree));
+      }
+    } catch (error) {
+      if (selectedProjectIdRef.current === projectId) {
+        showToast((error as Error).message, 'error');
+      }
+    } finally {
+      if (selectedProjectIdRef.current === projectId) {
+        setSelectAllLoading(false);
+      }
+    }
+  }, [loadCompleteTree, operationLoading, operations, selectedProject?.projectId, showToast]);
 
   // Focus input when creating new item
   useEffect(() => {
@@ -179,6 +204,7 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
       {operations.selectedPaths.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2" role="toolbar" aria-label={t('fileTree.batch.actions', 'Selected item actions')}>
           <span className="mr-auto text-sm font-medium">{t('fileTree.batch.count', '{{count}} selected', { count: operations.selectedPaths.size })}</span>
+          <button type="button" disabled={operationLoading} onClick={() => void handleSelectAll()} className="flex min-h-9 items-center gap-1 rounded px-2 hover:bg-accent disabled:opacity-50">{selectAllLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListChecks className="h-4 w-4" />}{t('fileTree.batch.selectAll', 'Select all')}</button>
           <button type="button" disabled={operationLoading} onClick={() => operations.handleStartBatch('copy')} className="flex min-h-9 items-center gap-1 rounded px-2 hover:bg-accent disabled:opacity-50"><Copy className="h-4 w-4" />{t('fileTree.batch.copy', 'Copy')}</button>
           <button type="button" disabled={operationLoading} onClick={() => operations.handleStartBatch('move')} className="flex min-h-9 items-center gap-1 rounded px-2 hover:bg-accent disabled:opacity-50"><Move className="h-4 w-4" />{t('fileTree.batch.move', 'Move')}</button>
           <button type="button" disabled={operationLoading} onClick={() => operations.handleStartBatch('delete')} className="flex min-h-9 items-center gap-1 rounded px-2 text-red-600 hover:bg-red-50 disabled:opacity-50"><Trash2 className="h-4 w-4" />{t('fileTree.batch.delete', 'Delete')}</button>

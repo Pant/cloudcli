@@ -136,6 +136,7 @@
     "batch": {
       "actions": "Selected item actions",
       "count": "{{count}} selected",
+      "selectAll": "Select all",
       "copy": "Copy",
       "move": "Move",
       "delete": "Delete",

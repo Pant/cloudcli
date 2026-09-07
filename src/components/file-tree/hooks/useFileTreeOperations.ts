@@ -48,6 +48,7 @@ export type UseFileTreeOperationsResult = {
   batchDestination: string;
   setBatchDestination: (path: string) => void;
   toggleSelection: (item: FileTreeNode) => void;
+  replaceSelection: (paths: Iterable<string>) => void;
   clearSelection: () => void;
   closeBatchDialog: () => void;
   handleConfirmBatch: () => Promise<void>;
@@ -111,6 +112,7 @@ export function useFileTreeOperations({
     });
   }, []);
   const clearSelection = useCallback(() => setSelectedPaths(new Set()), []);
+  const replaceSelection = useCallback((paths: Iterable<string>) => setSelectedPaths(new Set(paths)), []);
   const closeBatchDialog = useCallback(() => {
     setBatchOperation(null);
     setBatchDestination('');
@@ -418,6 +420,7 @@ export function useFileTreeOperations({
     batchDestination,
     setBatchDestination,
     toggleSelection,
+    replaceSelection,
     clearSelection,
     closeBatchDialog,
     handleConfirmBatch,

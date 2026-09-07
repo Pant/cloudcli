@@ -54,6 +54,17 @@ export function resolveFileTreeNodes(items: FileTreeNodes, paths: Iterable<strin
   return resolved;
 }
 
+/** Collect every file and directory path from a complete tree. */
+export function collectFileTreePaths(items: FileTreeNodes): string[] {
+  const paths: string[] = [];
+  const visit = (nodes: FileTreeNodes) => nodes.forEach((node) => {
+    paths.push(node.path);
+    if (node.children) visit(node.children);
+  });
+  visit(items);
+  return paths;
+}
+
 /** Collapse nested selections to the highest selected path. */
 export function normalizeSelectedPaths(paths: Iterable<string>): string[] {
   const unique = [...new Set(paths)].sort((a, b) => a.length - b.length || a.localeCompare(b));
