@@ -72,7 +72,7 @@ if (capturePath) {
   }));
 }
 
-const events = [
+const defaultEvents = [
   { type: 'text', sessionID: 'open-live-1', text: 'assistant response' },
   { type: 'tool_use', sessionID: 'open-live-1', part: { id: 'part-task', tool: 'task', callID: 'task-call-1', state: { status: 'completed', input: { description: 'Inspect notifications' }, output: 'done' } } },
   { type: 'tool_use', sessionID: 'open-live-1', part: { id: 'part-task', tool: 'Task', callID: 'task-call-1', state: { status: 'completed', input: { description: 'Inspect notifications' }, output: 'done' } } },
@@ -80,6 +80,9 @@ const events = [
   { type: 'step_finish', sessionID: 'open-live-1', messageID: 'message-step-2', part: { id: 'step-2', type: 'step-finish', tokens: { input: 4, output: 6, reasoning: 1, cache: { read: 8, write: 2 } } } },
   { type: 'step_finish', sessionID: 'open-live-1', messageID: 'message-step-2', part: { id: 'step-2', type: 'step-finish', tokens: { input: 4, output: 6, reasoning: 1, cache: { read: 8, write: 2 } } } },
 ];
+const events = process.env.OPENCODE_TEST_EVENTS
+  ? JSON.parse(process.env.OPENCODE_TEST_EVENTS)
+  : defaultEvents;
 
 if (process.env.OPENCODE_TEST_STDERR) process.stderr.write(process.env.OPENCODE_TEST_STDERR);
 if (process.env.OPENCODE_TEST_SIGNAL === 'SIGTERM') {
@@ -826,6 +829,81 @@ test('OpenCode persists live output and returns safe bounded structured diagnost
       assert.equal(JSON.stringify(complete).includes(diagnosticRoot), false);
       assert.ok(messages.some((message) => message.kind === 'stream_delta'));
       assert.ok(messages.some((message) => message.kind === 'error' && message.content === 'prefix-1234567890'));
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode terminates repeated empty native steps with one actionable failure', { skip: process.platform === 'win32' }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-empty-steps-'));
+  const diagnosticRoot = path.join(tempRoot, 'logs');
+  const pathKey = findEnvKey('PATH');
+  const messages: AnyRecord[] = [];
+  const events = Array.from({ length: 4 }, (_, index) => ({
+    type: 'step_start', sessionID: 'empty-step-session', messageID: `step-${index}`,
+  }));
+  try {
+    await createFakeOpenCodeExecutable(tempRoot);
+    await withEnvironment({
+      [pathKey]: `${tempRoot}${path.delimiter}${process.env[pathKey] || ''}`,
+      CLOUDCLI_OPENCODE_DIAGNOSTIC_ROOT: diagnosticRoot,
+      CLOUDCLI_OPENCODE_EMPTY_STEP_THRESHOLD: '3',
+      OPENCODE_TEST_EVENTS: JSON.stringify(events),
+      OPENCODE_TEST_WAIT: '1',
+    }, async () => {
+      await assert.rejects(
+        opencodeRuntime.run('loop', { cwd: tempRoot }, {
+          userId: null, send(message) { messages.push(message as AnyRecord); },
+        }, runtimeContext),
+        (error: ProviderRuntimeError) => {
+          assert.match(error.message, /repeated empty steps/);
+          assert.equal(error.runtimeResult?.signal, 'SIGTERM');
+          assert.ok(error.runtimeResult?.diagnostic);
+          return true;
+        },
+      );
+      const errors = messages.filter((message) => message.kind === 'error');
+      assert.equal(errors.length, 1);
+      assert.match(errors[0].content, /context\/output limits/);
+      assert.equal(messages.filter((message) => message.kind === 'complete').length, 1);
+      const runDirectory = path.join(diagnosticRoot, (await readdir(diagnosticRoot))[0]);
+      const stdout = await readFile(path.join(runDirectory, 'stdout.log'), 'utf8');
+      assert.equal((stdout.match(/step_start/g) || []).length, 4);
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('meaningful native output resets empty-step tracking and preserves Task runs', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-empty-step-reset-'));
+  const pathKey = findEnvKey('PATH');
+  const messages: AnyRecord[] = [];
+  const events = [
+    { type: 'step_start', sessionID: 'reset-session' },
+    { type: 'step_start', sessionID: 'reset-session' },
+    { type: 'tool_use', sessionID: 'reset-session', part: { id: 'task-1', tool: 'Task', state: { status: 'running', input: { description: 'Inspect' } } } },
+    { type: 'step_start', sessionID: 'reset-session' },
+    { type: 'step_start', sessionID: 'reset-session' },
+    { type: 'text', sessionID: 'reset-session', text: 'Task result received' },
+    { type: 'step_finish', sessionID: 'reset-session', part: { id: 'finish-1' } },
+  ];
+  try {
+    await createFakeOpenCodeExecutable(tempRoot);
+    await withEnvironment({
+      [pathKey]: `${tempRoot}${path.delimiter}${process.env[pathKey] || ''}`,
+      CLOUDCLI_OPENCODE_EMPTY_STEP_THRESHOLD: '3',
+      OPENCODE_TEST_EVENTS: JSON.stringify(events),
+    }, async () => {
+      const result = await opencodeRuntime.run('delegate', { cwd: tempRoot }, {
+        userId: null, send(message) { messages.push(message as AnyRecord); },
+      }, runtimeContext) as ProviderRuntimeResult;
+      assert.equal(result.exitCode, 0);
+      assert.equal(messages.some((message) => message.kind === 'tool_use'), true);
+      assert.equal(messages.some((message) => message.content === 'Task result received'), true);
+      assert.equal(messages.some((message) => message.kind === 'error'), false);
+      assert.equal(messages.filter((message) => message.kind === 'complete').length, 1);
     });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

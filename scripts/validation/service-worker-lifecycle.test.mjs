@@ -15,9 +15,6 @@ function harness(scope = 'https://cloudcli.test/') {
   const addAllCalls = [];
   const fetchCalls = [];
   const opened = [];
-  const messages = [];
-  let skipWaiting = 0;
-  let update = 0;
   const cache = name => {
     if (!stores.has(name)) stores.set(name, new Map());
     const entries = stores.get(name);
@@ -32,9 +29,8 @@ function harness(scope = 'https://cloudcli.test/') {
   const clients = [];
   const self = {
     addEventListener: (name, listener) => listeners.set(name, listener),
-    registration: { scope, update: async () => { update += 1; }, showNotification: async () => {} },
+    registration: { scope, showNotification: async () => {} },
     clients: { claim: async () => {}, matchAll: async () => clients, openWindow: async url => { opened.push(url); } },
-    skipWaiting: () => { skipWaiting += 1; },
     location: { origin: new URL(scope).origin },
   };
   const caches = {
@@ -52,8 +48,8 @@ function harness(scope = 'https://cloudcli.test/') {
     await pending;
     return response ? response : undefined;
   };
-  return { listeners, stores, deletedCaches, putCalls, addAllCalls, fetchCalls, opened, messages, clients, run,
-    setFetch: fn => { fetchImpl = fn; }, counts: () => ({ skipWaiting, update }) };
+  return { listeners, stores, deletedCaches, putCalls, addAllCalls, fetchCalls, opened, clients, run,
+    setFetch: fn => { fetchImpl = fn; } };
 }
 
 const request = (url, { method = 'GET', mode = 'cors' } = {}) => ({ url, method, mode });
@@ -62,7 +58,7 @@ test('install precaches the generated scoped shell without activating early', as
   const h = harness('https://cloudcli.test/ai/');
   await h.run('install');
   assert.deepEqual(Array.from(h.addAllCalls[0].urls), ['https://cloudcli.test/ai/index.html', 'https://cloudcli.test/ai/manifest.json', 'https://cloudcli.test/ai/assets/app-123.js']);
-  assert.equal(h.counts().skipWaiting, 0);
+  assert.equal(h.listeners.has('message'), false);
 });
 
 test('fetch excludes cross-origin, API, and mutation requests', () => {
@@ -97,13 +93,6 @@ test('activation removes only obsolete CloudCLI cache versions', async () => {
   for (const name of ['cloudcli-pwa-old-shell', 'cloudcli-pwa-build-7-shell', 'cloudcli-pwa-build-7-runtime', 'foreign-cache']) h.stores.set(name, new Map());
   await h.run('activate');
   assert.deepEqual(h.deletedCaches, ['cloudcli-pwa-old-shell']);
-});
-
-test('update messages check and explicitly activate the waiting worker', async () => {
-  const h = harness();
-  await h.run('message', { data: { type: 'cloudcli:check-update' } });
-  await h.run('message', { data: { type: 'cloudcli:activate-update' } });
-  assert.deepEqual(h.counts(), { skipWaiting: 1, update: 1 });
 });
 
 test('notification clicks focus scoped clients or open root/subpath URLs', async () => {

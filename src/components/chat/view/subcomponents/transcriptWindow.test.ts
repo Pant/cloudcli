@@ -7,7 +7,31 @@ import {
   calculateMeasuredWindow,
   compensateMeasuredGrowth,
   keyboardWindowTarget,
+  recordMeasuredHeight,
+  viewportMetricsChanged,
 } from './transcriptWindow';
+
+test('row measurements only record genuine positive height changes', () => {
+  const heights = new Map<number, number>();
+  assert.deepEqual(recordMeasuredHeight(heights, 4, 120), { previousHeight: undefined, changed: true });
+  assert.deepEqual(recordMeasuredHeight(heights, 4, 120), { previousHeight: 120, changed: false });
+  assert.deepEqual(recordMeasuredHeight(heights, 4, 0), { previousHeight: 120, changed: false });
+  assert.deepEqual(recordMeasuredHeight(heights, 4, 240), { previousHeight: 120, changed: true });
+  assert.equal(heights.get(4), 240);
+});
+
+test('unchanged transcript viewport metrics do not require a window revision', () => {
+  const metrics = { scrollTop: 1200, width: 900, height: 640 };
+  assert.equal(viewportMetricsChanged(metrics, { ...metrics }), false);
+});
+
+test('initial, scroll, and viewport size changes require a window revision', () => {
+  const metrics = { scrollTop: 1200, width: 900, height: 640 };
+  assert.equal(viewportMetricsChanged(null, metrics), true);
+  assert.equal(viewportMetricsChanged(metrics, { ...metrics, scrollTop: 1320 }), true);
+  assert.equal(viewportMetricsChanged(metrics, { ...metrics, width: 880 }), true);
+  assert.equal(viewportMetricsChanged(metrics, { ...metrics, height: 720 }), true);
+});
 
 test('normal 100-row transcripts retain the complete rendering path', () => {
   assert.deepEqual(calculateMeasuredWindow(LARGE_TRANSCRIPT_THRESHOLD, 6000, 600, new Map()), {

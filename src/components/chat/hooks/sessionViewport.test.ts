@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   advanceViewportSettle,
   chooseViewportSnapshot,
+  getViewportRevisionAction,
   isSelectionCurrent,
   shouldApplyViewportRevision,
   shouldPinViewport,
@@ -45,6 +46,29 @@ test('viewport revisions are fenced across rapid exact-identity switches', () =>
   assert.equal(shouldApplyViewportRevision({ expectedIdentityKey: 'selected:a:p', currentIdentityKey: 'selected:b:p', previousRevision: 1, nextRevision: 2, searchActive: false }), false);
   assert.equal(shouldApplyViewportRevision({ expectedIdentityKey: 'selected:b:p', currentIdentityKey: 'selected:b:p', previousRevision: 1, nextRevision: 2, searchActive: false }), true);
   assert.equal(shouldApplyViewportRevision({ expectedIdentityKey: 'selected:b:p', currentIdentityKey: 'selected:b:p', previousRevision: 2, nextRevision: 2, searchActive: false }), false);
+});
+
+test('stream revisions use one direct follow only for bottom ownership', () => {
+  const base = {
+    expectedIdentityKey: 'selected:a:p', currentIdentityKey: 'selected:a:p',
+    previousRevision: 1, nextRevision: 2, searchActive: false,
+    previousMessages: [{ id: 'stream', kind: 'stream_delta', content: 'a' }],
+    nextMessages: [{ id: 'stream', kind: 'stream_delta', content: 'ab' }],
+  };
+  assert.equal(getViewportRevisionAction({ ...base, saved: { mode: 'bottom', bottomDistance: 0 } }), 'stream-follow');
+  assert.equal(getViewportRevisionAction({ ...base, saved: { mode: 'anchor', key: 'older', offset: 4 } }), 'none');
+  assert.equal(getViewportRevisionAction({ ...base, saved: { mode: 'bottom', bottomDistance: 0 }, searchActive: true }), 'none');
+});
+
+test('session, canonical, final, and other structural revisions retain settlement', () => {
+  const common = {
+    expectedIdentityKey: 'selected:a:p', currentIdentityKey: 'selected:a:p',
+    previousRevision: 1, nextRevision: 2, searchActive: false,
+    saved: { mode: 'bottom', bottomDistance: 0 } as const,
+  };
+  assert.equal(getViewportRevisionAction({ ...common, previousMessages: [], nextMessages: [{ id: 'stream', kind: 'stream_delta', content: 'a' }] }), 'stream-follow');
+  assert.equal(getViewportRevisionAction({ ...common, previousMessages: [{ id: 'stream', kind: 'stream_delta', content: 'a' }], nextMessages: [{ id: 'final', kind: 'assistant', content: 'a' }] }), 'structural-settle');
+  assert.equal(getViewportRevisionAction({ ...common, previousMessages: [{ id: 'a', kind: 'assistant', content: 'a' }], nextMessages: [{ id: 'a', kind: 'assistant', content: 'a' }, { id: 'b', kind: 'assistant', content: 'b' }] }), 'structural-settle');
 });
 
 test('settling stops after stable measurements or the frame bound', () => {

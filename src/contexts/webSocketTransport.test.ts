@@ -4,11 +4,8 @@ import test from 'node:test';
 import {
   getWebSocketRetryDelay,
   getWebSocketTransportState,
-  getClientBuildVersionUrl,
   isCurrentWebSocketLifecycle,
   shouldArmWebSocketReload,
-  shouldReloadForClientBuild,
-  parseClientBuildResource,
   shouldRetryWebSocketClose,
 } from './webSocketTransport';
 import type { WebSocketContextType } from './webSocketTypes';
@@ -71,22 +68,4 @@ test('reload arms once only after a healthy current connection closes unexpected
 test('lifecycle epochs fence stale socket callbacks', () => {
   assert.equal(isCurrentWebSocketLifecycle(4, 4), true);
   assert.equal(isCurrentWebSocketLifecycle(5, 4), false);
-});
-
-test('client build reload requires a changed non-empty identifier and no pending reload', () => {
-  const currentBuildId = 'current-build';
-  assert.equal(shouldReloadForClientBuild({ currentBuildId, servedBuildId: 'next-build', reloadPending: false }), true);
-  assert.equal(shouldReloadForClientBuild({ currentBuildId, servedBuildId: currentBuildId, reloadPending: false }), false);
-  assert.equal(shouldReloadForClientBuild({ currentBuildId, servedBuildId: null, reloadPending: false }), false);
-  assert.equal(shouldReloadForClientBuild({ currentBuildId, servedBuildId: '', reloadPending: false }), false);
-  assert.equal(shouldReloadForClientBuild({ currentBuildId, servedBuildId: 'next-build', reloadPending: true }), false);
-});
-
-test('compact build resource stays deployment-prefix safe and rejects malformed payloads', () => {
-  assert.equal(getClientBuildVersionUrl('https://example.test/cloudcli/'), 'https://example.test/cloudcli/cloudcli-version.json');
-  assert.equal(getClientBuildVersionUrl('https://example.test/cloudcli/session/1'), 'https://example.test/cloudcli/session/cloudcli-version.json');
-  assert.equal(parseClientBuildResource({ build: 'next-build' }), 'next-build');
-  assert.equal(parseClientBuildResource({ build: '' }), null);
-  assert.equal(parseClientBuildResource({ build: 1 }), null);
-  assert.equal(parseClientBuildResource(null), null);
 });

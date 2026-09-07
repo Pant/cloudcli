@@ -25,11 +25,6 @@ self.addEventListener('activate', event => {
     .map(name => caches.delete(name)))).then(() => self.clients.claim()));
 });
 
-self.addEventListener('message', event => {
-  if (event.data?.type === 'cloudcli:activate-update') self.skipWaiting();
-  if (event.data?.type === 'cloudcli:check-update') event.waitUntil(self.registration.update());
-});
-
 self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);

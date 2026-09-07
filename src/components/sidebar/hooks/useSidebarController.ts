@@ -148,7 +148,6 @@ export function useSidebarController({
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
   const [bulkSessionDeleteConfirmation, setBulkSessionDeleteConfirmation] = useState<BulkSessionDeleteConfirmation | null>(null);
   const [isBulkSessionDeletePending, setIsBulkSessionDeletePending] = useState(false);
-  const [showVersionModal, setShowVersionModal] = useState(false);
   const [searchMode, setSearchMode] = useState<SidebarSearchMode>('projects');
   const [conversationResults, setConversationResults] = useState<ConversationSearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -1103,7 +1102,6 @@ export function useSidebarController({
     selectedSessionIds,
     bulkSessionDeleteConfirmation,
     isBulkSessionDeletePending,
-    showVersionModal,
     filteredProjects,
     runningSessionsCount,
     archivedProjects: filteredArchivedProjects,
@@ -1159,6 +1157,5 @@ export function useSidebarController({
     setDeleteConfirmation,
     setSessionDeleteConfirmation,
     setBulkSessionDeleteConfirmation,
-    setShowVersionModal,
   };
 }

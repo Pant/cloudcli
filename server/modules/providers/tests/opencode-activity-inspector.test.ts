@@ -159,6 +159,52 @@ test('lifecycle snapshots retain the latest terminal state and task update fresh
   });
 });
 
+test('running and lifecycle consumers share a cached snapshot until the database changes', async () => {
+  await withDatabase([
+    { type: 'tool', tool: 'task', state: { status: 'running', metadata: { sessionId: 'cached-child' } } },
+  ], (databasePath) => {
+    assert.equal(listOpenCodeRunningChildSessions(databasePath)[0]?.providerSessionId, 'cached-child');
+
+    const db = new Database(databasePath);
+    db.prepare('UPDATE part SET data = ?, time_updated = ? WHERE id = ?').run(
+      JSON.stringify({ type: 'tool', tool: 'task', state: { status: 'completed', metadata: { sessionId: 'cached-child' } } }),
+      1_700_000_000_999,
+      'part-0',
+    );
+    db.close();
+
+    assert.deepEqual(listOpenCodeRunningChildSessions(databasePath), []);
+    assert.equal(listOpenCodeChildActivitySnapshots(databasePath)[0]?.state, 'completed');
+  });
+});
+
+test('child activity is batched across optional native tables', async () => {
+  await withDatabase([
+    { type: 'tool', tool: 'task', state: { status: 'running', metadata: { sessionId: 'active-child' } } },
+  ], (databasePath) => {
+    const db = new Database(databasePath);
+    db.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER)');
+    db.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run('message-1', 'active-child', 1_700_000_001_000, 1_700_000_002_000);
+    db.close();
+
+    const snapshot = listOpenCodeChildActivitySnapshots(databasePath)[0];
+    assert.equal(snapshot?.childActivityAt, 1_700_000_002_000);
+    assert.equal(snapshot?.lastActivityAt, 1_700_000_002_000);
+  });
+});
+
+test('non-Task rows with unrelated ids are excluded by SQL prefiltering and parsing', async () => {
+  await withDatabase([
+    { type: 'text', metadata: { sessionId: 'not-a-child' }, text: 'ordinary output' },
+    { type: 'tool', tool: 'sub-agent', state: { status: 'running', metadata: { childId: 'real-child' } } },
+  ], (databasePath) => {
+    assert.deepEqual(
+      listOpenCodeRunningChildSessions(databasePath).map(({ providerSessionId }) => providerSessionId),
+      ['real-child'],
+    );
+  });
+});
+
 test('missing and malformed OpenCode databases fail open', async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'opencode-activity-malformed-'));
   const malformedPath = path.join(tempDirectory, 'malformed.db');

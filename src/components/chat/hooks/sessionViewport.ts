@@ -95,3 +95,41 @@ export function shouldApplyViewportRevision(options: {
     && options.previousRevision !== options.nextRevision
     && !options.searchActive;
 }
+
+export type ViewportRevisionAction = 'none' | 'stream-follow' | 'structural-settle';
+
+interface ViewportRevisionMessage {
+  id: string;
+  kind: string;
+  content?: string;
+}
+
+export function getViewportRevisionAction(options: {
+  expectedIdentityKey: string | null;
+  currentIdentityKey: string | null;
+  previousRevision: number;
+  nextRevision: number;
+  previousMessages: readonly ViewportRevisionMessage[];
+  nextMessages: readonly ViewportRevisionMessage[];
+  saved: SavedViewport | null;
+  searchActive: boolean;
+}): ViewportRevisionAction {
+  if (!shouldApplyViewportRevision(options)) return 'none';
+
+  const appendedStream = options.nextMessages.length === options.previousMessages.length + 1
+    && options.previousMessages.every((message, index) => message === options.nextMessages[index])
+    && options.nextMessages.at(-1)?.kind === 'stream_delta';
+  const updatedStream = options.previousMessages.length === options.nextMessages.length
+    && options.nextMessages.reduce((changed, message, index) => {
+      const previous = options.previousMessages[index];
+      if (previous === message) return changed;
+      return changed + (previous?.id === message.id
+        && previous.kind === 'stream_delta'
+        && message.kind === 'stream_delta'
+        && previous.content !== message.content ? 1 : 2);
+    }, 0) === 1;
+  const streamOnly = appendedStream || updatedStream;
+
+  if (!streamOnly) return 'structural-settle';
+  return options.saved?.mode === 'bottom' ? 'stream-follow' : 'none';
+}

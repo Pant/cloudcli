@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { version as currentVersion } from '../../../../package.json';
 import { useDeviceSettings } from '../../../hooks/useDeviceSettings';
-import { useVersionCheck } from '../../../hooks/useVersionCheck';
 import { useUiPreferences } from '../../../hooks/useUiPreferences';
 import { useSidebarController } from '../hooks/useSidebarController';
 import { usePaletteOps } from '../../../contexts/paletteOps';
@@ -39,10 +39,6 @@ function Sidebar({
 }: SidebarProps) {
   const { t } = useTranslation(['sidebar', 'common']);
   const { isPWA } = useDeviceSettings({ trackMobile: false });
-  const { updateAvailable, restartRequired, latestVersion, currentVersion, releaseInfo, installMode } = useVersionCheck(
-    'siteboon',
-    'claudecodeui',
-  );
   const { preferences, setPreference } = useUiPreferences();
   const { sidebarVisible } = preferences;
   const paletteOps = usePaletteOps();
@@ -75,7 +71,6 @@ function Sidebar({
     selectedSessionIds,
     bulkSessionDeleteConfirmation,
     isBulkSessionDeletePending,
-    showVersionModal,
     filteredProjects,
     archivedProjects,
     archivedSessions,
@@ -116,7 +111,6 @@ function Sidebar({
     setDeleteConfirmation,
     setSessionDeleteConfirmation,
     setBulkSessionDeleteConfirmation,
-    setShowVersionModal,
   } = useSidebarController({
     projects,
     selectedProject,
@@ -229,12 +223,6 @@ function Sidebar({
         isBulkSessionDeletePending={isBulkSessionDeletePending}
         onCancelBulkSessionDelete={() => setBulkSessionDeleteConfirmation(null)}
         onConfirmBulkSessionDelete={confirmBulkDeleteSessions}
-        showVersionModal={showVersionModal}
-        onCloseVersionModal={() => setShowVersionModal(false)}
-        releaseInfo={releaseInfo}
-        currentVersion={currentVersion}
-        latestVersion={latestVersion}
-        installMode={installMode}
         t={t}
       />
 
@@ -242,9 +230,6 @@ function Sidebar({
         <SidebarCollapsed
           onExpand={handleExpandSidebar}
           onShowSettings={onShowSettings}
-          updateAvailable={updateAvailable}
-          restartRequired={restartRequired}
-          onShowVersionModal={() => setShowVersionModal(true)}
           t={t}
         />
       ) : (
@@ -316,12 +301,7 @@ function Sidebar({
             isRefreshing={isRefreshing}
             onCreateProject={() => setShowNewProject(true)}
             onCollapseSidebar={handleCollapseSidebar}
-            updateAvailable={updateAvailable}
-            restartRequired={restartRequired}
-            releaseInfo={releaseInfo}
-            latestVersion={latestVersion}
             currentVersion={currentVersion}
-            onShowVersionModal={() => setShowVersionModal(true)}
             onShowSettings={onShowSettings}
             projectListProps={projectListProps}
             t={t}

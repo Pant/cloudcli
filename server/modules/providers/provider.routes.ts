@@ -532,7 +532,8 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const provider = parseProvider(req.params.provider);
     const workspacePath = readOptionalQueryString(req.query.workspacePath);
-    const agents = await providerAgentsService.listAvailableProviderAgents(provider, workspacePath);
+    const refresh = readOptionalQueryString(req.query.refresh) === 'true';
+    const agents = await providerAgentsService.listAvailableProviderAgents(provider, workspacePath, refresh);
     res.json(createApiSuccessResponse({ provider, agents }));
   }),
 );

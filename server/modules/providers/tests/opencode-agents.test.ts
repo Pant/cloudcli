@@ -114,6 +114,96 @@ test('OpenCode runtime agents hide disabled/hidden entries and sort custom agent
   }
 });
 
+test('OpenCode runtime agent discovery coalesces by workspace, bounds details, refreshes, and recovers from failures', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'cloudcli-opencode-agent-cache-'));
+  try {
+    const store = new OpenCodeConfigStore({ userConfigDirectory: directory });
+    let listCalls = 0;
+    let activeDetails = 0;
+    let peakDetails = 0;
+    let generation = 0;
+    let failNext = false;
+    const provider = new OpenCodeAgentsProvider(
+      store,
+      async (workspacePath) => {
+        listCalls += 1;
+        if (failNext) {
+          failNext = false;
+          throw new Error('transient list failure');
+        }
+        generation += 1;
+        return Array.from({ length: 9 }, (_, index) => `${workspacePath?.slice(-1) ?? 'g'}-${generation}-${index} (primary)`).join('\n');
+      },
+      async (name) => {
+        activeDetails += 1;
+        peakDetails = Math.max(peakDetails, activeDetails);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activeDetails -= 1;
+        return JSON.stringify({ name, native: name.endsWith('-0'), description: `Details ${name}` });
+      },
+    );
+
+    const [first, duplicate] = await Promise.all([
+      provider.listAvailableAgents({ workspacePath: '/workspace/a' }),
+      provider.listAvailableAgents({ workspacePath: '/workspace/a' }),
+    ]);
+    assert.deepEqual(duplicate, first);
+    assert.equal(listCalls, 1);
+    assert.equal(peakDetails, 4);
+    assert.equal(first.at(-1)?.name, 'a-1-0', 'native agents remain after custom agents');
+
+    const otherWorkspace = await provider.listAvailableAgents({ workspacePath: '/workspace/b' });
+    assert.equal(listCalls, 2);
+    assert.match(otherWorkspace[0].name, /^b-2-/);
+    assert.deepEqual(await provider.listAvailableAgents({ workspacePath: '/workspace/a' }), first);
+    assert.equal(listCalls, 2, 'workspace result is cached independently');
+
+    const refreshed = await provider.listAvailableAgents({ workspacePath: '/workspace/a', refresh: true });
+    assert.equal(listCalls, 3);
+    assert.match(refreshed[0].name, /^a-3-/);
+
+    failNext = true;
+    await assert.rejects(
+      provider.listAvailableAgents({ workspacePath: '/workspace/failure', refresh: true }),
+      /transient list failure/,
+    );
+    const recovered = await provider.listAvailableAgents({ workspacePath: '/workspace/failure' });
+    assert.match(recovered[0].name, /^e-4-/);
+    assert.equal(listCalls, 5, 'failed discovery leaves no poisoned result or in-flight entry');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('OpenCode agent mutations invalidate cached runtime catalogs', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'cloudcli-opencode-agent-invalidation-'));
+  try {
+    const store = new OpenCodeConfigStore({ userConfigDirectory: directory });
+    let listCalls = 0;
+    const provider = new OpenCodeAgentsProvider(
+      store,
+      async () => {
+        listCalls += 1;
+        return 'code (primary)';
+      },
+      async () => JSON.stringify({ native: false }),
+    );
+    await provider.listAvailableAgents();
+    await provider.listAvailableAgents();
+    assert.equal(listCalls, 1);
+
+    await provider.upsertAgent({ name: 'code', description: 'Code', mode: 'primary', options: {} });
+    await provider.listAvailableAgents();
+    await provider.updateAgentPreferences('code', { reasoningEffort: 'high' });
+    await provider.listAvailableAgents();
+    await provider.removeAgent('code');
+    await provider.listAvailableAgents();
+    assert.equal(listCalls, 4);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('OpenCode agent preference patches preserve unrelated config and clear default reasoning', { concurrency: false }, async () => {
   const previousProvider = process.env.CLOUDCLI_OPENCODE_PROVIDER_ID;
   process.env.CLOUDCLI_OPENCODE_PROVIDER_ID = 'cloudcli-openai';

@@ -131,10 +131,6 @@
     "restoreSessionFailed": "セッションの復元に失敗しました。もう一度お試しください。",
     "restoreSessionError": "セッションの復元でエラーが発生しました。もう一度お試しください。"
   },
-  "version": {
-    "updateAvailable": "アップデートあり",
-    "restartRequired": "更新が適用されていません。サーバーを再起動してください"
-  },
   "deleteConfirmation": {
     "deleteProject": "プロジェクトを除去",
     "deleteSession": "セッションを削除",

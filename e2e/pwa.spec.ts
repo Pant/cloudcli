@@ -20,12 +20,12 @@ test('built worker registers, owns only CloudCLI caches, and launches cached she
   await expect(page).toHaveTitle(/CloudCLI/);
 });
 
-test('worker preserves foreign caches and exposes scoped notification/update handlers', async ({ page }) => {
+test('worker preserves foreign caches and exposes scoped notification navigation', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(async () => { const cache = await caches.open('foreign-product-cache'); await cache.put('/foreign', new Response('kept')); });
   const worker = await (await import('node:fs/promises')).readFile('dist/sw.js', 'utf8');
-  expect(worker).toContain('cloudcli:check-update');
+  expect(worker).not.toContain('cloudcli:check-update');
+  expect(worker).not.toContain('cloudcli:activate-update');
   expect(worker).toContain('notificationclick');
-  await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.update());
   expect(await page.evaluate(() => caches.has('foreign-product-cache'))).toBe(true);
 });

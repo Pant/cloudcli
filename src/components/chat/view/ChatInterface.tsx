@@ -32,6 +32,7 @@ const notificationReplyIntentMaxAge = 60_000;
 const PromptAppointmentModal = React.lazy(() => import('./subcomponents/PromptAppointmentModal'));
 
 function ChatInterface({
+  isActive,
   selectedProject,
   selectedSession,
   ws,
@@ -55,6 +56,10 @@ function ChatInterface({
   const { t } = useTranslation('chat');
 
   const sessionStore = useSessionStoreContext();
+  useEffect(() => {
+    sessionStore.setChatSurfaceActive(isActive);
+    return () => sessionStore.setChatSurfaceActive(false);
+  }, [isActive, sessionStore]);
   const agentModelSyncKeyRef = useRef('');
   const preferenceOperationRef = useRef(0);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

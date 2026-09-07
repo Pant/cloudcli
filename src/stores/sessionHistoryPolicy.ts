@@ -65,6 +65,42 @@ export interface LocalHistoryReveal {
   allMessagesLoaded: boolean;
 }
 
+export function revealAllLocalHistory(totalMessages: number): LocalHistoryReveal {
+  return {
+    visibleCount: Math.max(0, totalMessages),
+    allMessagesLoaded: true,
+  };
+}
+
+export interface ReconcileLocalHistoryVisibilityOptions {
+  identityKey: string;
+  revealAllIdentityKey: string | null;
+  totalMessages: number;
+  hasCompleteHistory: boolean;
+  initialVisibleCount?: number;
+}
+
+export function reconcileLocalHistoryVisibility({
+  identityKey,
+  revealAllIdentityKey,
+  totalMessages,
+  hasCompleteHistory,
+  initialVisibleCount = 100,
+}: ReconcileLocalHistoryVisibilityOptions): LocalHistoryReveal {
+  if (identityKey === revealAllIdentityKey) {
+    return {
+      visibleCount: Infinity,
+      allMessagesLoaded: true,
+    };
+  }
+
+  const visibleCount = Math.min(Math.max(0, totalMessages), initialVisibleCount);
+  return {
+    visibleCount,
+    allMessagesLoaded: hasCompleteHistory && totalMessages <= visibleCount,
+  };
+}
+
 export function revealLocalHistoryWindow(
   currentVisibleCount: number,
   totalMessages: number,

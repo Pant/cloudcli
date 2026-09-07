@@ -9,11 +9,8 @@ import { useReloadSafety } from './ReloadSafetyContext';
 import {
   getWebSocketRetryDelay,
   getWebSocketTransportState,
-  getClientBuildVersionUrl,
   isCurrentWebSocketLifecycle,
   shouldArmWebSocketReload,
-  shouldReloadForClientBuild,
-  parseClientBuildResource,
   shouldRetryWebSocketClose,
 } from './webSocketTransport';
 import WebSocketContext from './webSocketContextValue';
@@ -49,8 +46,6 @@ const WEBSOCKET_RELOAD_READINESS_MS = 10_000;
 const WEBSOCKET_RELOAD_POLL_MS = 1_000;
 const WEBSOCKET_RELOAD_FETCH_TIMEOUT_MS = 1_500;
 const WEBSOCKET_RELOAD_SESSION_KEY = 'cloudcli:websocket-reload-consumed';
-const CLIENT_BUILD_POLL_MS = 30_000;
-const CLIENT_BUILD_FETCH_TIMEOUT_MS = 5_000;
 
 const useWebSocketProviderState = (): WebSocketContextType => {
   const wsRef = useRef<WebSocket | null>(null);
@@ -268,61 +263,6 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       }
     };
   }, [confirmReload, dispatch, isAuthLoading, token, user]);
-
-  useEffect(() => {
-    let pollTimeout: ReturnType<typeof setTimeout> | null = null;
-    let abortController: AbortController | null = null;
-    let reloadPending = false;
-
-    const schedulePoll = (delay = CLIENT_BUILD_POLL_MS) => {
-      if (pollTimeout !== null) clearTimeout(pollTimeout);
-      pollTimeout = setTimeout(pollForClientBuild, delay);
-    };
-
-    const pollForClientBuild = () => {
-      pollTimeout = null;
-      if (document.visibilityState === 'hidden' || reloadPending) {
-        schedulePoll();
-        return;
-      }
-
-      const controller = new AbortController();
-      abortController = controller;
-      const fetchTimeout = setTimeout(() => controller.abort(), CLIENT_BUILD_FETCH_TIMEOUT_MS);
-      const versionUrl = getClientBuildVersionUrl(document.baseURI);
-      void fetch(versionUrl, { cache: 'no-store', signal: controller.signal })
-        .then((response) => response.ok ? response.json() as Promise<{ build?: unknown }> : null)
-        .then((resource) => {
-          const servedBuildId = parseClientBuildResource(resource);
-          if (!shouldReloadForClientBuild({
-            currentBuildId: __CLOUDCLI_CLIENT_BUILD_ID__,
-            servedBuildId,
-            reloadPending,
-          })) return;
-          if (!confirmReload('A newer CloudCLI build is available. Reload now?')) return;
-          reloadPending = true;
-          window.location.reload();
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          clearTimeout(fetchTimeout);
-          if (abortController === controller) abortController = null;
-          if (!reloadPending) schedulePoll();
-        });
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && !reloadPending) schedulePoll(0);
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    schedulePoll();
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (pollTimeout !== null) clearTimeout(pollTimeout);
-      abortController?.abort();
-    };
-  }, [confirmReload]);
 
   const sendMessage = useCallback((message: unknown) => {
     const socket = wsRef.current;

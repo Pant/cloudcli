@@ -5,6 +5,8 @@ import {
   buildSessionMessagesUrl,
   getVisibleHistoryWindow,
   normalizeCompleteHistoryState,
+  reconcileLocalHistoryVisibility,
+  revealAllLocalHistory,
   revealLocalHistoryWindow,
 } from './sessionHistoryPolicy';
 
@@ -45,6 +47,33 @@ test('local history reveal grows the newest-message window without fetching', ()
     visibleCount: 250,
     allMessagesLoaded: true,
   });
+});
+
+test('reveal all exposes an entire 132-message local transcript at once', () => {
+  const messages = Array.from({ length: 132 }, (_, index) => index + 1);
+  assert.deepEqual(getVisibleHistoryWindow(messages, 100), messages.slice(32));
+
+  const reveal = revealAllLocalHistory(messages.length);
+  assert.deepEqual(reveal, { visibleCount: 132, allMessagesLoaded: true });
+  assert.deepEqual(getVisibleHistoryWindow(messages, reveal.visibleCount), messages);
+});
+
+test('same-session synchronization preserves reveal-all visibility and transcript growth', () => {
+  const revealed = reconcileLocalHistoryVisibility({
+    identityKey: 'project-1:session-1',
+    revealAllIdentityKey: 'project-1:session-1',
+    totalMessages: 132,
+    hasCompleteHistory: true,
+  });
+  assert.deepEqual(revealed, { visibleCount: Infinity, allMessagesLoaded: true });
+  assert.equal(getVisibleHistoryWindow(Array.from({ length: 133 }), revealed.visibleCount).length, 133);
+
+  assert.deepEqual(reconcileLocalHistoryVisibility({
+    identityKey: 'project-1:session-2',
+    revealAllIdentityKey: 'project-1:session-1',
+    totalMessages: 132,
+    hasCompleteHistory: true,
+  }), { visibleCount: 100, allMessagesLoaded: false });
 });
 
 test('visible history window keeps the newest rows and can reveal all locally', () => {

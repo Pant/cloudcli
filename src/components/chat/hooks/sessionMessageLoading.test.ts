@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createSessionMessageLoadingOwner, shouldBlockSessionMessageDisplay } from './sessionMessageLoading';
+import {
+  createExternalSessionRefreshOwner,
+  createSessionMessageLoadingOwner,
+  shouldBlockSessionMessageDisplay,
+} from './sessionMessageLoading';
 
 test('warmed and cache-hydrated rows do not block while canonical validation continues', () => {
   assert.equal(shouldBlockSessionMessageDisplay({ hasDisplayableMessages: true, isCanonicalLoading: true }), false);
@@ -39,4 +43,27 @@ test('starting B directly transfers ownership away from an in-flight A load', ()
 
   assert.equal(owner.isCurrent(a, 'selected:a:p'), false);
   assert.equal(owner.isCurrent(b, 'selected:b:p'), true);
+});
+
+test('one external revision refreshes once across repeated renders and later revisions still refresh', () => {
+  const owner = createExternalSessionRefreshOwner();
+  owner.select('selected:a:p', 0);
+
+  assert.equal(owner.consume('selected:a:p', 1, false), true);
+  assert.equal(owner.consume('selected:a:p', 1, false), false);
+  assert.equal(owner.consume('selected:a:p', 1, false), false);
+  assert.equal(owner.consume('selected:a:p', 2, false), true);
+});
+
+test('external revisions are consumed while streaming and fenced across selection changes', () => {
+  const owner = createExternalSessionRefreshOwner();
+  owner.select('selected:a:p', 0);
+
+  assert.equal(owner.consume('selected:a:p', 1, true), false);
+  assert.equal(owner.consume('selected:a:p', 1, false), false);
+
+  owner.select('selected:b:p', 1);
+  assert.equal(owner.consume('selected:b:p', 1, false), false);
+  assert.equal(owner.consume('selected:a:p', 2, false), false);
+  assert.equal(owner.consume('selected:b:p', 2, false), true);
 });

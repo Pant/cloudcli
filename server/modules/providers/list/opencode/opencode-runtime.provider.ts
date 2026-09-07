@@ -117,7 +117,15 @@ const notifyOpenCodeRunFailed = notifyRunFailed as unknown as (
 const activeOpenCodeProcesses = new Map<string, OpenCodeProcessRecord>();
 const exitedOpenCodeProcesses = new Map<string, OpenCodeRuntimeDiagnostic>();
 const OPENCODE_ABORT_GRACE_MS = 2_000;
+const OPENCODE_EMPTY_STEP_THRESHOLD_DEFAULT = 3;
 const OPENCODE_FALLBACK_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+function resolveOpenCodeEmptyStepThreshold(): number {
+  const configured = Number(process.env.CLOUDCLI_OPENCODE_EMPTY_STEP_THRESHOLD);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : OPENCODE_EMPTY_STEP_THRESHOLD_DEFAULT;
+}
 
 function validOpenCodeModelId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -316,6 +324,8 @@ export async function spawnOpenCode(
     // Unified lifecycle contract: exactly one terminal `complete` per run
     // (close and error handlers can both fire for spawn failures).
     let completeSent = false;
+    let consecutiveEmptySteps = 0;
+    let progresslessLoopError: Error | null = null;
     const notifiedTaskIds = new Set<string>();
     const emittedStepIds = new Set<string>();
     const baseline = readOpenCodeTokenBaseline(providerSessionId);
@@ -405,6 +415,7 @@ export async function spawnOpenCode(
       try {
         response = JSON.parse(line);
       } catch {
+        consecutiveEmptySteps = 0;
         ws.send(createNormalizedMessage({
           kind: 'stream_delta',
           content: line,
@@ -415,6 +426,30 @@ export async function spawnOpenCode(
       }
 
       try {
+        const responseRecord = response as AnyRecord;
+        if (responseRecord.type === 'step_start') {
+          consecutiveEmptySteps += 1;
+          if (
+            consecutiveEmptySteps >= resolveOpenCodeEmptyStepThreshold()
+            && !progresslessLoopError
+          ) {
+            progresslessLoopError = new Error(
+              'OpenCode stopped making progress after repeated empty steps. '
+              + 'Check the configured model context/output limits, then retry the run.',
+            );
+            ws.send(createNormalizedMessage({
+              kind: 'error',
+              content: progresslessLoopError.message,
+              sessionId: capturedSessionId || sessionId || null,
+              provider: 'opencode',
+            }));
+            opencodeProcess?.kill('SIGTERM');
+          }
+        } else {
+          // Any other native event represents progress, including Task/subagent
+          // activity, text/reasoning, tool results, errors, and step completion.
+          consecutiveEmptySteps = 0;
+        }
         registerSession(readOpenCodeSessionId(response));
         const completedTask = extractCompletedOpenCodeTask(response);
         if (completedTask && !notifiedTaskIds.has(completedTask.taskId)) {
@@ -431,7 +466,6 @@ export async function spawnOpenCode(
         for (const msg of normalized) {
           ws.send(msg);
         }
-        const responseRecord = response as AnyRecord;
         const responsePart = responseRecord.part as AnyRecord | undefined;
         const stepTokens = responseRecord.type === 'step_finish'
           ? readOpenCodeTokenComponents(responsePart?.tokens)
@@ -573,6 +607,8 @@ export async function spawnOpenCode(
           return;
         }
 
+        consecutiveEmptySteps = 0;
+
         ws.send(createNormalizedMessage({
           kind: 'error',
           content: stderrText,
@@ -636,7 +672,7 @@ export async function spawnOpenCode(
           ws.send(createCompleteMessage({ provider: 'opencode', sessionId: finalSessionId, exitCode: code, signal }));
         }
 
-        if (code === 0) {
+        if (code === 0 && !progresslessLoopError) {
           notifyTerminalState({ code });
           resolve(runtimeResult);
           return;
@@ -654,10 +690,10 @@ export async function spawnOpenCode(
           }
         }
 
-        notifyTerminalState({ code });
-        const error = new Error(code === null
+        const error = (progresslessLoopError ?? new Error(code === null
           ? `OpenCode CLI process was terminated${signal ? ` by ${signal}` : ''}`
-          : `OpenCode CLI exited with code ${code}`) as ProviderRuntimeError;
+          : `OpenCode CLI exited with code ${code}`)) as ProviderRuntimeError;
+        notifyTerminalState({ code, error });
         error.runtimeResult = runtimeResult;
         reject(error);
       });

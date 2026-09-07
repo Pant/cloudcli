@@ -102,7 +102,7 @@ test('offline send retention, notification deep links, and recovery data remain 
   await expect(page).toHaveURL(/\/session\/cached-session/);
 });
 
-test('update now/later remains safe with dirty editor, queue, active run, tabs, and interruption recovery', async ({ context, page }) => {
+test('multi-tab offline recovery preserves queued and interrupted work', async ({ context, page }) => {
   await mockBackend(context);
   await seedAuthenticatedVisit(page);
   const second = await context.newPage();
@@ -118,7 +118,6 @@ test('update now/later remains safe with dirty editor, queue, active run, tabs, 
 
   const registration = await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready;
-    registration.active?.postMessage({ type: 'cloudcli:check-update' });
     return { scope: registration.scope, hasController: Boolean(navigator.serviceWorker.controller) };
   });
   expect(registration.scope).toBe(new URL('/', page.url()).href);

@@ -3,6 +3,28 @@ export const WINDOW_OVERSCAN_PX = 800;
 export const DEFAULT_ROW_HEIGHT = 120;
 
 export type MeasuredWindow = { start: number; end: number; before: number; after: number };
+export type TranscriptViewportMetrics = { scrollTop: number; width: number; height: number };
+
+export function viewportMetricsChanged(
+  previous: TranscriptViewportMetrics | null,
+  next: TranscriptViewportMetrics,
+): boolean {
+  return previous === null
+    || previous.scrollTop !== next.scrollTop
+    || previous.width !== next.width
+    || previous.height !== next.height;
+}
+
+export function recordMeasuredHeight(
+  heights: Map<number, number>,
+  rowIndex: number,
+  nextHeight: number,
+): { previousHeight: number | undefined; changed: boolean } {
+  const previousHeight = heights.get(rowIndex);
+  if (nextHeight <= 0 || nextHeight === previousHeight) return { previousHeight, changed: false };
+  heights.set(rowIndex, nextHeight);
+  return { previousHeight, changed: true };
+}
 
 export function calculateMeasuredWindow(
   rowCount: number,

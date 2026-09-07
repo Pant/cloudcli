@@ -393,6 +393,9 @@ test('runtime cache mount requests persistence without scheduling manifest recon
   const source = await readFile(new URL('./SessionMessageCacheCoordinator.tsx', import.meta.url), 'utf8');
 
   assert.match(source, /requestCachePersistence\(\)/);
+  assert.match(source, /const \{ requestCachePersistence, refreshCacheStorageStatus \} = useSessionStoreContext\(\)/);
+  assert.match(source, /\[requestCachePersistence, refreshCacheStorageStatus\]/);
+  assert.equal(source.includes('[sessionStore]'), false);
   for (const automaticTrigger of [
     '.reconcile(',
     'setInterval(',

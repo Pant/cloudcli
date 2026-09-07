@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 
 import type { ChatMessage, QuestionFormAnswers } from '../../types/types';
 import type {
@@ -24,7 +24,32 @@ import {
   calculateMeasuredWindow,
   compensateMeasuredGrowth,
   keyboardWindowTarget,
+  recordMeasuredHeight,
+  viewportMetricsChanged,
 } from './transcriptWindow';
+import type { TranscriptViewportMetrics } from './transcriptWindow';
+
+interface MeasuredTranscriptRowProps {
+  index: number;
+  setSize: number;
+  enabled: boolean;
+  onMeasure: (index: number, element: HTMLElement) => void;
+  children: ReactNode;
+}
+
+function MeasuredTranscriptRow({ index, setSize, enabled, onMeasure, children }: MeasuredTranscriptRowProps) {
+  const elementRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    if (!enabled || !element) return;
+    const record = () => onMeasure(index, element);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(record);
+    observer?.observe(element);
+    record();
+    return () => observer?.disconnect();
+  }, [enabled, index, onMeasure]);
+  return <div ref={elementRef} data-window-index={index} role="listitem" aria-posinset={index + 1} aria-setsize={setSize}>{children}</div>;
+}
 
 interface ChatMessagesPaneProps {
   scrollContainerRef: RefObject<HTMLDivElement | null>;
@@ -110,7 +135,7 @@ function ChatMessagesPane({
   const [windowRevision, setWindowRevision] = useState(0);
   const [keyboardTargetIndex, setKeyboardTargetIndex] = useState<number | null>(null);
   const measuredHeightsRef = useRef(new Map<number, number>());
-  const observedRowsRef = useRef(new Map<number, { element: HTMLElement; observer: ResizeObserver }>());
+  const measuredWindowStartRef = useRef(0);
   const searchTargetIndex = useMemo(() => {
     if (!isWindowed) return null;
     const session = selectedSession as Record<string, unknown> | null;
@@ -148,16 +173,32 @@ function ChatMessagesPane({
   const windowedItems = isWindowed
     ? groupedVisibleMessages.slice(measuredWindow.start, measuredWindow.end)
     : groupedVisibleMessages;
+  measuredWindowStartRef.current = measuredWindow.start;
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!isWindowed || !container) return;
     let frame = 0;
+    let lastMetrics: TranscriptViewportMetrics | null = null;
+    let observedSize: Pick<TranscriptViewportMetrics, 'width' | 'height'> | null = null;
     const update = () => {
       if (frame) return;
-      frame = requestAnimationFrame(() => { frame = 0; setWindowRevision((revision) => revision + 1); });
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const nextMetrics = {
+          scrollTop: container.scrollTop,
+          width: observedSize?.width ?? container.clientWidth,
+          height: observedSize?.height ?? container.clientHeight,
+        };
+        if (!viewportMetricsChanged(lastMetrics, nextMetrics)) return;
+        lastMetrics = nextMetrics;
+        setWindowRevision((revision) => revision + 1);
+      });
     };
     container.addEventListener('scroll', update, { passive: true });
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(([entry]) => {
+      if (entry) observedSize = { width: entry.contentRect.width, height: entry.contentRect.height };
+      update();
+    });
     observer?.observe(container);
     update();
     return () => { container.removeEventListener('scroll', update); observer?.disconnect(); if (frame) cancelAnimationFrame(frame); };
@@ -168,37 +209,21 @@ function ChatMessagesPane({
     const target = container?.querySelector<HTMLElement>(`[data-window-index="${revealTargetIndex}"]`);
     target?.scrollIntoView({ block: 'center' });
   }, [isWindowed, revealTargetIndex, scrollContainerRef, windowRevision]);
-  useEffect(() => () => {
-    observedRowsRef.current.forEach(({ observer }) => observer.disconnect());
-    observedRowsRef.current.clear();
-  }, []);
-  const observeRow = useCallback((index: number, element: HTMLElement | null) => {
-    const previous = observedRowsRef.current.get(index);
-    if (previous?.element === element) return;
-    previous?.observer.disconnect();
-    observedRowsRef.current.delete(index);
-    if (!element || typeof ResizeObserver === 'undefined') return;
-    const record = () => {
-      const next = element.getBoundingClientRect().height;
-      const old = measuredHeightsRef.current.get(index);
-      if (next <= 0 || next === old) return;
-      measuredHeightsRef.current.set(index, next);
-      const container = scrollContainerRef.current;
-      if (container) container.scrollTop = compensateMeasuredGrowth({
-        rowIndex: index,
-        windowStart: measuredWindow.start,
-        previousHeight: old,
-        nextHeight: next,
-        scrollTop: container.scrollTop,
-        followingBottom: container.scrollHeight - container.scrollTop - container.clientHeight < 50,
-      });
-      setWindowRevision((revision) => revision + 1);
-    };
-    const observer = new ResizeObserver(record);
-    observer.observe(element);
-    observedRowsRef.current.set(index, { element, observer });
-    record();
-  }, [measuredWindow.start, scrollContainerRef]);
+  const measureRow = useCallback((index: number, element: HTMLElement) => {
+    const nextHeight = element.getBoundingClientRect().height;
+    const measurement = recordMeasuredHeight(measuredHeightsRef.current, index, nextHeight);
+    if (!measurement.changed) return;
+    const container = scrollContainerRef.current;
+    if (container) container.scrollTop = compensateMeasuredGrowth({
+      rowIndex: index,
+      windowStart: measuredWindowStartRef.current,
+      previousHeight: measurement.previousHeight,
+      nextHeight,
+      scrollTop: container.scrollTop,
+      followingBottom: container.scrollHeight - container.scrollTop - container.clientHeight < 50,
+    });
+    setWindowRevision((revision) => revision + 1);
+  }, [scrollContainerRef]);
   const visibleMessageIndexes = useMemo(() => {
     const indexes = new WeakMap<ChatMessage, number>();
     const start = Math.max(0, chatMessages.length - visibleMessages.length);
@@ -274,7 +299,7 @@ function ChatMessagesPane({
         event.preventDefault();
         setKeyboardTargetIndex(target);
       }}
-      className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 sm:pt-4 ${
+      className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none] pt-3 sm:pt-4 ${
         hasActivityIndicator ? 'pb-12 sm:pb-14' : 'pb-3 sm:pb-4'
       }`}
     >
@@ -343,7 +368,7 @@ function ChatMessagesPane({
                 prevMessage = item.messages[item.messages.length - 1] || prevMessage;
 
                 return (
-                  <div key={`window-tool-${getMessageKey(item.messages[0])}`} ref={(element) => observeRow(absoluteIndex, element)} data-window-index={absoluteIndex} role="listitem" aria-posinset={absoluteIndex + 1} aria-setsize={groupedVisibleMessages.length}>
+                  <MeasuredTranscriptRow key={`window-tool-${getMessageKey(item.messages[0])}`} index={absoluteIndex} setSize={groupedVisibleMessages.length} enabled={isWindowed} onMeasure={measureRow}>
                   <ToolGroupContainer
                     key={`tool-group-${getMessageKey(item.messages[0])}`}
                     group={item}
@@ -359,7 +384,7 @@ function ChatMessagesPane({
                     provider={provider}
                     onSubmitQuestionForm={onSubmitQuestionForm}
                   />
-                  </div>
+                  </MeasuredTranscriptRow>
                 );
               }
 
@@ -367,7 +392,7 @@ function ChatMessagesPane({
               prevMessage = item;
 
               return (
-                <div key={`window-${getMessageKey(item)}`} ref={(element) => observeRow(absoluteIndex, element)} data-window-index={absoluteIndex} role="listitem" aria-posinset={absoluteIndex + 1} aria-setsize={groupedVisibleMessages.length}>
+                <MeasuredTranscriptRow key={`window-${getMessageKey(item)}`} index={absoluteIndex} setSize={groupedVisibleMessages.length} enabled={isWindowed} onMeasure={measureRow}>
                 <MessageComponent
                   key={getMessageKey(item)}
                   message={item}
@@ -384,7 +409,7 @@ function ChatMessagesPane({
                   questionFormAnswers={questionFormAnswers.get(item)}
                   onSubmitQuestionForm={onSubmitQuestionForm}
                 />
-                </div>
+                </MeasuredTranscriptRow>
               );
             })}
               {isWindowed && <div aria-hidden="true" style={{ height: measuredWindow.after }} />}

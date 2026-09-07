@@ -9,15 +9,19 @@ import type { SessionStore } from '../../../stores/useSessionStore';
 import type { ChatMessage } from '../types/types';
 import { createCachedDiffCalculator, type DiffCalculator } from '../utils/messageTransforms';
 import { stabilizeTokenUsageSnapshot } from '../utils/tokenUsageSnapshot';
-import { revealLocalHistoryWindow } from '../../../stores/sessionHistoryPolicy';
+import { reconcileLocalHistoryVisibility, revealAllLocalHistory, revealLocalHistoryWindow } from '../../../stores/sessionHistoryPolicy';
 
 import { normalizedToChatMessages, stabilizeRenderedMessages } from './useChatMessages';
-import { createSessionMessageLoadingOwner, shouldBlockSessionMessageDisplay } from './sessionMessageLoading';
+import {
+  createExternalSessionRefreshOwner,
+  createSessionMessageLoadingOwner,
+  shouldBlockSessionMessageDisplay,
+} from './sessionMessageLoading';
 import {
   advanceViewportSettle,
   chooseViewportSnapshot,
   isSelectionCurrent,
-  shouldApplyViewportRevision,
+  getViewportRevisionAction,
   shouldCancelViewportSettle,
   transitionViewportOwnership,
   type SavedViewport,
@@ -161,6 +165,16 @@ export function useChatSessionState({
   }, [selectedProject?.projectId]);
   const [isLoadingSessionMessages, setIsLoadingSessionMessages] = useState(false);
   const sessionMessageLoadingOwnerRef = useRef(createSessionMessageLoadingOwner());
+  const externalSessionRefreshOwnerRef = useRef(createExternalSessionRefreshOwner());
+  const {
+    getSubscriptionTarget,
+    has: hasSession,
+    isStale,
+    getSessionSnapshot,
+    warmSession,
+    refreshFromServer,
+  } = sessionStore;
+  externalSessionRefreshOwnerRef.current.select(committedIdentity?.key ?? null, externalMessageUpdate ?? 0);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [totalMessages, setTotalMessages] = useState(0);
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
@@ -190,6 +204,8 @@ export function useChatSessionState({
   const allMessagesLoadedRef = useRef(false);
   const topLoadLockRef = useRef(false);
   const pendingScrollRestoreRef = useRef<SavedViewport | null>(null);
+  const pendingRevealAllTopRef = useRef<string | null>(null);
+  const revealAllIdentityKeyRef = useRef<string | null>(null);
   const pendingInitialScrollRef = useRef(true);
   const messagesOffsetRef = useRef(0);
   const visibleMessageCountRef = useRef(INITIAL_VISIBLE_MESSAGES);
@@ -315,6 +331,7 @@ export function useChatSessionState({
 
     setTokenBudget(null);
     visibleMessageCountRef.current = INITIAL_VISIBLE_MESSAGES;
+    revealAllIdentityKeyRef.current = null;
     setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
     setAllMessagesLoaded(false);
     allMessagesLoadedRef.current = false;
@@ -453,6 +470,7 @@ export function useChatSessionState({
     setIsUserScrolledUp(false);
     scrollToBottom();
     if (allMessagesLoaded) {
+      revealAllIdentityKeyRef.current = null;
       visibleMessageCountRef.current = INITIAL_VISIBLE_MESSAGES;
       setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
       const hasAllLocalRows = chatMessages.length <= INITIAL_VISIBLE_MESSAGES;
@@ -541,12 +559,24 @@ export function useChatSessionState({
   }, [cancelViewportSettle]);
 
   useLayoutEffect(() => {
+    const revealAllSelectionKey = pendingRevealAllTopRef.current;
+    if (revealAllSelectionKey && isSelectionCurrent(revealAllSelectionKey, selectionKeyRef.current)) {
+      const container = scrollContainerRef.current;
+      if (container) {
+        pendingRevealAllTopRef.current = null;
+        applyingAutomaticScrollRef.current = true;
+        container.scrollTop = 0;
+        queueMicrotask(() => { applyingAutomaticScrollRef.current = false; });
+        currentViewportRef.current = captureViewport();
+      }
+      return;
+    }
     if (!pendingScrollRestoreRef.current || !scrollContainerRef.current) return;
     const saved = pendingScrollRestoreRef.current;
     pendingScrollRestoreRef.current = null;
     const selectionKey = selectionKeyRef.current;
     if (selectionKey) startViewportSettle(saved, selectionKey);
-  }, [chatMessages, startViewportSettle, visibleMessageCount]);
+  }, [captureViewport, chatMessages, startViewportSettle, visibleMessageCount]);
 
   // Reset scroll/pagination state on session change
   useEffect(() => {
@@ -559,6 +589,7 @@ export function useChatSessionState({
     });
     if (transition.save) saveBoundedViewport(savedViewportsRef.current, transition.save.key, transition.save.viewport, activeIdentityKey);
     selectionKeyRef.current = activeIdentityKey;
+    if (revealAllIdentityKeyRef.current !== activeIdentityKey) revealAllIdentityKeyRef.current = null;
     pendingScrollRestoreRef.current = transition.restore;
     currentViewportRef.current = pendingScrollRestoreRef.current;
     if (!searchScrollActiveRef.current) {
@@ -594,22 +625,42 @@ export function useChatSessionState({
   const storeSnapshot = activeSessionId
     ? sessionStore.getSessionSnapshot(activeSessionId)
     : null;
-  const previousRevisionRef = useRef<{ key: string | null; revision: number }>({ key: null, revision: -1 });
+  const previousRevisionRef = useRef<{
+    key: string | null;
+    revision: number;
+    messages: readonly NormalizedMessage[];
+  }>({ key: null, revision: -1, messages: EMPTY_NORMALIZED_MESSAGES });
   useLayoutEffect(() => {
     const selectionKey = selectionKeyRef.current;
     const revision = storeSnapshot?.revision ?? -1;
+    const messages = storeSnapshot?.messages ?? EMPTY_NORMALIZED_MESSAGES;
     const previous = previousRevisionRef.current;
-    previousRevisionRef.current = { key: selectionKey, revision };
-    if (previous.key !== selectionKey || !shouldApplyViewportRevision({
+    previousRevisionRef.current = { key: selectionKey, revision, messages };
+    if (previous.key !== selectionKey) return;
+    const saved = currentViewportRef.current;
+    const action = getViewportRevisionAction({
       expectedIdentityKey: selectionKey,
       currentIdentityKey: activeIdentityKey,
       previousRevision: previous.revision,
       nextRevision: revision,
+      previousMessages: previous.messages,
+      nextMessages: messages,
+      saved,
       searchActive: searchScrollActiveRef.current,
-    })) return;
-    const saved = currentViewportRef.current;
-    if (saved && selectionKey) startViewportSettle(saved.mode === 'bottom' ? { mode: 'bottom', bottomDistance: 0 } : saved, selectionKey);
-  }, [activeIdentityKey, startViewportSettle, storeSnapshot?.revision]);
+    });
+    if (!saved || !selectionKey || action === 'none') return;
+    if (action === 'stream-follow') {
+      cancelViewportSettle();
+      const container = scrollContainerRef.current;
+      if (!container || !isSelectionCurrent(selectionKey, selectionKeyRef.current)) return;
+      applyingAutomaticScrollRef.current = true;
+      container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      queueMicrotask(() => { applyingAutomaticScrollRef.current = false; });
+      currentViewportRef.current = { mode: 'bottom', bottomDistance: 0 };
+      return;
+    }
+    startViewportSettle(saved.mode === 'bottom' ? { mode: 'bottom', bottomDistance: 0 } : saved, selectionKey);
+  }, [activeIdentityKey, cancelViewportSettle, startViewportSettle, storeSnapshot?.messages, storeSnapshot?.revision]);
 
   // Main session loading effect — store-based
   useEffect(() => {
@@ -640,22 +691,28 @@ export function useChatSessionState({
       statusCheckSentAtRef.current.set(selectedSessionId, Date.now());
       sendMessage({
         type: 'chat.subscribe',
-        sessions: [sessionStore.getSubscriptionTarget(selectedSessionId)],
+        sessions: [getSubscriptionTarget(selectedSessionId)],
       });
     };
 
     // Skip if already loaded and fresh
-    if (lastLoadedSessionKeyRef.current === sessionKey && sessionStore.has(selectedSessionId) && !sessionStore.isStale(selectedSessionId)) {
+    if (lastLoadedSessionKeyRef.current === sessionKey && hasSession(selectedSessionId) && !isStale(selectedSessionId)) {
       sessionMessageLoadingOwnerRef.current.invalidate();
       setIsLoadingSessionMessages(false);
-      const snapshot = sessionStore.getSessionSnapshot(selectedSessionId);
+      const snapshot = getSessionSnapshot(selectedSessionId);
       setHasMoreMessages(snapshot.hasMore);
       setTotalMessages(snapshot.total);
       messagesOffsetRef.current = snapshot.offset;
-      const visibleCount = snapshot.total <= INITIAL_VISIBLE_MESSAGES ? snapshot.total : INITIAL_VISIBLE_MESSAGES;
-      visibleMessageCountRef.current = visibleCount;
-      setVisibleMessageCount(visibleCount);
-      allMessagesLoadedRef.current = !snapshot.hasMore && snapshot.total <= visibleCount;
+      const visibility = reconcileLocalHistoryVisibility({
+        identityKey: sessionKey,
+        revealAllIdentityKey: revealAllIdentityKeyRef.current,
+        totalMessages: snapshot.total,
+        hasCompleteHistory: !snapshot.hasMore,
+        initialVisibleCount: INITIAL_VISIBLE_MESSAGES,
+      });
+      visibleMessageCountRef.current = visibility.visibleCount;
+      setVisibleMessageCount(visibility.visibleCount);
+      allMessagesLoadedRef.current = visibility.allMessagesLoaded;
       setAllMessagesLoaded(allMessagesLoadedRef.current);
       if (snapshot.tokenUsage) setTokenBudget(snapshot.tokenUsage as Record<string, unknown>);
       subscribeToSelectedSession();
@@ -671,10 +728,17 @@ export function useChatSessionState({
     messagesOffsetRef.current = 0;
     setHasMoreMessages(false);
     setTotalMessages(0);
-    visibleMessageCountRef.current = INITIAL_VISIBLE_MESSAGES;
-    setVisibleMessageCount(INITIAL_VISIBLE_MESSAGES);
-    setAllMessagesLoaded(false);
-    allMessagesLoadedRef.current = false;
+    const resetVisibility = reconcileLocalHistoryVisibility({
+      identityKey: sessionKey,
+      revealAllIdentityKey: revealAllIdentityKeyRef.current,
+      totalMessages: getSessionSnapshot(selectedSessionId).total,
+      hasCompleteHistory: false,
+      initialVisibleCount: INITIAL_VISIBLE_MESSAGES,
+    });
+    visibleMessageCountRef.current = resetVisibility.visibleCount;
+    setVisibleMessageCount(resetVisibility.visibleCount);
+    setAllMessagesLoaded(resetVisibility.allMessagesLoaded);
+    allMessagesLoadedRef.current = resetVisibility.allMessagesLoaded;
     setViewHiddenCount(0);
 
     if (sessionChanged) {
@@ -692,9 +756,9 @@ export function useChatSessionState({
 
     // Warm-up shares any anticipatory cache/network work already in flight.
     const loadingToken = sessionMessageLoadingOwnerRef.current.begin(sessionKey);
-    const initialSnapshot = sessionStore.getSessionSnapshot(selectedSessionId);
-    const warmPromise = sessionStore.warmSession(selectedSessionId);
-    const warmedSnapshot = sessionStore.getSessionSnapshot(selectedSessionId);
+    const initialSnapshot = getSessionSnapshot(selectedSessionId);
+    const warmPromise = warmSession(selectedSessionId);
+    const warmedSnapshot = getSessionSnapshot(selectedSessionId);
     setIsLoadingSessionMessages(shouldBlockSessionMessageDisplay(
       warmedSnapshot.isCanonicalLoading ? warmedSnapshot : initialSnapshot,
     ));
@@ -709,11 +773,17 @@ export function useChatSessionState({
         setHasMoreMessages(!hasAuthoritativeHistory);
         setTotalMessages(slot.total);
         messagesOffsetRef.current = slot.serverMessages.length;
-        const allRowsVisible = hasAuthoritativeHistory && slot.total <= INITIAL_VISIBLE_MESSAGES;
-        visibleMessageCountRef.current = allRowsVisible ? slot.total : INITIAL_VISIBLE_MESSAGES;
+        const visibility = reconcileLocalHistoryVisibility({
+          identityKey: sessionKey,
+          revealAllIdentityKey: revealAllIdentityKeyRef.current,
+          totalMessages: slot.total,
+          hasCompleteHistory: hasAuthoritativeHistory,
+          initialVisibleCount: INITIAL_VISIBLE_MESSAGES,
+        });
+        visibleMessageCountRef.current = visibility.visibleCount;
         setVisibleMessageCount(visibleMessageCountRef.current);
-        allMessagesLoadedRef.current = allRowsVisible;
-        setAllMessagesLoaded(allRowsVisible);
+        allMessagesLoadedRef.current = visibility.allMessagesLoaded;
+        setAllMessagesLoaded(visibility.allMessagesLoaded);
         if (slot.tokenUsage && tokenBudgetSessionRef.current === selectedSessionId) {
           setTokenBudget(slot.tokenUsage as Record<string, unknown>);
         }
@@ -731,7 +801,11 @@ export function useChatSessionState({
     statusCheckSentAtRef,
     connectionEpoch,
     ws,
-    sessionStore,
+    getSubscriptionTarget,
+    hasSession,
+    isStale,
+    getSessionSnapshot,
+    warmSession,
     setTokenBudget,
   ]);
 
@@ -740,17 +814,15 @@ export function useChatSessionState({
     if (!externalMessageUpdate || !committedIdentity || !selectedProjectId) return;
     const requestKey = committedIdentity.key;
     const sessionId = committedIdentity.sessionId;
+    if (!externalSessionRefreshOwnerRef.current.consume(requestKey, externalMessageUpdate, isProcessing)) return;
     const saved = currentViewportRef.current ?? captureViewport();
     if (saved) currentViewportRef.current = saved;
 
     const reloadExternalMessages = async () => {
       try {
-        // Skip store refresh during active streaming
-        if (!isProcessing) {
-          await sessionStore.refreshFromServer(sessionId);
-          if (!isSelectionCurrent(requestKey, selectionKeyRef.current) || searchScrollActiveRef.current) return;
-          if (saved) startViewportSettle(saved, requestKey);
-        }
+        await refreshFromServer(sessionId);
+        if (!isSelectionCurrent(requestKey, selectionKeyRef.current) || searchScrollActiveRef.current) return;
+        if (saved) startViewportSettle(saved, requestKey);
       } catch (error) {
         console.error('Error reloading messages from external update:', error);
       }
@@ -762,7 +834,7 @@ export function useChatSessionState({
     captureViewport,
     selectedProjectId,
     committedIdentity,
-    sessionStore,
+    refreshFromServer,
     startViewportSettle,
     isProcessing,
   ]);
@@ -914,7 +986,7 @@ export function useChatSessionState({
   }, [committedIdentity, setTokenBudget]);
 
   const committedVisibleMessageCount = viewStateIdentityKey === activeIdentityKey
-    ? visibleMessageCount
+    ? (revealAllIdentityKeyRef.current === activeIdentityKey ? Infinity : visibleMessageCount)
     : INITIAL_VISIBLE_MESSAGES;
   const visibleMessages = useMemo(() => {
     if (chatMessages.length <= committedVisibleMessageCount) return chatMessages;
@@ -930,15 +1002,18 @@ export function useChatSessionState({
 
   const loadAllMessages = useCallback(() => {
     if (!selectedSession || !selectedProject) return;
-    const container = scrollContainerRef.current;
-    if (container) {
-      pendingScrollRestoreRef.current = captureViewport();
-    }
-    visibleMessageCountRef.current = chatMessages.length;
-    setVisibleMessageCount(chatMessages.length);
-    allMessagesLoadedRef.current = true;
-    setAllMessagesLoaded(true);
-  }, [captureViewport, chatMessages.length, selectedProject, selectedSession]);
+    const selectionKey = selectionKeyRef.current;
+    if (!selectionKey) return;
+    cancelViewportSettle();
+    pendingScrollRestoreRef.current = null;
+    pendingRevealAllTopRef.current = selectionKey;
+    revealAllIdentityKeyRef.current = selectionKey;
+    const reveal = revealAllLocalHistory(chatMessages.length);
+    visibleMessageCountRef.current = reveal.visibleCount;
+    setVisibleMessageCount(reveal.visibleCount);
+    allMessagesLoadedRef.current = reveal.allMessagesLoaded;
+    setAllMessagesLoaded(reveal.allMessagesLoaded);
+  }, [cancelViewportSettle, chatMessages.length, selectedProject, selectedSession]);
 
   const loadEarlierMessages = useCallback(() => {
     revealLocalMessages(LOCAL_REVEAL_CHUNK);

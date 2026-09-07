@@ -6,13 +6,10 @@ import type { TFunction } from 'i18next';
 
 import { Button } from '../../../../shared/view/ui';
 import type { Project } from '../../../../types/app';
-import type { ReleaseInfo } from '../../../../types/sharedTypes';
-import type { InstallMode } from '../../../../hooks/useVersionCheck';
 import { normalizeProjectForSettings } from '../../utils/utils';
 import type { BulkSessionDeleteConfirmation, DeleteProjectConfirmation, SessionDeleteConfirmation, SettingsProject } from '../../types/types';
 
 const Settings = lazy(() => import('../../../settings/view/Settings'));
-const VersionUpgradeModal = lazy(() => import('../../../version-upgrade/view'));
 const ProjectCreationWizard = lazy(() => import('../../../project-creation-wizard'));
 
 type SidebarModalsProps = {
@@ -33,12 +30,6 @@ type SidebarModalsProps = {
   isBulkSessionDeletePending: boolean;
   onCancelBulkSessionDelete: () => void;
   onConfirmBulkSessionDelete: (hardDelete?: boolean) => void;
-  showVersionModal: boolean;
-  onCloseVersionModal: () => void;
-  releaseInfo: ReleaseInfo | null;
-  currentVersion: string;
-  latestVersion: string | null;
-  installMode: InstallMode;
   t: TFunction;
 };
 
@@ -73,12 +64,6 @@ export default function SidebarModals({
   isBulkSessionDeletePending,
   onCancelBulkSessionDelete,
   onConfirmBulkSessionDelete,
-  showVersionModal,
-  onCloseVersionModal,
-  releaseInfo,
-  currentVersion,
-  latestVersion,
-  installMode,
   t,
 }: SidebarModalsProps) {
   // Settings expects project identity/path fields to be present for dropdown labels and local-scope MCP config.
@@ -235,18 +220,6 @@ export default function SidebarModals({
           </div>
         </div>, document.body)}
 
-      {showVersionModal && (
-        <Suspense fallback={null}>
-          <VersionUpgradeModal
-            isOpen={showVersionModal}
-            onClose={onCloseVersionModal}
-            releaseInfo={releaseInfo}
-            currentVersion={currentVersion}
-            latestVersion={latestVersion}
-            installMode={installMode}
-          />
-        </Suspense>
-      )}
     </>
   );
 }

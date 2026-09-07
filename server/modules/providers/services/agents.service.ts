@@ -20,8 +20,8 @@ const resolveAgentProvider = (providerName: string) => {
 
 /** Provider routes use this service to manage user-global agent definitions. */
 export const providerAgentsService = {
-  async listAvailableProviderAgents(providerName: string, workspacePath?: string) {
-    return resolveAgentProvider(providerName).agents!.listAvailableAgents({ workspacePath });
+  async listAvailableProviderAgents(providerName: string, workspacePath?: string, refresh = false) {
+    return resolveAgentProvider(providerName).agents!.listAvailableAgents({ workspacePath, refresh });
   },
 
   async listProviderAgents(providerName: string): Promise<ProviderAgentDefinition[]> {

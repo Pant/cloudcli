@@ -476,6 +476,8 @@ export type ProviderAvailableAgent = {
  */
 export type ProviderAgentListOptions = {
   workspacePath?: string;
+  /** Skip a reusable catalog result while still joining an already-running refresh. */
+  refresh?: boolean;
 };
 
 /**

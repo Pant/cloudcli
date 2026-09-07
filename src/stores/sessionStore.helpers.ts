@@ -73,6 +73,16 @@ export interface RealtimeStreamState {
   committedContent?: string;
 }
 
+export const DEFAULT_REALTIME_COMMIT_INTERVAL_MS = 100;
+
+export function shouldScheduleRealtimeStreamCommit(args: {
+  isChatSurfaceActive: boolean;
+  isActiveSession: boolean;
+  hasScheduledCommit: boolean;
+}): boolean {
+  return args.isChatSurfaceActive && args.isActiveSession && !args.hasScheduledCommit;
+}
+
 export function materializeRealtimeStream(stream: RealtimeStreamState): RealtimeStreamState {
   if (!stream.pendingChunks?.length) return stream;
   const content = (stream.committedContent ?? stream.content) + stream.pendingChunks.join('');

@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createPwaRegistrationController } from './pwaRegistration';
+import { createPwaRegistrationController, getPwaBaseUrl } from './pwaRegistration';
+
+test('PWA base follows deployment-root manifest metadata instead of nested routes', () => {
+  assert.equal(getPwaBaseUrl('https://cloudcli.test/', '/manifest.json').href, 'https://cloudcli.test/');
+  assert.equal(getPwaBaseUrl('https://cloudcli.test/session/123', '/manifest.json').href, 'https://cloudcli.test/');
+  assert.equal(getPwaBaseUrl('https://cloudcli.test/cloudcli/session/123', '/cloudcli/manifest.json').href, 'https://cloudcli.test/cloudcli/');
+  assert.equal(getPwaBaseUrl('https://cloudcli.test/session/123', 'https://assets.test/app/manifest.json').href, 'https://assets.test/app/');
+});
 
 test('production registers exactly once after load with a subpath scope', async () => {
   let load: (() => void) | undefined;
+  let updates = 0;
   const calls: Array<{ url: string; scope?: string; updateViaCache?: ServiceWorkerUpdateViaCache }> = [];
-  const registration = { waiting: null, update: async () => registration, addEventListener: () => {} } as unknown as ServiceWorkerRegistration;
+  const registration = { update: async () => { updates += 1; return registration; } } as unknown as ServiceWorkerRegistration;
   const serviceWorker = {
     register: async (url: string | URL, options?: RegistrationOptions) => { calls.push({ url: String(url), ...options }); return registration; },
   } as ServiceWorkerContainer;
@@ -21,6 +29,7 @@ test('production registers exactly once after load with a subpath scope', async 
   load?.();
   assert.equal(await pending, registration);
   assert.deepEqual(calls, [{ url: 'https://cloudcli.test/ai/sw.js', scope: '/ai/', updateViaCache: 'none' }]);
+  assert.equal(updates, 0);
 });
 
 test('development unregisters only existing CloudCLI worker registrations', async () => {

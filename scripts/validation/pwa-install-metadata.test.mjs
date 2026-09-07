@@ -9,9 +9,9 @@ const manifest = JSON.parse(await readFile(new URL('public/manifest.json', root)
 const html = await readFile(new URL('index.html', root), 'utf8');
 const readPublic = (src) => readFile(new URL(`public/${src}`, root));
 
-test('install metadata is branded, relative, and backed by valid assets', async () => {
+test('install metadata is branded, deployment-base-safe, and backed by valid assets', async () => {
   assert.deepEqual(await validateManifest(manifest, readPublic), []);
-  assert.match(html, /rel="manifest" href="\.\/manifest\.json"/);
+  assert.match(html, /rel="manifest" href="%BASE_URL%manifest\.json"/);
   assert.match(html, /apple-mobile-web-app-title" content="CloudCLI"/);
   assert.doesNotMatch(html, /Claude UI/);
 });

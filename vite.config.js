@@ -1,5 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { getConnectableHost, normalizeLoopbackHost } from './shared/networkHosts.js'
@@ -9,8 +9,6 @@ export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
   const env = loadEnv(mode, process.cwd(), '')
   const base = env.VITE_BASE_URL || '/'
-  let generatedShell = []
-
   const configuredHost = env.HOST || '0.0.0.0'
   // if the host is not a loopback address, it should be used directly. 
   // This allows the vite server to EXPOSE all interfaces when the host 
@@ -30,16 +28,24 @@ export default defineConfig(({ mode }) => {
         transformIndexHtml(html) {
           return html.replace('<head>', `<head>\n    <meta name="cloudcli-client-build" content="${clientBuildId}" />`)
         },
-        generateBundle(_options, bundle) {
+        generateBundle() {
           this.emitFile({
             type: 'asset',
             fileName: 'cloudcli-version.json',
             source: JSON.stringify({ build: clientBuildId })
           })
-          generatedShell = ['index.html', 'manifest.json', 'cloudcli-version.json', ...Object.keys(bundle)
-            .filter((fileName) => fileName.startsWith('assets/') && /\.(?:js|css)$/.test(fileName))]
         },
         async closeBundle() {
+          const assetsPath = fileURLToPath(new URL('./dist/assets/', import.meta.url))
+          const generatedShell = [
+            'index.html',
+            'manifest.json',
+            'cloudcli-version.json',
+            ...(await readdir(assetsPath, { withFileTypes: true }))
+              .filter((entry) => entry.isFile() && /\.(?:js|css)$/.test(entry.name))
+              .map((entry) => `assets/${entry.name}`)
+              .sort()
+          ]
           const workerPath = fileURLToPath(new URL('./dist/sw.js', import.meta.url))
           const source = await readFile(workerPath, 'utf8')
           await writeFile(workerPath, source

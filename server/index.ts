@@ -9,7 +9,7 @@ import http from 'http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
 
-import { AppError, configureDynamicResponseCaching, createRequestCompletionDiagnostic, findApplicationRoot, getModuleDirectory, REVALIDATE_CACHE_CONTROL, resolveRequestId, setStaticResourceCacheHeaders, shouldLogRequestCompletion, terminalTextStyles } from '@/shared/utils.js';
+import { AppError, configureDynamicResponseCaching, createPwaCompatibilityResourceHandler, createRequestCompletionDiagnostic, findApplicationRoot, getModuleDirectory, REVALIDATE_CACHE_CONTROL, resolveRequestId, setStaticResourceCacheHeaders, shouldLogRequestCompletion, terminalTextStyles } from '@/shared/utils.js';
 import {
     closeSessionsWatcher,
     initializeSessionsWatcher,
@@ -234,16 +234,20 @@ app.use('/api', (_req, res) => {
     });
 });
 
-// Serve public files (like api-docs.html)
+// Serve generated client output first so processed build artifacts such as
+// dist/sw.js cannot be shadowed by their source templates in public/.
+app.use(express.static(path.join(APP_ROOT, 'dist'), {
+    setHeaders: setStaticResourceCacheHeaders,
+}));
+
+// Fall back to source public files (like api-docs.html) when no built artifact exists.
 app.use(express.static(path.join(APP_ROOT, 'public'), {
     setHeaders: setStaticResourceCacheHeaders,
 }));
 
-// Static files served after API routes
-// Add cache control: HTML files should not be cached, but assets can be cached
-app.use(express.static(path.join(APP_ROOT, 'dist'), {
-    setHeaders: setStaticResourceCacheHeaders,
-}));
+// Upgrade stale bundles that still resolve root-owned PWA resources below the
+// active application route without weakening arbitrary extension-path 404s.
+app.get('/{*routePath}', createPwaCompatibilityResourceHandler(APP_ROOT));
 
 // API Routes (protected)
 // /api/config endpoint removed - no longer needed

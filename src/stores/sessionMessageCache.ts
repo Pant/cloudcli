@@ -61,6 +61,13 @@ export const EMPTY_CACHE_STORAGE_STATUS: CacheStorageStatus = {
   persistence: 'unknown', usage: null, quota: null, failure: 'none',
 };
 
+export function cacheStorageStatusesMatch(a: CacheStorageStatus, b: CacheStorageStatus): boolean {
+  return a.persistence === b.persistence
+    && a.usage === b.usage
+    && a.quota === b.quota
+    && a.failure === b.failure;
+}
+
 export interface ReplaceAuthoritativeSessionOptions {
   userNamespace: string;
   sessionId: string;

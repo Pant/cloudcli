@@ -19,6 +19,7 @@ import {
   SessionMessageCacheRepository,
   type CacheStats,
   type CacheStorageStatus,
+  cacheStorageStatusesMatch,
   EMPTY_CACHE_STORAGE_STATUS,
   inspectBrowserStorage,
   type CacheRevision,
@@ -35,6 +36,7 @@ import {
 import {
   acceptSequencedEvent,
   canReuseNotModified,
+  DEFAULT_REALTIME_COMMIT_INTERVAL_MS,
   deduplicateMessagesById,
   finalizeRealtimeStreamMessage,
   getSessionWarmupPolicy,
@@ -43,6 +45,7 @@ import {
   isCanonicalResponseMetadataReady,
   materializeRealtimeStream,
   reduceRealtimeStream,
+  shouldScheduleRealtimeStreamCommit,
   shouldApplyCacheHydration,
   upsertMessageById,
   type RealtimeCursor,
@@ -440,6 +443,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
   const storeRef = useRef(new Map<string, SessionSlot>());
   const snapshotRef = useRef(new Map<string, SessionSnapshot>());
   const activeSessionIdRef = useRef<string | null>(null);
+  const isChatSurfaceActiveRef = useRef(false);
   const sessionLastUsedRef = useRef(new Map<string, number>());
   const initialNamespace = options.userNamespace ?? null;
   const userNamespaceRef = useRef<string | null>(initialNamespace);
@@ -476,7 +480,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
   const [, setTick] = useState(0);
   const [cacheStorageStatus, setCacheStorageStatus] = useState<CacheStorageStatus>(EMPTY_CACHE_STORAGE_STATUS);
   const notify = useCallback((sessionId: string) => {
-    if (sessionId === activeSessionIdRef.current) {
+    if (isChatSurfaceActiveRef.current && sessionId === activeSessionIdRef.current) {
       setTick(n => n + 1);
     }
   }, []);
@@ -545,7 +549,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     enqueueCacheWrite(sessionId, () => cache.upsertRealtimeMessage(namespace, sessionId, message));
   }, [cache, enqueueCacheWrite]);
 
-  const commitRealtimeStream = useCallback((sessionId: string) => {
+  const commitRealtimeStream = useCallback((sessionId: string, options: { notify?: boolean; persist?: boolean } = {}) => {
     const timer = realtimeCommitTimersRef.current.get(sessionId);
     if (timer) clearTimeout(timer);
     realtimeCommitTimersRef.current.delete(sessionId);
@@ -565,13 +569,19 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     slot.realtimeMessages = upsertMessageById(slot.realtimeMessages, existing ? { ...existing, ...streamMessage } : streamMessage);
     recomputeMergedIfNeeded(slot);
     bumpViewRevision(slot);
-    persistRealtimeMessage(sessionId, slot.realtimeMessages.find((message) => message.id === streamMessage.id)!);
-    notify(sessionId);
+    if (options.persist !== false) {
+      persistRealtimeMessage(sessionId, slot.realtimeMessages.find((message) => message.id === streamMessage.id)!);
+    }
+    if (options.notify !== false) notify(sessionId);
   }, [notify, persistRealtimeMessage]);
 
   const scheduleRealtimeStreamCommit = useCallback((sessionId: string) => {
-    if (realtimeCommitTimersRef.current.has(sessionId)) return;
-    const interval = Math.max(0, options.realtimeCommitIntervalMs ?? 16);
+    if (!shouldScheduleRealtimeStreamCommit({
+      isChatSurfaceActive: isChatSurfaceActiveRef.current,
+      isActiveSession: sessionId === activeSessionIdRef.current,
+      hasScheduledCommit: realtimeCommitTimersRef.current.has(sessionId),
+    })) return;
+    const interval = Math.max(0, options.realtimeCommitIntervalMs ?? DEFAULT_REALTIME_COMMIT_INTERVAL_MS);
     realtimeCommitTimersRef.current.set(sessionId, setTimeout(() => commitRealtimeStream(sessionId), interval));
   }, [commitRealtimeStream, options.realtimeCommitIntervalMs]);
 
@@ -583,8 +593,23 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
 
   const setActiveSession = useCallback((sessionId: string | null) => {
     activeSessionIdRef.current = sessionId;
-    if (sessionId) sessionLastUsedRef.current.set(sessionId, Date.now());
-  }, []);
+    if (sessionId) {
+      sessionLastUsedRef.current.set(sessionId, Date.now());
+      if (isChatSurfaceActiveRef.current) commitRealtimeStream(sessionId);
+    }
+  }, [commitRealtimeStream]);
+
+  const setChatSurfaceActive = useCallback((isActive: boolean) => {
+    if (isChatSurfaceActiveRef.current === isActive) return;
+    isChatSurfaceActiveRef.current = isActive;
+    if (!isActive) {
+      for (const timer of realtimeCommitTimersRef.current.values()) clearTimeout(timer);
+      realtimeCommitTimersRef.current.clear();
+      return;
+    }
+    const sessionId = activeSessionIdRef.current;
+    if (sessionId) commitRealtimeStream(sessionId);
+  }, [commitRealtimeStream]);
 
   const getSlot = useCallback((sessionId: string): SessionSlot => {
     const store = storeRef.current;
@@ -965,19 +990,14 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     }
 
     if (acceptance.generationChanged) {
-      commitRealtimeStream(sessionId);
-      const previousStreamId = slot.realtimeStream
-        ? `__streaming_${sessionId}_${slot.realtimeStream.generation}`
-        : null;
+      commitRealtimeStream(sessionId, { notify: false });
       slot.realtimeStream = null;
-      if (previousStreamId) {
-        slot.realtimeMessages = slot.realtimeMessages.filter((message) => message.id !== previousStreamId);
-        deleteCachedRealtimeMessage(sessionId, previousStreamId);
-      }
     }
     slot.realtimeCursor = acceptance.cursor;
 
-    if (event.kind !== 'stream_delta') commitRealtimeStream(sessionId);
+    if (event.kind !== 'stream_delta') {
+      commitRealtimeStream(sessionId, { notify: false, persist: false });
+    }
 
     const previousStream = slot.realtimeStream;
     slot.realtimeStream = reduceRealtimeStream(previousStream, {
@@ -1015,7 +1035,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     bumpViewRevision(slot);
     notify(sessionId);
     return { status: 'accepted', sessionId, generation: event.generation, seq: event.seq };
-  }, [commitRealtimeStream, deleteCachedRealtimeMessage, getSlot, notify, persistRealtimeMessage, scheduleRealtimeStreamCommit]);
+  }, [commitRealtimeStream, getSlot, notify, persistRealtimeMessage, scheduleRealtimeStreamCommit]);
 
   const getRealtimeCursor = useCallback((sessionId: string): RealtimeCursor | null => {
     return storeRef.current.get(sessionId)?.realtimeCursor ?? null;
@@ -1254,7 +1274,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     const status = await inspectBrowserStorage();
     const failure = cache.failureKind === 'none' ? status.failure : cache.failureKind;
     const next = { ...status, failure };
-    setCacheStorageStatus(next);
+    setCacheStorageStatus((previous) => cacheStorageStatusesMatch(previous, next) ? previous : next);
     return next;
   }, [cache, requestCachePersistence]);
 
@@ -1441,6 +1461,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     prioritizeSession,
     getActiveSessionId,
     setActiveSession,
+    setChatSurfaceActive,
     setStatus,
     isStale,
     updateStreaming,
@@ -1460,7 +1481,7 @@ export function useSessionStore(options: SessionStoreOptions = {}) {
     cacheCoordinator, getCacheStats,
     forceSyncCache, clearCache,
     persistMessage, prioritizeSession, getActiveSessionId,
-    setActiveSession, setStatus, isStale, updateStreaming, finalizeStreaming,
+    setActiveSession, setChatSurfaceActive, setStatus, isStale, updateStreaming, finalizeStreaming,
     clearRealtime, getMessages, getSessionSlot, getSessionSnapshot,
     getCanonicalResponseMetadata, isCanonicalResponseMetadataHydrated,
   ]);

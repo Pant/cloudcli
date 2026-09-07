@@ -6,6 +6,7 @@ import {
   acceptSequencedEvent,
   acceptCanonicalRevision,
   canReuseNotModified,
+  DEFAULT_REALTIME_COMMIT_INTERVAL_MS,
   deduplicateMessagesById,
   finalizeRealtimeStreamMessage,
   getSessionWarmupPolicy,
@@ -15,6 +16,7 @@ import {
   materializeRealtimeStream,
   reduceRealtimeStream,
   shouldApplyCacheHydration,
+  shouldScheduleRealtimeStreamCommit,
   upsertMessageById,
 } from './sessionStore.helpers';
 
@@ -190,6 +192,34 @@ test('high-volume stream acceptance accumulates chunks without per-delta text co
   const committed = materializeRealtimeStream(stream!);
   assert.equal(committed.content, Array.from({ length: accepted }, (_, index) => String((index + 1) % 10)).join(''));
   assert.equal(committed.pendingChunks?.length, 0);
+});
+
+test('foreground stream commits are cadence bounded while hidden streams coalesce', () => {
+  assert.ok(DEFAULT_REALTIME_COMMIT_INTERVAL_MS > 16);
+  let scheduled = false;
+  let commits = 0;
+  for (let delta = 0; delta < 10_000; delta++) {
+    if (shouldScheduleRealtimeStreamCommit({
+      isChatSurfaceActive: true,
+      isActiveSession: true,
+      hasScheduledCommit: scheduled,
+    })) scheduled = true;
+    if ((delta + 1) % 1_000 === 0 && scheduled) {
+      commits++;
+      scheduled = false;
+    }
+  }
+  assert.equal(commits, 10);
+  assert.equal(shouldScheduleRealtimeStreamCommit({
+    isChatSurfaceActive: false,
+    isActiveSession: true,
+    hasScheduledCommit: false,
+  }), false);
+  assert.equal(shouldScheduleRealtimeStreamCommit({
+    isChatSurfaceActive: true,
+    isActiveSession: false,
+    hasScheduledCommit: false,
+  }), false);
 });
 
 test('materialized streams roll generations and remain independent', () => {

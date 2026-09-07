@@ -113,7 +113,6 @@ export default tseslint.config(
       "src/components/plugins/view/PluginTabContent.tsx",
       "src/components/settings/view/tabs/agents-settings/sections/content/OpenCodeAgentsContent.tsx",
       "src/components/settings/view/tabs/browser-use-settings/BrowserUseSettingsTab.tsx",
-      "src/components/version-upgrade/view/VersionUpgradeModal.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

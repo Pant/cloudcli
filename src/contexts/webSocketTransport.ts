@@ -69,23 +69,3 @@ export function isCurrentWebSocketLifecycle(
 ): boolean {
   return activeLifecycle === callbackLifecycle;
 }
-
-export function shouldReloadForClientBuild(options: {
-  currentBuildId: string;
-  servedBuildId: string | null;
-  reloadPending: boolean;
-}): boolean {
-  return !options.reloadPending
-    && options.servedBuildId !== null
-    && options.servedBuildId.length > 0
-    && options.servedBuildId !== options.currentBuildId;
-}
-
-export function getClientBuildVersionUrl(baseUri: string): string {
-  return new URL('cloudcli-version.json', baseUri).toString();
-}
-
-export function parseClientBuildResource(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || !('build' in value)) return null;
-  return typeof value.build === 'string' && value.build.length > 0 ? value.build : null;
-}

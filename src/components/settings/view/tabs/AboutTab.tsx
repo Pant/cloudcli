@@ -1,9 +1,8 @@
 import { Cloud, Download, ExternalLink, MessageSquare, Star, Trash2, Users } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
+import { version as currentVersion } from '../../../../../package.json';
 import { CLOUDCLI_WORDMARK_FONT_FAMILY } from '../../../../constants/branding';
 import { IS_PLATFORM } from '../../../../constants/config';
-import { useVersionCheck } from '../../../../hooks/useVersionCheck';
 import { clearDiagnostics, exportDiagnostics } from '../../../../lib/logger';
 import PremiumFeatureCard from '../PremiumFeatureCard';
 
@@ -29,9 +28,6 @@ function DiscordIcon({ className }: { className?: string }) {
 }
 
 export default function AboutTab() {
-  const { t } = useTranslation('settings');
-  const { updateAvailable, latestVersion, currentVersion, releaseInfo } = useVersionCheck('siteboon', 'claudecodeui');
-  const releasesUrl = releaseInfo?.htmlUrl || `${GITHUB_REPO_URL}/releases`;
   const downloadDiagnostics = () => {
     const blob = new Blob([exportDiagnostics()], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -58,24 +54,13 @@ export default function AboutTab() {
               CloudCLI
             </span>
             <a
-              href={releasesUrl}
+              href={`${GITHUB_REPO_URL}/releases`}
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               v{currentVersion}
             </a>
-            {updateAvailable && latestVersion && (
-              <a
-                href={releasesUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-600 transition-colors hover:bg-green-500/20 dark:text-green-400"
-              >
-                {t('apiKeys.version.updateAvailable', { version: latestVersion })}
-                <ExternalLink className="h-2.5 w-2.5" />
-              </a>
-            )}
           </div>
           <p className="mt-0.5 text-sm text-muted-foreground">
             Open-source AI coding assistant interface

@@ -7,16 +7,16 @@ import { useSessionStoreContext } from './sessionStoreContext';
  * Transcript caching is otherwise driven by opened sessions or explicit sync.
  */
 export function SessionMessageCacheCoordinator() {
-  const sessionStore = useSessionStoreContext();
+  const { requestCachePersistence, refreshCacheStorageStatus } = useSessionStoreContext();
 
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
-      void sessionStore.requestCachePersistence().finally(() => sessionStore.refreshCacheStorageStatus(false));
+      void requestCachePersistence().finally(() => refreshCacheStorageStatus(false));
     });
     return () => { cancelled = true; };
-  }, [sessionStore]);
+  }, [requestCachePersistence, refreshCacheStorageStatus]);
 
   return null;
 }

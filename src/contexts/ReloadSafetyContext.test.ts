@@ -10,11 +10,11 @@ test('reload safety centralizes blockers and beforeunload decisions', async () =
   assert.match(source, /addEventListener\('beforeunload'/);
 });
 
-test('websocket reconnect and compact-build reloads both use the shared reload guard', async () => {
+test('websocket reconnect reload uses the shared reload guard without build polling', async () => {
   const source = await readFile(new URL('./WebSocketContext.tsx', import.meta.url), 'utf8');
   assert.match(source, /useReloadSafety\(\)/);
-  assert.equal((source.match(/confirmReload\(/g) ?? []).length, 2);
-  assert.match(source, /getClientBuildVersionUrl\(document\.baseURI\)/);
+  assert.equal((source.match(/confirmReload\(/g) ?? []).length, 1);
+  assert.doesNotMatch(source, /cloudcli-version\.json/);
   assert.doesNotMatch(source, /DOMParser/);
   assert.doesNotMatch(source, /fetch\('\/'/);
 });

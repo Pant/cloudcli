@@ -132,10 +132,6 @@
     "restoreSessionFailed": "세션 복원 실패. 다시 시도해주세요.",
     "restoreSessionError": "세션 복원 오류. 다시 시도해주세요."
   },
-  "version": {
-    "updateAvailable": "업데이트 가능",
-    "restartRequired": "업데이트가 설치됨 — 적용하려면 서버를 재시작하세요"
-  },
   "search": {
     "modeProjects": "프로젝트",
     "modeConversations": "대화",

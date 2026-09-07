@@ -21,8 +21,6 @@ import type {
 import ErrorBoundary from '../main-content/view/ErrorBoundary';
 import { markCloudCliLifecycle } from '../../lib/performanceDiagnostics';
 import { useAuth } from '../auth/context/authContextContract';
-import { usePwaUpdate } from '../../contexts/PwaUpdateContext';
-import { useReloadSafety } from '../../contexts/ReloadSafetyContext';
 
 import { createSessionActivitySyncController, getSessionActivityPollInterval, isLifecycleRelevantEvent } from './sessionActivitySync';
 
@@ -158,8 +156,6 @@ export default function AppContent() {
 
 function AppContentInner() {
   const { isOfflineSession } = useAuth();
-  const { updateReady, activateUpdate, postponeUpdate } = usePwaUpdate();
-  const { isReloadSafe, blockers } = useReloadSafety();
   const navigate = useNavigate();
   const location = useLocation();
   const sessionId = useMatch('/session/:sessionId')?.params.sessionId;
@@ -363,9 +359,8 @@ function AppContentInner() {
 
   return (
     <div className="fixed inset-0 flex bg-background" style={{ bottom: 'var(--keyboard-height, 0px)' }}>
-      {(isOfflineSession || updateReady) && <div className="fixed left-1/2 top-2 z-[100] flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2 text-sm text-amber-950 shadow-lg" role="status">
-        <span>{isOfflineSession ? 'Offline read-only mode. Saved projects, sessions, drafts, and recovery data remain available; server actions will not be delivered.' : 'A CloudCLI update is ready.'}</span>
-        {updateReady && <><button type="button" className="rounded border border-amber-600 px-2 py-1 font-medium disabled:opacity-50" disabled={!isReloadSafe} title={!isReloadSafe ? `Finish pending work: ${blockers.join(', ')}` : undefined} onClick={activateUpdate}>Update now</button><button type="button" className="rounded px-2 py-1" onClick={postponeUpdate}>Later</button></>}
+      {isOfflineSession && <div className="fixed left-1/2 top-2 z-[100] flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2 text-sm text-amber-950 shadow-lg" role="status">
+        <span>Offline read-only mode. Saved projects, sessions, drafts, and recovery data remain available; server actions will not be delivered.</span>
       </div>}
       {!isMobile ? (
         <div className="h-full flex-shrink-0 border-r border-border/50">

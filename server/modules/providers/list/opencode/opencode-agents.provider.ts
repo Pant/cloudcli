@@ -20,6 +20,8 @@ const MODEL_REFERENCE_PATTERN = /^[^\s/]+\/[^\s]+$/;
 const BARE_MODEL_ID_PATTERN = /^[^\s/]+$/;
 const PERMISSION_ACTIONS = new Set<ProviderAgentPermissionAction>(['allow', 'ask', 'deny']);
 const THEME_COLORS = new Set(['primary', 'secondary', 'accent', 'success', 'warning', 'error', 'info']);
+const AVAILABLE_AGENT_CACHE_TTL_MS = 15_000;
+const AGENT_DETAILS_CONCURRENCY = 4;
 const RESERVED_AGENT_OPTIONS = new Set([
   'description',
   'mode',
@@ -445,6 +447,9 @@ const toOpenCodeConfig = (agent: UpsertProviderAgentInput): Record<string, unkno
  * it never accepts a workspace path and therefore cannot create project agents.
  */
 export class OpenCodeAgentsProvider implements IProviderAgents {
+  private readonly availableAgentCache = new Map<string, { expiresAt: number; agents: ProviderAvailableAgent[] }>();
+  private readonly availableAgentInFlight = new Map<string, Promise<ProviderAvailableAgent[]>>();
+
   constructor(
     private readonly configStore = new OpenCodeConfigStore(),
     private readonly agentListRunner: OpenCodeAgentListRunner = runOpenCodeAgentList,
@@ -452,14 +457,55 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
   ) {}
 
   async listAvailableAgents(options: ProviderAgentListOptions = {}): Promise<ProviderAvailableAgent[]> {
-    const discoveredAgents = parseAvailableAgents(await this.agentListRunner(options.workspacePath));
-    const inspectedAgents = await Promise.all(discoveredAgents.map(async (agent, originalIndex) => {
-      const details = parseRuntimeAgentDetails(
-        agent.name,
-        await this.agentDetailsRunner(agent.name, options.workspacePath),
-      );
-      return { agent, details, originalIndex };
-    }));
+    const cacheKey = options.workspacePath || '';
+    const inFlight = this.availableAgentInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+    const cached = this.availableAgentCache.get(cacheKey);
+    if (!options.refresh && cached && cached.expiresAt > Date.now()) {
+      return cached.agents;
+    }
+
+    const discovery = this.discoverAvailableAgents(options.workspacePath);
+    this.availableAgentInFlight.set(cacheKey, discovery);
+    try {
+      const agents = await discovery;
+      this.availableAgentCache.set(cacheKey, {
+        expiresAt: Date.now() + AVAILABLE_AGENT_CACHE_TTL_MS,
+        agents,
+      });
+      return agents;
+    } finally {
+      if (this.availableAgentInFlight.get(cacheKey) === discovery) {
+        this.availableAgentInFlight.delete(cacheKey);
+      }
+    }
+  }
+
+  private async discoverAvailableAgents(workspacePath?: string): Promise<ProviderAvailableAgent[]> {
+    const discoveredAgents = parseAvailableAgents(await this.agentListRunner(workspacePath));
+    const inspectedAgents: Array<{
+      agent: ProviderAvailableAgent;
+      details: OpenCodeRuntimeAgentDetails;
+      originalIndex: number;
+    }> = new Array(discoveredAgents.length);
+    let nextIndex = 0;
+    const inspectNext = async (): Promise<void> => {
+      while (nextIndex < discoveredAgents.length) {
+        const originalIndex = nextIndex++;
+        const agent = discoveredAgents[originalIndex];
+        const details = parseRuntimeAgentDetails(
+          agent.name,
+          await this.agentDetailsRunner(agent.name, workspacePath),
+        );
+        inspectedAgents[originalIndex] = { agent, details, originalIndex };
+      }
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(AGENT_DETAILS_CONCURRENCY, discoveredAgents.length) },
+      () => inspectNext(),
+    ));
 
     // The CLI's native flag is the authoritative custom/built-in distinction.
     // Preserve discovery order inside each group while moving custom agents up.
@@ -478,6 +524,10 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
       }));
   }
 
+  private invalidateAvailableAgents(): void {
+    this.availableAgentCache.clear();
+  }
+
   async listAgents(): Promise<ProviderAgentDefinition[]> {
     const config = await this.configStore.readConfig('user');
     const agents = readObjectRecord(config.agent) ?? {};
@@ -491,7 +541,7 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
 
   async upsertAgent(input: UpsertProviderAgentInput): Promise<ProviderAgentDefinition> {
     const agent = validateAgent(input);
-    return this.configStore.updateConfig('user', '', (config) => {
+    const saved = await this.configStore.updateConfig('user', '', (config) => {
       const agents = { ...(readObjectRecord(config.agent) ?? {}) };
       const previousName = agent.originalName ?? agent.name;
       if (previousName !== agent.name && agents[agent.name] !== undefined) {
@@ -504,6 +554,8 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
       config.agent = agents;
       return normalizeAgent(agent.name, agents[agent.name]) as ProviderAgentDefinition;
     });
+    this.invalidateAvailableAgents();
+    return saved;
   }
 
   async updateAgentPreferences(
@@ -529,7 +581,7 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
       return invalidAgent('reasoningEffort must be a non-empty string.', 'INVALID_OPENCODE_REASONING_EFFORT');
     }
 
-    return this.configStore.updateConfig('user', '', (config) => {
+    const preferences = await this.configStore.updateConfig('user', '', (config) => {
       const agents = readObjectRecord(config.agent);
       const existing = agents && readObjectRecord(agents[name]);
       if (!agents || !existing) {
@@ -553,11 +605,13 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
         reasoningEffort: optionalString(updated.reasoningEffort),
       };
     });
+    this.invalidateAvailableAgents();
+    return preferences;
   }
 
   async removeAgent(nameInput: string): Promise<{ removed: boolean; provider: 'opencode'; name: string }> {
     const name = requiredAgentName(nameInput);
-    return this.configStore.updateConfig('user', '', (config) => {
+    const result = await this.configStore.updateConfig('user', '', (config) => {
       const agents = { ...(readObjectRecord(config.agent) ?? {}) };
       const removed = Object.prototype.hasOwnProperty.call(agents, name);
       if (removed) {
@@ -566,5 +620,7 @@ export class OpenCodeAgentsProvider implements IProviderAgents {
       }
       return { removed, provider: 'opencode' as const, name };
     });
+    if (result.removed) this.invalidateAvailableAgents();
+    return result;
   }
 }

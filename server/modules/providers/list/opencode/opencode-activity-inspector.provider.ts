@@ -38,9 +38,17 @@ type PartRow = {
 
 type PartActivity = OpenCodeActiveChildSession & { state: string };
 type SnapshotPartActivity = PartActivity & { taskUpdatedAt: number | null };
+type ActivitySnapshotCacheEntry = {
+  identity: string;
+  expiresAt: number;
+  snapshots: OpenCodeChildActivitySnapshot[];
+};
 
 const ACTIVE_TOOL_STATUSES = new Set(['pending', 'running']);
 const TASK_TOOL_NAMES = new Set(['task', 'subtask', 'subagent', 'sub-agent']);
+const ACTIVITY_CACHE_TTL_MS = 2_000;
+const CHILD_ACTIVITY_BATCH_SIZE = 400;
+const activitySnapshotCache = new Map<string, ActivitySnapshotCacheEntry>();
 
 // OpenCode has used both acronym-preserving and snake-case JSON field names in
 // persisted tool metadata. Do not include generic `id` or `parent*` keys: those
@@ -214,8 +222,28 @@ function inspectSnapshotPart(row: PartRow): SnapshotPartActivity[] {
   return inspectPart(row).map((activity) => ({ ...activity, taskUpdatedAt }));
 }
 
-function readLatestChildActivity(db: Database.Database, providerSessionId: string): number | null {
-  let latest: number | null = null;
+function readDatabaseIdentity(databasePath: string): string | null {
+  try {
+    const stat = fsSync.statSync(databasePath);
+    let walIdentity = 'no-wal';
+    try {
+      const wal = fsSync.statSync(`${databasePath}-wal`);
+      walIdentity = `${wal.size}`;
+    } catch {
+      // A database without a WAL still has a stable main-file identity.
+    }
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${walIdentity}`;
+  } catch {
+    return null;
+  }
+}
+
+function readLatestChildActivity(
+  db: Database.Database,
+  providerSessionIds: readonly string[],
+): Map<string, number> {
+  const latest = new Map<string, number>();
+  if (providerSessionIds.length === 0) return latest;
   const queries = [
     ['session', 'id', ['time_updated', 'time_created']],
     ['message', 'session_id', ['time_updated', 'time_created']],
@@ -228,9 +256,23 @@ function readLatestChildActivity(db: Database.Database, providerSessionId: strin
       const available = timeColumns.filter((column) => columns.has(column));
       if (available.length === 0) continue;
       const expression = available.length === 2 ? `COALESCE(${available[0]}, ${available[1]})` : available[0];
-      const row = db.prepare(`SELECT MAX(${expression}) AS activity FROM ${table} WHERE ${idColumn} = ?`).get(providerSessionId) as { activity?: unknown } | undefined;
-      const timestamp = normalizeTimestamp(row?.activity);
-      if (timestamp !== null && (latest === null || timestamp > latest)) latest = timestamp;
+      for (let offset = 0; offset < providerSessionIds.length; offset += CHILD_ACTIVITY_BATCH_SIZE) {
+        const batch = providerSessionIds.slice(offset, offset + CHILD_ACTIVITY_BATCH_SIZE);
+        const placeholders = batch.map(() => '?').join(', ');
+        const rows = db.prepare(`
+          SELECT ${idColumn} AS provider_session_id, MAX(${expression}) AS activity
+          FROM ${table}
+          WHERE ${idColumn} IN (${placeholders})
+          GROUP BY ${idColumn}
+        `).all(...batch) as Array<{ provider_session_id?: unknown; activity?: unknown }>;
+        for (const row of rows) {
+          const providerSessionId = readOptionalString(row.provider_session_id);
+          const timestamp = normalizeTimestamp(row.activity);
+          if (!providerSessionId || timestamp === null) continue;
+          const previous = latest.get(providerSessionId);
+          if (previous === undefined || timestamp > previous) latest.set(providerSessionId, timestamp);
+        }
+      }
     } catch {
       // Individual optional tables/columns are compatibility evidence only.
     }
@@ -238,11 +280,13 @@ function readLatestChildActivity(db: Database.Database, providerSessionId: strin
   return latest;
 }
 
-/** Reads the latest active or terminal lifecycle for every persisted Task child. */
-export function listOpenCodeChildActivitySnapshots(
-  databasePath = getOpenCodeDatabasePath(),
-): OpenCodeChildActivitySnapshot[] {
-  if (!fsSync.existsSync(databasePath)) return [];
+function inspectOpenCodeChildActivity(databasePath: string): OpenCodeChildActivitySnapshot[] {
+  const identity = readDatabaseIdentity(databasePath);
+  if (!identity) return [];
+  const now = Date.now();
+  const cached = activitySnapshotCache.get(databasePath);
+  if (cached?.identity === identity && cached.expiresAt > now) return cached.snapshots;
+
   let db: Database.Database | null = null;
   try {
     db = new Database(databasePath, { readonly: true, fileMustExist: true, timeout: 50 });
@@ -250,17 +294,39 @@ export function listOpenCodeChildActivitySnapshots(
     if (!columns.has('data')) return [];
     const created = columns.has('time_created') ? 'time_created' : 'NULL';
     const updated = columns.has('time_updated') ? 'time_updated' : 'NULL';
-    const rows = db.prepare(`SELECT data, ${created} AS time_created, ${updated} AS time_updated FROM part ORDER BY COALESCE(${updated}, ${created}) ASC`).all() as PartRow[];
+    const rows = db.prepare(`
+      SELECT data, ${created} AS time_created, ${updated} AS time_updated
+      FROM part
+      WHERE json_valid(data)
+        AND lower(COALESCE(
+          json_extract(data, '$.tool'),
+          json_extract(data, '$.name'),
+          json_extract(data, '$.part.tool'),
+          json_extract(data, '$.part.name'),
+          json_extract(data, '$.type')
+        )) IN ('task', 'subtask', 'subagent', 'sub-agent')
+      ORDER BY COALESCE(${updated}, ${created}) ASC, rowid ASC
+    `).all() as PartRow[];
     const latest = new Map<string, SnapshotPartActivity>();
     for (const row of rows) {
       for (const activity of inspectSnapshotPart(row)) {
         if (['pending', 'running', 'completed', 'error', 'cancelled'].includes(activity.state)) {
-          latest.set(activity.providerSessionId, activity);
+          const existing = latest.get(activity.providerSessionId);
+          latest.set(activity.providerSessionId, {
+            ...activity,
+            startedAt: existing?.startedAt !== null && existing?.startedAt !== undefined
+              && (activity.startedAt === null || existing.startedAt < activity.startedAt)
+              ? existing.startedAt
+              : activity.startedAt,
+            statusText: activity.statusText ?? existing?.statusText ?? null,
+          });
         }
       }
     }
-    return Array.from(latest.values(), (activity) => {
-      const childActivityAt = readLatestChildActivity(db!, activity.providerSessionId);
+    const activities = Array.from(latest.values());
+    const childActivity = readLatestChildActivity(db, activities.map(({ providerSessionId }) => providerSessionId));
+    const snapshots = activities.map((activity) => {
+      const childActivityAt = childActivity.get(activity.providerSessionId) ?? null;
       const lastActivityAt = Math.max(activity.taskUpdatedAt ?? 0, childActivityAt ?? 0) || null;
       return {
         providerSessionId: activity.providerSessionId,
@@ -272,11 +338,24 @@ export function listOpenCodeChildActivitySnapshots(
         lastActivityAt,
       };
     });
+    activitySnapshotCache.set(databasePath, {
+      identity: readDatabaseIdentity(databasePath) ?? identity,
+      expiresAt: Date.now() + ACTIVITY_CACHE_TTL_MS,
+      snapshots,
+    });
+    return snapshots;
   } catch {
     return [];
   } finally {
     db?.close();
   }
+}
+
+/** Reads the latest active or terminal lifecycle for every persisted Task child. */
+export function listOpenCodeChildActivitySnapshots(
+  databasePath = getOpenCodeDatabasePath(),
+): OpenCodeChildActivitySnapshot[] {
+  return inspectOpenCodeChildActivity(databasePath);
 }
 
 /**
@@ -290,68 +369,7 @@ export function listOpenCodeChildActivitySnapshots(
 export function listOpenCodeRunningChildSessions(
   databasePath = getOpenCodeDatabasePath(),
 ): OpenCodeActiveChildSession[] {
-  if (!fsSync.existsSync(databasePath)) {
-    return [];
-  }
-
-  let db: Database.Database | null = null;
-  try {
-    db = new Database(databasePath, {
-      readonly: true,
-      fileMustExist: true,
-      timeout: 50,
-    });
-
-    const columns = db.prepare('PRAGMA table_info(part)').all() as Array<{ name?: unknown }>;
-    const columnNames = new Set(
-      columns
-        .map((column) => (typeof column.name === 'string' ? column.name : null))
-        .filter((name): name is string => name !== null),
-    );
-    if (!columnNames.has('data')) {
-      return [];
-    }
-
-    const timeCreatedExpression = columnNames.has('time_created') ? 'time_created' : 'NULL';
-    const timeUpdatedExpression = columnNames.has('time_updated') ? 'time_updated' : 'NULL';
-    const rows = db.prepare(`
-      SELECT
-        data,
-        ${timeCreatedExpression} AS time_created,
-        ${timeUpdatedExpression} AS time_updated
-      FROM part
-      ORDER BY COALESCE(${timeUpdatedExpression}, ${timeCreatedExpression}) ASC
-    `).all() as PartRow[];
-    const active = new Map<string, PartActivity>();
-
-    for (const row of rows) {
-      for (const candidate of inspectPart(row)) {
-        if (!ACTIVE_TOOL_STATUSES.has(candidate.state)) {
-          active.delete(candidate.providerSessionId);
-          continue;
-        }
-
-        const existing = active.get(candidate.providerSessionId);
-        if (!existing) {
-          active.set(candidate.providerSessionId, candidate);
-          continue;
-        }
-
-        const existingStart = existing.startedAt ?? Number.POSITIVE_INFINITY;
-        const candidateStart = candidate.startedAt ?? Number.POSITIVE_INFINITY;
-        if (candidateStart < existingStart) {
-          existing.startedAt = candidate.startedAt;
-        }
-        if (!existing.statusText && candidate.statusText) {
-          existing.statusText = candidate.statusText;
-        }
-      }
-    }
-
-    return Array.from(active.values()).map(({ state: _state, ...activity }) => activity);
-  } catch {
-    return [];
-  } finally {
-    db?.close();
-  }
+  return inspectOpenCodeChildActivity(databasePath)
+    .filter(({ state }) => ACTIVE_TOOL_STATUSES.has(state))
+    .map(({ providerSessionId, startedAt, statusText }) => ({ providerSessionId, startedAt, statusText }));
 }

@@ -28,6 +28,7 @@ test('direct chat and session intent mount chat and preserve it after later tab 
   assert.match(source, /if \(activeTab === 'chat' \|\| selectedSession\) setChatInvoked\(true\)/);
   assert.doesNotMatch(source, /setChatInvoked\(false\)/);
   assert.match(source, /activeTab === 'chat' \? 'block' : 'hidden'/);
+  assert.match(source, /isActive=\{activeTab === 'chat'\}/);
   assert.match(source, /if \(chatInvoked\) namespaces\.push\('chat'\)/);
 });
 

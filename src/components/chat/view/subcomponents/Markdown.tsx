@@ -20,6 +20,64 @@ type MarkdownProps = {
   isStreaming?: boolean;
 };
 
+type StreamingSegment = {
+  kind: 'text' | 'code';
+  content: string;
+  language?: string;
+};
+
+function splitStreamingMarkdown(content: string): StreamingSegment[] {
+  const segments: StreamingSegment[] = [];
+  const fencePattern = /^```([^\r\n]*)\r?\n?/gm;
+  let cursor = 0;
+  let openFence: RegExpExecArray | null;
+
+  while ((openFence = fencePattern.exec(content)) !== null) {
+    if (openFence.index > cursor) {
+      segments.push({ kind: 'text', content: content.slice(cursor, openFence.index) });
+    }
+
+    const codeStart = fencePattern.lastIndex;
+    const closeFence = /^```\s*$/gm;
+    closeFence.lastIndex = codeStart;
+    const closeMatch = closeFence.exec(content);
+    const codeEnd = closeMatch?.index ?? content.length;
+    segments.push({
+      kind: 'code',
+      content: content.slice(codeStart, codeEnd),
+      language: openFence[1].trim() || undefined,
+    });
+    cursor = closeMatch ? closeFence.lastIndex : content.length;
+    fencePattern.lastIndex = cursor;
+  }
+
+  if (cursor < content.length || segments.length === 0) {
+    segments.push({ kind: 'text', content: content.slice(cursor) });
+  }
+
+  return segments;
+}
+
+export function StreamingMarkdown({ children, className }: MarkdownProps) {
+  const content = String(children ?? '');
+  const segments = splitStreamingMarkdown(content);
+
+  return (
+    <div className={`${className ?? ''} whitespace-pre-wrap break-words`} data-streaming-markdown="plain">
+      {segments.map((segment, index) => segment.kind === 'code' ? (
+        <div key={index} className="relative my-2 overflow-hidden rounded-xl bg-muted font-mono text-sm text-foreground">
+          {segment.language && (
+            <div className="px-4 pt-2 text-xs font-medium uppercase text-gray-400">{segment.language}</div>
+          )}
+          <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words p-4"><code>{segment.content}</code></pre>
+        </div>
+      ) : (
+        <span key={index}>{segment.content}</span>
+      ))}
+    </div>
+  );
+}
+
 // Links to the wider web (or in-page anchors) keep normal browser navigation;
 // everything else is treated as a workspace file reference.
 const isExternalHref = (href?: string): boolean =>
@@ -184,7 +242,7 @@ const markdownComponents = {
 
 const MathMarkdown = lazy(() => import('./MarkdownMath'));
 
-function MarkdownView({ children, className, breaks = false, isStreaming = false }: MarkdownProps) {
+function RichMarkdown({ children, className, breaks = false }: MarkdownProps) {
   const content = normalizeInlineCodeFences(String(children ?? ''));
   const useMath = hasMarkdownMath(content);
   const remarkPlugins = useMemo(
@@ -198,7 +256,7 @@ function MarkdownView({ children, className, breaks = false, isStreaming = false
   const components = useMemo(
     () => ({
       ...markdownComponents,
-      code: (props: CodeBlockProps) => <CodeBlock {...props} isStreaming={isStreaming} />,
+      code: (props: CodeBlockProps) => <CodeBlock {...props} />,
       a: ({ href, children: linkChildren }: { href?: string; children?: React.ReactNode }) => {
         // Prefer the href when it is a real path; otherwise fall back to the
         // link text, since models often emit `[src/foo.ts]()` with an empty href.
@@ -232,7 +290,7 @@ function MarkdownView({ children, className, breaks = false, isStreaming = false
         );
       },
     }),
-    [isStreaming, openFileInEditor],
+    [openFileInEditor],
   );
 
   if (useMath) {
@@ -246,6 +304,10 @@ function MarkdownView({ children, className, breaks = false, isStreaming = false
       </ReactMarkdown>
     </div>
   );
+}
+
+function MarkdownView(props: MarkdownProps) {
+  return props.isStreaming ? <StreamingMarkdown {...props} /> : <RichMarkdown {...props} />;
 }
 
 export const Markdown = memo(MarkdownView);

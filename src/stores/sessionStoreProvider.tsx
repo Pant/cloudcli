@@ -10,6 +10,7 @@ export function SessionStoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const sessionStore = useSessionStore({
     userNamespace: getUserCacheNamespace(user),
+    realtimeCommitIntervalMs: 100,
   });
 
   return (

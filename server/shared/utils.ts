@@ -143,6 +143,30 @@ export function setStaticResourceCacheHeaders(response: Response, filePath: stri
   response.setHeader('Cache-Control', 'no-cache, must-revalidate');
 }
 
+const PWA_COMPATIBILITY_RESOURCES = new Set(['sw.js', 'manifest.json', 'cloudcli-version.json']);
+
+/**
+ * Creates the narrow legacy nested-route resource bridge used by server index.
+ * Only exact PWA/update basenames are served from the application root; every
+ * other request continues through the existing extension 404 / SPA pipeline.
+ */
+export function createPwaCompatibilityResourceHandler(appRoot: string): RequestHandler {
+  return (request, response, next) => {
+    const requestPath = new URL(request.originalUrl, 'http://cloudcli.local').pathname;
+    const resource = path.posix.basename(requestPath);
+    if (!PWA_COMPATIBILITY_RESOURCES.has(resource) || requestPath === `/${resource}`) return next();
+
+    const preferredRoot = resource === 'manifest.json' ? 'public' : 'dist';
+    const fallbackRoot = preferredRoot === 'dist' ? 'public' : 'dist';
+    const preferredPath = path.join(appRoot, preferredRoot, resource);
+    const resourceRoot = fs.existsSync(preferredPath) ? preferredRoot : fallbackRoot;
+    const resourcePath = path.join(appRoot, resourceRoot, resource);
+    if (!fs.existsSync(resourcePath)) return next();
+    setStaticResourceCacheHeaders(response, resourcePath);
+    response.sendFile(resource, { root: path.join(appRoot, resourceRoot) });
+  };
+}
+
 /**
  * Wraps arbitrary data in the standard API success envelope.
  *

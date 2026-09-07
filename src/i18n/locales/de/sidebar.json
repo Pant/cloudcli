@@ -132,10 +132,6 @@
     "restoreSessionFailed": "Sitzung konnte nicht wiederhergestellt werden. Bitte erneut versuchen.",
     "restoreSessionError": "Fehler beim Wiederherstellen der Sitzung. Bitte erneut versuchen."
   },
-  "version": {
-    "updateAvailable": "Update verfügbar",
-    "restartRequired": "Update installiert – zum Anwenden Server neu starten"
-  },
   "search": {
     "modeProjects": "Projekte",
     "modeConversations": "Unterhaltungen",

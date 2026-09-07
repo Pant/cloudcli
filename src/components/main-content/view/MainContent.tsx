@@ -173,6 +173,7 @@ function MainContent({
               <FeatureNamespaceBoundary namespace="chat">
                 <ErrorBoundary area="chat" name="Chat" resetKeys={[selectedSession?.id, selectedProject.projectId]}>
                   <ChatInterface
+                isActive={activeTab === 'chat'}
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
                 ws={ws}

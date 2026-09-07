@@ -5,6 +5,7 @@ import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 
 import type { NormalizedMessage } from './normalizedMessage';
 import {
+  cacheStorageStatusesMatch,
   inspectBrowserStorage,
   getUserCacheNamespace,
   SESSION_MESSAGE_CACHE_DB_VERSION,
@@ -12,6 +13,16 @@ import {
   SESSION_MESSAGE_CACHE_METADATA_STORE,
   SessionMessageCacheRepository,
 } from './sessionMessageCache';
+
+test('matches cache storage statuses only when every context-exposed field is equal', () => {
+  const status = { persistence: 'granted', usage: 100, quota: 1_000, failure: 'none' } as const;
+
+  assert.equal(cacheStorageStatusesMatch(status, { ...status }), true);
+  assert.equal(cacheStorageStatusesMatch(status, { ...status, persistence: 'denied' }), false);
+  assert.equal(cacheStorageStatusesMatch(status, { ...status, usage: 101 }), false);
+  assert.equal(cacheStorageStatusesMatch(status, { ...status, quota: 2_000 }), false);
+  assert.equal(cacheStorageStatusesMatch(status, { ...status, failure: 'quota' }), false);
+});
 
 Object.defineProperty(globalThis, 'IDBKeyRange', {
   configurable: true,
