@@ -8,7 +8,19 @@ import type { ChatMessage, SubagentChildTool } from '../types/types';
 import { decodeHtmlEntities, unescapeWithMathProtection, formatUsageLimitText } from '../utils/chatFormatting';
 
 function formatToolResultContent(content: unknown): string {
-  const text = typeof content === 'string' ? content : JSON.stringify(content);
+  if (content == null) return '';
+
+  let text: string;
+  if (typeof content === 'string') {
+    text = content;
+  } else {
+    try {
+      text = JSON.stringify(content) ?? '';
+    } catch {
+      return '';
+    }
+  }
+
   const toolUseErrorMatch = /^<tool_use_error>([\s\S]*)<\/tool_use_error>$/.exec(text.trim());
   return toolUseErrorMatch ? toolUseErrorMatch[1] : text;
 }

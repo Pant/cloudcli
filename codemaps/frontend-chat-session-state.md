@@ -114,6 +114,7 @@ sequenceDiagram
 - Extend `ToolRenderer` when a new `ToolDisplayConfig` display/content type is required. Reuse `OneLineDisplay`, `CollapsibleDisplay`, `BashCommandDisplay`, or add a lazy family under `src/components/chat/tools/components/` for heavy renderers.
 - Add specialized content under `components/ContentRenderers/` (`MarkdownContent`, `FileListContent`, `TodoListContent`, `TaskListContent`, `QuestionAnswerContent`, `TextContent`). File-opening and diff behavior enters through `onFileOpen` and `createDiff`.
 - `Task` is special: `normalizedToChatMessages` builds `subagentState`, and `ToolRenderer` delegates it to `SubagentContainer`. New nested-agent semantics must update both normalization and rendering.
+- Tool-result formatting at `normalizedToChatMessages` is total: absent or unstringifiable content becomes empty display text without discarding result existence, error, or completion metadata, while strings, JSON-compatible values, and `<tool_use_error>` wrappers retain readable output.
 - Permission-specific UI is registered through `registerPermissionPanel`/`getPermissionPanel` in `src/components/chat/tools/configs/permissionPanelRegistry.ts` rather than hard-coding provider panels into the generic renderer.
 - Search tool payload normalization belongs in `normalizeSearchToolResult` (`src/components/chat/tools/searchResultNormalizer.ts`).
 
@@ -138,7 +139,7 @@ sequenceDiagram
 | Complete/local history policy | `src/stores/sessionHistoryPolicy.test.ts` |
 | History envelope/worker boundary | `src/utils/sessionHistoryValidation.test.ts` |
 | Queue dispatch | `src/hooks/useQueuedMessageAutoSend.test.ts` |
-| Session load and render conversion | `src/components/chat/hooks/sessionMessageLoading.test.ts`, `src/components/chat/hooks/useChatMessages.test.ts`, `src/components/chat/utils/messageKeys.test.ts` |
+| Session load and render conversion | `src/components/chat/hooks/sessionMessageLoading.test.ts`, `src/components/chat/hooks/useChatMessages.test.ts`, `src/components/chat/hooks/useChatMessages.toolResultRecovery.test.ts` (absent/malformed Task result fail-open coverage), `src/components/chat/utils/messageKeys.test.ts` |
 | Tool configuration/render content | `src/components/chat/tools/configs/toolConfigs.test.ts`, `src/components/chat/tools/searchResultNormalizer.test.ts`, `src/components/chat/tools/components/ContentRenderers/QuestionAnswerContent.test.tsx` |
 | Transcript viewport | `src/components/chat/hooks/sessionViewport.test.ts`, `src/components/chat/view/subcomponents/transcriptWindow.test.ts` |
 
