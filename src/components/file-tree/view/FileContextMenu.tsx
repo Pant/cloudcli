@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Copy, Download, FileText, FolderPlus, Pencil, RefreshCw, Trash2, type LucideIcon } from 'lucide-react';
+import { Copy, Download, FileText, FolderPlus, Move, Pencil, RefreshCw, Trash2, type LucideIcon } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
 
@@ -55,6 +55,8 @@ export default function FileContextMenu({
   onCopyPath,
   onDownload,
   isLoading = false,
+  onBatchAction,
+  selected = false,
   className = '',
 }: {
   children: ReactNode;
@@ -67,6 +69,8 @@ export default function FileContextMenu({
   onCopyPath?: (item: FileContextItem) => void;
   onDownload?: (item: FileContextItem) => void;
   isLoading?: boolean;
+  onBatchAction?: (operation: 'copy' | 'move' | 'delete', item: FileContextItem) => void;
+  selected?: boolean;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -94,6 +98,8 @@ export default function FileContextMenu({
   const menuActions = useMemo<ContextMenuAction[]>(() => {
     if (item?.type === 'file') {
       return [
+        { key: 'copyItems', icon: Copy, label: t('fileTree.batch.copy', 'Copy selected'), onSelect: () => onBatchAction?.('copy', item) },
+        { key: 'moveItems', icon: Move, label: t('fileTree.batch.move', 'Move selected'), onSelect: () => onBatchAction?.('move', item) },
         {
           key: 'rename',
           icon: Pencil,
@@ -104,7 +110,7 @@ export default function FileContextMenu({
           key: 'delete',
           icon: Trash2,
           label: t('fileTree.context.delete', 'Delete'),
-          onSelect: () => onDelete?.(item),
+          onSelect: () => selected ? onBatchAction?.('delete', item) : onDelete?.(item),
           isDanger: true,
         },
         {
@@ -125,6 +131,8 @@ export default function FileContextMenu({
 
     if (item?.type === 'directory') {
       return [
+        { key: 'copyItems', icon: Copy, label: t('fileTree.batch.copy', 'Copy selected'), onSelect: () => onBatchAction?.('copy', item) },
+        { key: 'moveItems', icon: Move, label: t('fileTree.batch.move', 'Move selected'), onSelect: () => onBatchAction?.('move', item) },
         {
           key: 'newFile',
           icon: FileText,
@@ -148,7 +156,7 @@ export default function FileContextMenu({
           key: 'delete',
           icon: Trash2,
           label: t('fileTree.context.delete', 'Delete'),
-          onSelect: () => onDelete?.(item),
+          onSelect: () => selected ? onBatchAction?.('delete', item) : onDelete?.(item),
           isDanger: true,
         },
         {
@@ -188,7 +196,7 @@ export default function FileContextMenu({
         showDividerBefore: true,
       },
     ];
-  }, [item, onCopyPath, onDelete, onDownload, onNewFile, onNewFolder, onRefresh, onRename, t]);
+  }, [item, onBatchAction, onCopyPath, onDelete, onDownload, onNewFile, onNewFolder, onRefresh, onRename, selected, t]);
 
   useEffect(() => {
     if (!isMenuOpen) {

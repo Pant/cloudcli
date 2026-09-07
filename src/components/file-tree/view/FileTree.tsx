@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, X, Loader2, Folder, Upload } from 'lucide-react';
+import { AlertTriangle, Check, X, Loader2, Folder, Upload, Copy, Move, Trash2 } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
 import { ICON_SIZE_CLASS, getFileIconData } from '../constants/fileIcons';
@@ -11,7 +11,7 @@ import { useFileTreeSearch } from '../hooks/useFileTreeSearch';
 import { useFileTreeViewMode } from '../hooks/useFileTreeViewMode';
 import { useFileTreeUpload } from '../hooks/useFileTreeUpload';
 import type { FileTreeImageSelection, FileTreeNode } from '../types/types';
-import { formatFileSize, formatRelativeTime, isImageFile } from '../utils/fileTreeUtils';
+import { collectFileTreeDestinations, formatFileSize, formatRelativeTime, isImageFile } from '../utils/fileTreeUtils';
 import { Project } from '../../../types/app';
 import { ScrollArea, Input } from '../../../shared/view/ui';
 
@@ -76,6 +76,12 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
     showToast,
   });
   const operationLoading = operations.operationLoading || upload.operationLoading;
+  const [destinationTree, setDestinationTree] = useState<FileTreeNode[]>([]);
+
+  useEffect(() => {
+    if (!operations.batchOperation) setDestinationTree([]);
+    else void loadCompleteTree().then(setDestinationTree).catch((error: Error) => showToast(error.message, 'error'));
+  }, [loadCompleteTree, operations.batchOperation, showToast]);
 
   // Focus input when creating new item
   useEffect(() => {
@@ -170,6 +176,16 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
 
       <FileTreeUploadProgress upload={upload.uploadProgress} />
 
+      {operations.selectedPaths.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2" role="toolbar" aria-label={t('fileTree.batch.actions', 'Selected item actions')}>
+          <span className="mr-auto text-sm font-medium">{t('fileTree.batch.count', '{{count}} selected', { count: operations.selectedPaths.size })}</span>
+          <button type="button" disabled={operationLoading} onClick={() => operations.handleStartBatch('copy')} className="flex min-h-9 items-center gap-1 rounded px-2 hover:bg-accent disabled:opacity-50"><Copy className="h-4 w-4" />{t('fileTree.batch.copy', 'Copy')}</button>
+          <button type="button" disabled={operationLoading} onClick={() => operations.handleStartBatch('move')} className="flex min-h-9 items-center gap-1 rounded px-2 hover:bg-accent disabled:opacity-50"><Move className="h-4 w-4" />{t('fileTree.batch.move', 'Move')}</button>
+          <button type="button" disabled={operationLoading} onClick={() => operations.handleStartBatch('delete')} className="flex min-h-9 items-center gap-1 rounded px-2 text-red-600 hover:bg-red-50 disabled:opacity-50"><Trash2 className="h-4 w-4" />{t('fileTree.batch.delete', 'Delete')}</button>
+          <button type="button" disabled={operationLoading} onClick={operations.clearSelection} className="min-h-9 rounded px-2 hover:bg-accent disabled:opacity-50">{t('fileTree.batch.clear', 'Clear')}</button>
+        </div>
+      )}
+
       {viewMode === 'detailed' && filteredFiles.length > 0 && <FileTreeDetailedColumns />}
 
       <ScrollArea className="flex-1 px-2 py-1">
@@ -215,6 +231,9 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
           pageState={searchQuery ? new Map() : pageState}
           onLoadNextPage={(path) => void loadNextPage(path)}
           onItemClick={handleItemClick}
+          selectedPaths={operations.selectedPaths}
+          onToggleSelection={operations.toggleSelection}
+          onBatchAction={operations.handleStartBatch}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}
           formatRelativeTime={formatRelativeTimeLabel}
@@ -244,7 +263,7 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
       )}
 
       {/* Delete Confirmation Dialog */}
-      {operations.deleteConfirmation.isOpen && operations.deleteConfirmation.item && (
+      {operations.deleteConfirmation.isOpen && operations.deleteConfirmation.items.length > 0 && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
           <div className="mx-4 max-w-sm rounded-lg border border-border bg-background p-4 shadow-lg">
             <div className="mb-4 flex items-center gap-3">
@@ -253,19 +272,15 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
               </div>
               <div>
                 <h3 className="font-medium text-foreground">
-                  {t('fileTree.delete.title', 'Delete {{type}}', {
-                    type: operations.deleteConfirmation.item.type === 'directory' ? 'Folder' : 'File'
-                  })}
+                   {t('fileTree.delete.itemsTitle', 'Delete {{count}} item(s)?', { count: operations.deleteConfirmation.items.length })}
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  {operations.deleteConfirmation.item.name}
+                   {operations.deleteConfirmation.items.map(({ name }) => name).join(', ')}
                 </p>
               </div>
             </div>
             <p className="mb-4 text-sm text-muted-foreground">
-              {operations.deleteConfirmation.item.type === 'directory'
-                ? t('fileTree.delete.folderWarning', 'This folder and all its contents will be permanently deleted.')
-                : t('fileTree.delete.fileWarning', 'This file will be permanently deleted.')}
+               {t('fileTree.delete.itemsWarning', 'The selected items and all folder contents will be permanently deleted.')}
             </p>
             <div className="flex justify-end gap-2">
               <button
@@ -283,6 +298,24 @@ export default function FileTree({ selectedProject, onFileOpen }: FileTreeProps)
                 {operationLoading && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('fileTree.delete.confirm', 'Delete')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {operations.batchOperation && operations.batchOperation !== 'delete' && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+          <div role="dialog" aria-modal="true" className="mx-4 w-full max-w-md rounded-lg border border-border bg-background p-4 shadow-lg">
+            <h3 className="mb-2 font-medium capitalize">{operations.batchOperation} {operations.selectedPaths.size} item(s)</h3>
+            <label className="mb-1 block text-sm" htmlFor="batch-destination">{t('fileTree.batch.destination', 'Destination folder')}</label>
+            <select id="batch-destination" value={operations.batchDestination} onChange={(event) => operations.setBatchDestination(event.target.value)} disabled={operationLoading} className="h-10 w-full rounded border border-border bg-background px-2">
+              {collectFileTreeDestinations(destinationTree, operations.selectedPaths).map((destination) => (
+                <option key={destination.path || '__root__'} value={destination.path}>{`${'  '.repeat(destination.depth)}${destination.label}`}</option>
+              ))}
+            </select>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" disabled={operationLoading} onClick={operations.closeBatchDialog} className="rounded px-3 py-2 hover:bg-accent">{t('common.cancel', 'Cancel')}</button>
+              <button type="button" disabled={operationLoading} onClick={() => void operations.handleConfirmBatch()} className="rounded bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50">{operationLoading && <Loader2 className="mr-1 inline h-4 w-4 animate-spin" />}{t('common.confirm', 'Confirm')}</button>
             </div>
           </div>
         </div>

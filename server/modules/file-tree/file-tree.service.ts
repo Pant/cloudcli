@@ -93,6 +93,11 @@ function resolvePathInsideProject(projectRoot: string, targetPath: string): stri
   return resolvedPath;
 }
 
+function isSameOrDescendant(parentPath: string, candidatePath: string): boolean {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
 function expandWorkspacePath(workspaceRoot: string, inputPath: string): string {
   if (inputPath === '~') {
     return workspaceRoot;
@@ -671,6 +676,86 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
         path: resolvedPath,
         type: entryType,
         message: 'Deleted successfully',
+      };
+    },
+
+    async batchMutateEntries(input) {
+      const projectRoot = path.resolve(await resolveProjectRoot(input.projectId));
+      const uniqueSources = [...new Set(input.sourcePaths.map((sourcePath) => (
+        resolvePathInsideProject(projectRoot, sourcePath)
+      )))];
+      if (uniqueSources.length === 0) {
+        throw createFileTreeError('At least one source path is required', 400, 'BATCH_SOURCES_REQUIRED');
+      }
+      if (uniqueSources.includes(projectRoot)) {
+        throw createFileTreeError('Cannot mutate project root directory', 403, 'PROJECT_ROOT_MUTATION_FORBIDDEN');
+      }
+
+      const sourceStats = await Promise.all(uniqueSources.map(async (sourcePath) => {
+        try {
+          return await fileSystem.stat(sourcePath);
+        } catch {
+          throw createFileTreeError(`Source not found: ${sourcePath}`, 404, 'FILE_TREE_ENTRY_NOT_FOUND');
+        }
+      }));
+      const normalizedSources = uniqueSources.filter((sourcePath, sourceIndex) => !uniqueSources.some(
+        (possibleParent, parentIndex) => parentIndex !== sourceIndex
+          && sourceStats[parentIndex].isDirectory()
+          && isSameOrDescendant(possibleParent, sourcePath),
+      ));
+
+      let destinationPaths: string[] = [];
+      if (input.operation !== 'delete') {
+        if (input.destinationPath === undefined) {
+          throw createFileTreeError('Destination path is required', 400, 'BATCH_DESTINATION_REQUIRED');
+        }
+        const destinationDirectory = resolvePathInsideProject(projectRoot, input.destinationPath);
+        let destinationStats;
+        try {
+          destinationStats = await fileSystem.stat(destinationDirectory);
+        } catch {
+          throw createFileTreeError('Destination directory not found', 404, 'DESTINATION_NOT_FOUND');
+        }
+        if (!destinationStats.isDirectory()) {
+          throw createFileTreeError('Destination path must be a directory', 400, 'DESTINATION_NOT_DIRECTORY');
+        }
+        for (const sourcePath of normalizedSources) {
+          const sourceIndex = uniqueSources.indexOf(sourcePath);
+          if (sourceStats[sourceIndex].isDirectory() && isSameOrDescendant(sourcePath, destinationDirectory)) {
+            throw createFileTreeError('Destination cannot be inside a selected directory', 400, 'DESTINATION_INSIDE_SOURCE');
+          }
+        }
+        destinationPaths = normalizedSources.map((sourcePath) => path.join(destinationDirectory, path.basename(sourcePath)));
+        for (const destinationPath of destinationPaths) {
+          try {
+            await fileSystem.access(destinationPath);
+          } catch {
+            continue;
+          }
+          throw createFileTreeError(`Destination already exists: ${destinationPath}`, 409, 'DESTINATION_COLLISION');
+        }
+      }
+
+      for (let index = 0; index < normalizedSources.length; index += 1) {
+        const sourcePath = normalizedSources[index];
+        const sourceIndex = uniqueSources.indexOf(sourcePath);
+        if (input.operation === 'copy') {
+          await fileSystem.copyEntry(sourcePath, destinationPaths[index]);
+        } else if (input.operation === 'move') {
+          await fileSystem.rename(sourcePath, destinationPaths[index]);
+        } else if (sourceStats[sourceIndex].isDirectory()) {
+          await fileSystem.removeDirectory(sourcePath);
+        } else {
+          await fileSystem.unlink(sourcePath);
+        }
+      }
+
+      return {
+        success: true,
+        operation: input.operation,
+        affectedPaths: normalizedSources,
+        destinationPaths,
+        message: `${input.operation === 'delete' ? 'Deleted' : input.operation === 'copy' ? 'Copied' : 'Moved'} ${normalizedSources.length} ${normalizedSources.length === 1 ? 'entry' : 'entries'} successfully`,
       };
     },
 

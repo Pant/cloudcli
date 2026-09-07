@@ -280,6 +280,16 @@ export const api = {
       body: JSON.stringify({ path, type }),
     }),
 
+  batchMutateFiles: (projectId, { operation, sources, destination }) =>
+    authenticatedFetch(`/api/file-tree/projects/${projectId}/files/batch`, {
+      method: 'POST',
+      body: JSON.stringify({
+        operation,
+        sourcePaths: sources,
+        ...(destination === undefined ? {} : { destinationPath: destination }),
+      }),
+    }),
+
   uploadFiles: (projectId, formData) =>
     authenticatedFetch(`/api/file-tree/projects/${projectId}/files/upload`, {
       method: 'POST',

@@ -47,6 +47,9 @@ type FileTreeNodeProps = {
   pageState: Map<string, FileTreePageState>;
   onLoadNextPage: (path?: string) => void;
   onItemClick: (item: FileTreeNodeType) => void;
+  selectedPaths: Set<string>;
+  onToggleSelection: (item: FileTreeNodeType) => void;
+  onBatchAction: (operation: 'copy' | 'move' | 'delete', item: FileTreeNodeType) => void;
   renderFileIcon: (filename: string) => ReactNode;
   formatFileSize: (bytes?: number) => string;
   formatRelativeTime: (date?: string) => string;
@@ -104,6 +107,9 @@ export default function FileTreeNode({
   pageState,
   onLoadNextPage,
   onItemClick,
+  selectedPaths,
+  onToggleSelection,
+  onBatchAction,
   renderFileIcon,
   formatFileSize,
   formatRelativeTime,
@@ -127,6 +133,7 @@ export default function FileTreeNode({
   const isLoading = isDirectory && directoryLoading.has(item.path);
   const hasChildren = Boolean(isDirectory && item.children && item.children.length > 0);
   const isRenaming = renamingItem?.path === item.path;
+  const isSelected = selectedPaths.has(item.path);
 
   const nameClassName = cn(
     'text-[13px] leading-tight truncate',
@@ -136,12 +143,13 @@ export default function FileTreeNode({
   // View mode only changes the row layout; selection, expansion, and recursion stay shared.
   const rowClassName = cn(
     viewMode === 'detailed'
-      ? 'group grid grid-cols-12 gap-2 py-[3px] pr-2 hover:bg-accent/60 cursor-pointer items-center rounded-sm transition-colors duration-100'
+      ? 'group grid grid-cols-[24px_repeat(12,minmax(0,1fr))] gap-2 py-[3px] pr-2 hover:bg-accent/60 cursor-pointer items-center rounded-sm transition-colors duration-100'
       : viewMode === 'compact'
       ? 'group flex items-center justify-between py-[3px] pr-2 hover:bg-accent/60 cursor-pointer rounded-sm transition-colors duration-100'
       : 'group flex items-center gap-1.5 py-[3px] pr-2 cursor-pointer rounded-sm hover:bg-accent/60 transition-colors duration-100',
     isDirectory && isOpen && 'border-l-2 border-primary/30',
     (isDirectory && !isOpen) || !isDirectory ? 'border-l-2 border-transparent' : '',
+    isSelected && 'bg-primary/10 ring-1 ring-inset ring-primary/30',
   );
 
   // Render rename input if this item is being renamed
@@ -179,8 +187,22 @@ export default function FileTreeNode({
     <div
       className={rowClassName}
       style={{ paddingLeft: `${level * 16 + 4}px` }}
-      onClick={() => onItemClick(item)}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey) onToggleSelection(item);
+        else onItemClick(item);
+      }}
+      aria-selected={isSelected}
     >
+      <button
+        type="button"
+        aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
+        aria-pressed={isSelected}
+        disabled={operationLoading}
+        className="flex h-6 w-6 flex-shrink-0 items-center justify-center"
+        onClick={(event) => { event.stopPropagation(); onToggleSelection(item); }}
+      >
+        <span className={cn('h-4 w-4 rounded border', isSelected && 'border-primary bg-primary text-primary-foreground after:block after:content-[\'✓\'] after:text-center after:text-xs')} />
+      </button>
       {viewMode === 'detailed' ? (
         <>
           <div className="col-span-5 flex min-w-0 items-center gap-1.5">
@@ -235,6 +257,8 @@ export default function FileTreeNode({
           onCopyPath={onCopyPath}
           onDownload={onDownload}
           onRefresh={onRefresh}
+          onBatchAction={onBatchAction}
+          selected={isSelected}
         >
           {rowContent}
         </FileContextMenu>
@@ -260,6 +284,9 @@ export default function FileTreeNode({
               pageState={pageState}
               onLoadNextPage={onLoadNextPage}
               onItemClick={onItemClick}
+              selectedPaths={selectedPaths}
+              onToggleSelection={onToggleSelection}
+              onBatchAction={onBatchAction}
               renderFileIcon={renderFileIcon}
               formatFileSize={formatFileSize}
               formatRelativeTime={formatRelativeTime}

@@ -3,6 +3,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import type {
   FileTreeListOptions,
+  FileTreeBatchOperation,
   FileTreePageOptions,
   FileTreeLogger,
   FileTreeServices,
@@ -135,6 +136,24 @@ function readEntryType(value: unknown): 'file' | 'directory' {
     });
   }
   return value;
+}
+
+function readBatchOperation(value: unknown): FileTreeBatchOperation {
+  if (value !== 'copy' && value !== 'move' && value !== 'delete') {
+    throw new AppError('Operation must be "copy", "move", or "delete"', {
+      code: 'INVALID_FILE_TREE_BATCH_OPERATION', statusCode: 400,
+    });
+  }
+  return value;
+}
+
+function readSourcePaths(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.some((entry) => typeof entry !== 'string' || !entry.trim())) {
+    throw new AppError('sourcePaths must be a non-empty array of paths', {
+      code: 'INVALID_FILE_TREE_BATCH_SOURCES', statusCode: 400,
+    });
+  }
+  return value as string[];
 }
 
 function readRelativePaths(value: unknown): string[] {
@@ -298,6 +317,28 @@ export function createFileTreeRouter(
     response.json(await services.deleteEntry({
       projectId: readProjectId(request),
       targetPath,
+    }));
+  }, logger));
+
+  router.post('/projects/:projectId/files/batch', createRouteHandler(async (request, response) => {
+    const body = readBody(request);
+    const operation = readBatchOperation(body.operation);
+    const destinationPath = readOptionalString(body.destinationPath);
+    if (operation !== 'delete' && destinationPath === null) {
+      throw new AppError('destinationPath is required for copy and move', {
+        code: 'INVALID_FILE_TREE_BATCH_DESTINATION', statusCode: 400,
+      });
+    }
+    if (operation === 'delete' && body.destinationPath !== undefined) {
+      throw new AppError('destinationPath is not allowed for delete', {
+        code: 'INVALID_FILE_TREE_BATCH_DESTINATION', statusCode: 400,
+      });
+    }
+    response.json(await services.batchMutateEntries({
+      projectId: readProjectId(request),
+      operation,
+      sourcePaths: readSourcePaths(body.sourcePaths),
+      ...(destinationPath !== null ? { destinationPath } : {}),
     }));
   }, logger));
 

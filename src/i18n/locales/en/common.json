@@ -132,6 +132,23 @@
       "refresh": "Refresh",
       "menuLabel": "File context menu",
       "loading": "Loading..."
+    },
+    "batch": {
+      "actions": "Selected item actions",
+      "count": "{{count}} selected",
+      "copy": "Copy",
+      "move": "Move",
+      "delete": "Delete",
+      "clear": "Clear selection",
+      "destination": "Destination folder"
+    },
+    "delete": {
+      "itemsTitle": "Delete {{count}} item(s)?",
+      "itemsWarning": "The selected items and all folder contents will be permanently deleted."
+    },
+    "toast": {
+      "itemsDeleted": "{{count}} item(s) deleted",
+      "batchComplete": "{{operation}} completed for {{count}} item(s)"
     }
   },
   "projectWizard": {

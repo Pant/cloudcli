@@ -17,6 +17,9 @@ type FileTreeBodyProps = {
   pageState: Map<string, FileTreePageState>;
   onLoadNextPage: (path?: string) => void;
   onItemClick: (item: FileTreeNode) => void;
+  selectedPaths: Set<string>;
+  onToggleSelection: (item: FileTreeNode) => void;
+  onBatchAction: (operation: 'copy' | 'move' | 'delete', item: FileTreeNode) => void;
   renderFileIcon: (filename: string) => ReactNode;
   formatFileSize: (bytes?: number) => string;
   formatRelativeTime: (date?: string) => string;
@@ -47,6 +50,9 @@ export default function FileTreeBody({
   pageState,
   onLoadNextPage,
   onItemClick,
+  selectedPaths,
+  onToggleSelection,
+  onBatchAction,
   renderFileIcon,
   formatFileSize,
   formatRelativeTime,
@@ -90,6 +96,9 @@ export default function FileTreeBody({
            pageState={pageState}
            onLoadNextPage={onLoadNextPage}
           onItemClick={onItemClick}
+          selectedPaths={selectedPaths}
+          onToggleSelection={onToggleSelection}
+          onBatchAction={onBatchAction}
           renderFileIcon={renderFileIcon}
           formatFileSize={formatFileSize}
           formatRelativeTime={formatRelativeTime}

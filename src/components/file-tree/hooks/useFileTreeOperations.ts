@@ -1,9 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import JSZip from 'jszip';
 
 import { api } from '../../../utils/api';
-import type { FileTreeNode } from '../types/types';
+import type { FileTreeBatchOperation, FileTreeNode } from '../types/types';
 import type { Project } from '../../../types/app';
 import { collectFileTreeZipEntries } from '../utils/fileTreeUtils';
 
@@ -18,7 +18,7 @@ export type ToastMessage = {
 
 export type DeleteConfirmation = {
   isOpen: boolean;
-  item: FileTreeNode | null;
+  items: FileTreeNode[];
 };
 
 export type UseFileTreeOperationsOptions = {
@@ -39,8 +39,18 @@ export type UseFileTreeOperationsResult = {
   // Delete operations
   deleteConfirmation: DeleteConfirmation;
   handleStartDelete: (item: FileTreeNode) => void;
+  handleStartBatch: (operation: FileTreeBatchOperation, item?: FileTreeNode) => void;
   handleCancelDelete: () => void;
   handleConfirmDelete: () => Promise<void>;
+
+  selectedPaths: Set<string>;
+  batchOperation: FileTreeBatchOperation | null;
+  batchDestination: string;
+  setBatchDestination: (path: string) => void;
+  toggleSelection: (item: FileTreeNode) => void;
+  clearSelection: () => void;
+  closeBatchDialog: () => void;
+  handleConfirmBatch: () => Promise<void>;
 
   // Create operations
   isCreating: boolean;
@@ -75,13 +85,36 @@ export function useFileTreeOperations({
   const [renameValue, setRenameValue] = useState('');
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation>({
     isOpen: false,
-    item: null,
+    items: [],
   });
   const [isCreating, setIsCreating] = useState(false);
   const [newItemParent, setNewItemParent] = useState('');
   const [newItemType, setNewItemType] = useState<'file' | 'directory'>('file');
   const [newItemName, setNewItemName] = useState('');
   const [operationLoading, setOperationLoading] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [batchOperation, setBatchOperation] = useState<FileTreeBatchOperation | null>(null);
+  const [batchDestination, setBatchDestination] = useState('');
+
+  useEffect(() => {
+    setSelectedPaths(new Set());
+    setBatchOperation(null);
+    setBatchDestination('');
+    setDeleteConfirmation({ isOpen: false, items: [] });
+  }, [selectedProject?.projectId]);
+
+  const toggleSelection = useCallback((item: FileTreeNode) => {
+    setSelectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(item.path)) next.delete(item.path); else next.add(item.path);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedPaths(new Set()), []);
+  const closeBatchDialog = useCallback(() => {
+    setBatchOperation(null);
+    setBatchDestination('');
+  }, []);
 
   // Validation
   const validateFilename = useCallback((name: string): string | null => {
@@ -150,23 +183,29 @@ export function useFileTreeOperations({
 
   // Delete operations
   const handleStartDelete = useCallback((item: FileTreeNode) => {
-    setDeleteConfirmation({ isOpen: true, item });
-  }, []);
+    const items = selectedPaths.has(item.path) ? [...selectedPaths].map((path) => ({ path, name: path.split('/').pop() || path, type: 'file' as const })) : [item];
+    setDeleteConfirmation({ isOpen: true, items });
+  }, [selectedPaths]);
+
+  const handleStartBatch = useCallback((operation: FileTreeBatchOperation, item?: FileTreeNode) => {
+    if (item && !selectedPaths.has(item.path)) setSelectedPaths(new Set([item.path]));
+    if (operation === 'delete') {
+      const paths = item && !selectedPaths.has(item.path) ? [item.path] : [...selectedPaths];
+      setDeleteConfirmation({ isOpen: true, items: paths.map((path) => ({ path, name: path.split('/').pop() || path, type: 'file' })) });
+    } else setBatchOperation(operation);
+  }, [selectedPaths]);
 
   const handleCancelDelete = useCallback(() => {
-    setDeleteConfirmation({ isOpen: false, item: null });
+    setDeleteConfirmation({ isOpen: false, items: [] });
   }, []);
 
   const handleConfirmDelete = useCallback(async () => {
-    const { item } = deleteConfirmation;
-    if (!item || !selectedProject) return;
+    const { items } = deleteConfirmation;
+    if (items.length === 0 || !selectedProject) return;
 
     setOperationLoading(true);
     try {
-      const response = await api.deleteFile(selectedProject.projectId, {
-        path: item.path,
-        type: item.type,
-      });
+      const response = await api.batchMutateFiles(selectedProject.projectId, { operation: 'delete', sources: items.map(({ path }) => path), destination: undefined });
 
       if (!response.ok) {
         const data = await response.json();
@@ -174,19 +213,40 @@ export function useFileTreeOperations({
       }
 
       showToast(
-        item.type === 'directory'
-          ? t('fileTree.toast.folderDeleted', 'Folder deleted')
-          : t('fileTree.toast.fileDeleted', 'File deleted'),
+        t('fileTree.toast.itemsDeleted', '{{count}} item(s) deleted', { count: items.length }),
         'success'
       );
       onRefresh();
+      clearSelection();
       handleCancelDelete();
     } catch (err) {
       showToast((err as Error).message, 'error');
     } finally {
       setOperationLoading(false);
     }
-  }, [deleteConfirmation, selectedProject, showToast, t, onRefresh, handleCancelDelete]);
+  }, [deleteConfirmation, selectedProject, showToast, t, onRefresh, handleCancelDelete, clearSelection]);
+
+  const handleConfirmBatch = useCallback(async () => {
+    if (!selectedProject || !batchOperation || batchOperation === 'delete' || selectedPaths.size === 0) return;
+    setOperationLoading(true);
+    try {
+      const response = await api.batchMutateFiles(selectedProject.projectId, {
+        operation: batchOperation, sources: [...selectedPaths], destination: batchDestination,
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || `Failed to ${batchOperation}`);
+      }
+      showToast(t('fileTree.toast.batchComplete', '{{operation}} completed for {{count}} item(s)', { operation: batchOperation, count: selectedPaths.size }), 'success');
+      onRefresh();
+      clearSelection();
+      closeBatchDialog();
+    } catch (err) {
+      showToast((err as Error).message, 'error');
+    } finally {
+      setOperationLoading(false);
+    }
+  }, [batchDestination, batchOperation, clearSelection, closeBatchDialog, onRefresh, selectedPaths, selectedProject, showToast, t]);
 
   // Create operations
   const handleStartCreate = useCallback((parentPath: string, type: 'file' | 'directory') => {
@@ -350,8 +410,17 @@ export function useFileTreeOperations({
     // Delete operations
     deleteConfirmation,
     handleStartDelete,
+    handleStartBatch,
     handleCancelDelete,
     handleConfirmDelete,
+    selectedPaths,
+    batchOperation,
+    batchDestination,
+    setBatchDestination,
+    toggleSelection,
+    clearSelection,
+    closeBatchDialog,
+    handleConfirmBatch,
 
     // Create operations
     isCreating,

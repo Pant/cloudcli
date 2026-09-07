@@ -22,12 +22,12 @@ This map covers the project-scoped file explorer, editor, Git UI, terminal surfa
 | Symbol | Path | Navigation role |
 |---|---|---|
 | `useFileTreeData` | `src/components/file-tree/hooks/useFileTreeData.ts` | Loads paged roots/directories, tracks request generations and per-directory paging, refreshes loaded branches, and supplies complete-tree loading for search. |
-| `useFileTreeOperations` | `src/components/file-tree/hooks/useFileTreeOperations.ts` | Create, rename, delete, copy-path, and download orchestration; refreshes after mutations. |
+| `useFileTreeOperations` | `src/components/file-tree/hooks/useFileTreeOperations.ts` | Create, rename, path-based multi-selection, batch copy/move/delete dialogs and mutations, copy-path, and download orchestration; clears selection after success/project changes and refreshes after mutations. |
 | `useFileTreeUpload` | `src/components/file-tree/hooks/useFileTreeUpload.ts` | File picker/drop upload validation, batching/progress, and refresh. |
 | `useFileTreeSearch` | `src/components/file-tree/hooks/useFileTreeSearch.ts` | Loads the complete tree when needed, filters it, and expands matching directories. |
 | `FileTreeNode` | `src/components/file-tree/types/types.ts` | Core recursive file/directory shape including metadata and lazy-loading state. |
 | `createExplorerDirectoryRequestPlan`, `FileTreeInFlightRequests` | `src/components/file-tree/utils/fileTreeRequestUtils.ts` | Define paged request shape and deduplicate in-flight tree reads. |
-| `RecentProjectFileTreeCache`, `replaceDirectoryChildren`, `reconcileFileTreeMetadata` | `src/components/file-tree/utils/fileTreeUtils.ts` | Preserve recent project snapshots and safely merge lazy-loaded content/metadata. |
+| `RecentProjectFileTreeCache`, `replaceDirectoryChildren`, `reconcileFileTreeMetadata`, `normalizeSelectedPaths`, `collectFileTreeDestinations` | `src/components/file-tree/utils/fileTreeUtils.ts` | Preserve recent project snapshots, merge lazy-loaded content/metadata, normalize nested path selections, resolve loaded nodes, and build root-inclusive valid destination choices. |
 | `useFileOpenResolver` | `src/hooks/useFileOpenResolver.ts` | Wraps an editor opener; caches a flattened `api.getFiles` result per project and resolves bare/partial references. |
 | `resolveFileReference` | `src/hooks/useFileOpenResolver.ts` | Normalizes/sanitizes a reference, prefers exact/path-suffix matches, then basename matches. |
 
@@ -91,6 +91,8 @@ sequenceDiagram
 ```
 
 `FileTree.handleItemClick` lazy-loads directories, opens images in `ImageViewer`, and otherwise invokes `onFileOpen(item.path)`. A Git open is different: `useGitPanelController.openFile` requests `/api/git/file-with-diff`, converts repository-relative paths with `workspaceFilePath`, and passes old/current snapshots so `useCodeEditorDocument` can avoid a disk read and render a diff. Previewable media and known binary extensions never enter the text-save path.
+
+Selection is keyed by item path and exposed through touch-sized row controls; Ctrl/Cmd-click toggles selection while ordinary clicks retain the open/expand flow. The selected-count toolbar and context menu open copy/move/delete workflows. Copy/move loads the complete tree for a root-inclusive destination chooser and excludes selected directory descendants; successful batch mutations refresh and clear state, while failures preserve it.
 
 ### Git status to stage and commit
 

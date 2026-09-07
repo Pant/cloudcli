@@ -8,6 +8,7 @@ import {
   appendDirectoryChildren,
   createRecentProjectFileTreeCache,
   collectFileTreeZipEntries,
+  collectFileTreeDestinations,
   extractFileTreeSubtree,
   findLoadedDirectoryPaths,
   formatFileSize,
@@ -19,6 +20,8 @@ import {
   replaceFileTreeSubtree,
   replaceRootChildrenPreservingLoadedBranches,
   reconcileFileTreeMetadata,
+  normalizeSelectedPaths,
+  resolveFileTreeNodes,
 } from './fileTreeUtils';
 import {
   createExplorerDirectoryRequestPlan,
@@ -335,4 +338,19 @@ test('ZIP manifest collection includes files from every complete descendant bran
     { path: '/project/src/main.ts', archivePath: 'src/main.ts' },
     { path: '/project/src/lib/util.ts', archivePath: 'src/lib/util.ts' },
   ]);
+});
+
+test('selection helpers normalize nested paths and resolve visible nodes', () => {
+  const tree = [directory('/project/src', [file('/project/src/main.ts')]), file('/project/readme.md')];
+  assert.deepEqual(normalizeSelectedPaths(['/project/src/main.ts', '/project/src', '/project/readme.md']), [
+    '/project/src', '/project/readme.md',
+  ]);
+  assert.deepEqual(resolveFileTreeNodes(tree, ['/project/src/main.ts', '/missing']).map((node) => node.path), [
+    '/project/src/main.ts',
+  ]);
+});
+
+test('destination choices include root and exclude selected directory descendants', () => {
+  const tree = [directory('/project/src', [directory('/project/src/lib', [])]), directory('/project/docs', [])];
+  assert.deepEqual(collectFileTreeDestinations(tree, ['/project/src']).map(({ path }) => path), ['', '/project/docs']);
 });

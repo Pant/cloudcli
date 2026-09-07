@@ -24,6 +24,7 @@ function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTree
     createEntry: unexpectedOperation,
     renameEntry: unexpectedOperation,
     deleteEntry: unexpectedOperation,
+    batchMutateEntries: unexpectedOperation,
     storeUploadedFiles: unexpectedOperation,
     ...overrides,
   };
@@ -236,4 +237,58 @@ test('create route rejects invalid entry types without calling the service', asy
   });
 
   assert.equal(createCalled, false);
+});
+
+test('batch route validates and delegates one project-scoped operation', async () => {
+  const inputs: Parameters<FileTreeServices['batchMutateEntries']>[0][] = [];
+  const services = createFakeServices({ batchMutateEntries: async (input) => {
+    inputs.push(input);
+    return { success: true, operation: input.operation, affectedPaths: input.sourcePaths, destinationPaths: [], message: 'done' };
+  } });
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/batch`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operation: 'move', sourcePaths: ['src/a.ts', 'docs'], destinationPath: 'archive' }),
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.deepEqual(inputs, [{ projectId: 'project-1', operation: 'move', sourcePaths: ['src/a.ts', 'docs'], destinationPath: 'archive' }]);
+});
+
+test('batch route delegates an empty destinationPath as the project root', async () => {
+  const inputs: Parameters<FileTreeServices['batchMutateEntries']>[0][] = [];
+  const services = createFakeServices({ batchMutateEntries: async (input) => {
+    inputs.push(input);
+    return { success: true, operation: input.operation, affectedPaths: input.sourcePaths, destinationPaths: [], message: 'done' };
+  } });
+  await withFileTreeServer(services, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/batch`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operation: 'copy', sourcePaths: ['src/a.ts'], destinationPath: '' }),
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.deepEqual(inputs, [{
+    projectId: 'project-1', operation: 'copy', sourcePaths: ['src/a.ts'], destinationPath: '',
+  }]);
+});
+
+test('batch route rejects malformed operation, sources, and destination without delegation', async () => {
+  let called = false;
+  const services = createFakeServices({ batchMutateEntries: async () => { called = true; throw new Error('unexpected'); } });
+  await withFileTreeServer(services, async (baseUrl) => {
+    for (const body of [
+      { operation: 'rename', sourcePaths: ['a'] },
+      { operation: 'delete', sourcePaths: [] },
+      { operation: 'copy', sourcePaths: ['a'] },
+      { operation: 'move', sources: ['a'], destination: 'target' },
+      { operation: 'delete', sourcePaths: ['a'], destinationPath: 'target' },
+    ]) {
+      const response = await fetch(`${baseUrl}/api/file-tree/projects/project-1/files/batch`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 400);
+    }
+  });
+  assert.equal(called, false);
 });

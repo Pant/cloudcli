@@ -49,6 +49,9 @@ const fileTreeFileSystem: FileTreeFileSystem = {
   },
   unlink: (filePath) => fsPromises.unlink(filePath),
   copyFile: (sourcePath, destinationPath) => fsPromises.copyFile(sourcePath, destinationPath),
+  async copyEntry(sourcePath, destinationPath) {
+    await fsPromises.cp(sourcePath, destinationPath, { recursive: true, force: false, errorOnExist: true });
+  },
   createReadStream: (filePath) => fs.createReadStream(filePath),
 };
 

@@ -66,7 +66,8 @@ flowchart LR
 - Workspace discovery: `GET /browse-filesystem` → `browseWorkspace`; `POST /create-folder` → `createWorkspaceFolder`.
 - Read/open/save: `GET /projects/:projectId/file` → `readTextFile`; `GET /projects/:projectId/files/content` → `openFile`; `PUT /projects/:projectId/file` → `saveTextFile`.
 - Tree listing: `GET /projects/:projectId/files` → `listProjectFiles` (depth, metadata, `.gitignore` options); `GET .../files/page` → `listProjectFilePage` (bounded paging).
-- Mutation: `POST .../files/create` → `createEntry`; `PUT .../files/rename` → `renameEntry`; `DELETE .../files` → `deleteEntry`; `POST .../files/upload` → `storeUploadedFiles`.
+- Mutation: `POST .../files/create` → `createEntry`; `PUT .../files/rename` → `renameEntry`; `DELETE .../files` → `deleteEntry`; `POST .../files/batch` → `batchMutateEntries`; `POST .../files/upload` → `storeUploadedFiles`.
+- Batch copy/move/delete resolves every source and destination from the project ID, removes descendants of selected directories, protects the project root, and preflights descendant targets and basename collisions before invoking recursive copy, rename, or delete adapters.
 - `buildFileTree` filters common heavy/hidden implementation directories, sorts directories first, optionally reads metadata under a priority-aware concurrency limiter, and optionally applies `createGitignoreEntryFilter`.
 
 ### Git (`/api/git`)
@@ -101,7 +102,7 @@ flowchart LR
 ## Focused tests and validation
 
 - Projects: `server/modules/projects/tests/projects.routes.test.ts`, `project-management.service.test.ts`, `project-clone.service.test.ts`, `projects-with-sessions-fetch.service.test.ts`, and `project-star.service.test.ts`.
-- File Tree: `server/modules/file-tree/tests/file-tree.routes.test.ts` and `file-tree.service.test.ts` cover route delegation, containment, errors, paging/concurrency, and uploads.
+- File Tree: `server/modules/file-tree/tests/file-tree.routes.test.ts` and `file-tree.service.test.ts` cover route delegation, containment, errors, paging/concurrency, uploads, and batch mutation preflight/adapter behavior.
 - Git: `server/modules/git/tests/git.test.ts`, `git-init.routes.test.ts`, and `git-repository.service.test.ts` cover parsers, initialization, safe selector resolution, and discovery.
 - Worktrees: `server/modules/worktrees/tests/worktrees.routes.test.ts` plus focused tests for create, create-and-open, open, list, merge, remove, and Git helpers.
 - Shared security boundary: `server/shared/tests/workspace-path-validation.test.ts` validates workspace-root and symlink-escape rejection.

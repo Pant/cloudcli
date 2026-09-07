@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next';
 
 import { IMAGE_FILE_EXTENSIONS } from '../constants/constants';
-import type { FileTreeGeneration, FileTreeNode } from '../types/types';
+import type { FileTreeDestination, FileTreeGeneration, FileTreeNode } from '../types/types';
 
 export type FileTreeNodes = FileTreeNode[];
 
@@ -40,6 +40,38 @@ export function findFileTreeNode(items: FileTreeNodes, targetPath: string): File
   }
 
   return undefined;
+}
+
+/** Resolve currently loaded nodes for path-based selection without dropping stale paths from state. */
+export function resolveFileTreeNodes(items: FileTreeNodes, paths: Iterable<string>): FileTreeNode[] {
+  const wanted = new Set(paths);
+  const resolved: FileTreeNode[] = [];
+  const visit = (nodes: FileTreeNodes) => nodes.forEach((node) => {
+    if (wanted.has(node.path)) resolved.push(node);
+    if (node.children) visit(node.children);
+  });
+  visit(items);
+  return resolved;
+}
+
+/** Collapse nested selections to the highest selected path. */
+export function normalizeSelectedPaths(paths: Iterable<string>): string[] {
+  const unique = [...new Set(paths)].sort((a, b) => a.length - b.length || a.localeCompare(b));
+  return unique.filter((path) => !unique.some((parent) => parent !== path && path.startsWith(`${parent.replace(/\/$/, '')}/`)));
+}
+
+/** Build root-inclusive destinations, excluding selected directories and their descendants. */
+export function collectFileTreeDestinations(items: FileTreeNodes, selectedPaths: Iterable<string>): FileTreeDestination[] {
+  const selected = normalizeSelectedPaths(selectedPaths);
+  const destinations: FileTreeDestination[] = [{ path: '', label: '/', depth: 0 }];
+  const visit = (nodes: FileTreeNodes, depth: number) => nodes.forEach((node) => {
+    if (node.type !== 'directory') return;
+    if (selected.some((path) => node.path === path || node.path.startsWith(`${path.replace(/\/$/, '')}/`))) return;
+    destinations.push({ path: node.path, label: node.name, depth });
+    if (node.children) visit(node.children, depth + 1);
+  });
+  visit(items, 1);
+  return destinations;
 }
 
 /**

@@ -59,6 +59,7 @@ function createFakeFileSystem(
     removeDirectory: unexpectedOperation,
     unlink: unexpectedOperation,
     copyFile: unexpectedOperation,
+    copyEntry: unexpectedOperation,
     createReadStream: () => Readable.from([]),
     ...overrides,
   };
@@ -601,4 +602,71 @@ test('createEntry performs filesystem mutation only through the injected adapter
 
   assert.equal(result.path, targetPath);
   assert.deepEqual(writtenFiles, [{ filePath: targetPath, content: '' }]);
+});
+
+test('batchMutateEntries normalizes nested sources and recursively copies mixed entries', async () => {
+  const root = path.resolve('batch-project');
+  const directory = path.join(root, 'src');
+  const child = path.join(directory, 'child.ts');
+  const file = path.join(root, 'README.md');
+  const destination = path.join(root, 'archive');
+  const copies: string[][] = [];
+  const existing = new Set([directory, child, file, destination]);
+  const service = createFileTreeService(createDependencies(createFakeFileSystem({
+    stat: async (candidatePath) => createStats(candidatePath === directory || candidatePath === destination, 0o755),
+    access: async (candidatePath) => { if (!existing.has(candidatePath)) throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+    copyEntry: async (...paths) => { copies.push(paths); },
+  }), root));
+
+  const result = await service.batchMutateEntries({
+    projectId: 'project-1', operation: 'copy', sourcePaths: [directory, child, file, directory], destinationPath: destination,
+  });
+  assert.deepEqual(result.affectedPaths, [directory, file]);
+  assert.deepEqual(result.destinationPaths, [path.join(destination, 'src'), path.join(destination, 'README.md')]);
+  assert.deepEqual(copies, [[directory, path.join(destination, 'src')], [file, path.join(destination, 'README.md')]]);
+});
+
+test('batchMutateEntries preflights all move collisions before mutation', async () => {
+  const root = path.resolve('batch-project');
+  const source = path.join(root, 'one.txt');
+  const destination = path.join(root, 'target');
+  let renamed = false;
+  const service = createFileTreeService(createDependencies(createFakeFileSystem({
+    stat: async (candidatePath) => createStats(candidatePath === destination, 0o755),
+    access: async () => undefined,
+    rename: async () => { renamed = true; },
+  }), root));
+  await assert.rejects(service.batchMutateEntries({ projectId: 'project-1', operation: 'move', sourcePaths: [source], destinationPath: destination }),
+    (error: unknown) => error instanceof AppError && error.code === 'DESTINATION_COLLISION');
+  assert.equal(renamed, false);
+});
+
+test('batchMutateEntries rejects traversal, project root, and descendant destinations', async () => {
+  const root = path.resolve('batch-project');
+  const directory = path.join(root, 'src');
+  const service = createFileTreeService(createDependencies(createFakeFileSystem({
+    stat: async () => createStats(true, 0o755),
+  }), root));
+  await assert.rejects(service.batchMutateEntries({ projectId: 'project-1', operation: 'delete', sourcePaths: ['../outside'] }),
+    (error: unknown) => error instanceof AppError && error.code === 'PATH_OUTSIDE_PROJECT');
+  await assert.rejects(service.batchMutateEntries({ projectId: 'project-1', operation: 'delete', sourcePaths: [root] }),
+    (error: unknown) => error instanceof AppError && error.code === 'PROJECT_ROOT_MUTATION_FORBIDDEN');
+  await assert.rejects(service.batchMutateEntries({ projectId: 'project-1', operation: 'copy', sourcePaths: [directory], destinationPath: path.join(directory, 'nested') }),
+    (error: unknown) => error instanceof AppError && error.code === 'DESTINATION_INSIDE_SOURCE');
+});
+
+test('batchMutateEntries deletes files and directories through matching adapters', async () => {
+  const root = path.resolve('batch-project');
+  const directory = path.join(root, 'folder');
+  const file = path.join(root, 'file.txt');
+  const removed: string[] = [];
+  const unlinked: string[] = [];
+  const service = createFileTreeService(createDependencies(createFakeFileSystem({
+    stat: async (candidatePath) => createStats(candidatePath === directory, 0o755),
+    removeDirectory: async (candidatePath) => { removed.push(candidatePath); },
+    unlink: async (candidatePath) => { unlinked.push(candidatePath); },
+  }), root));
+  await service.batchMutateEntries({ projectId: 'project-1', operation: 'delete', sourcePaths: [directory, file] });
+  assert.deepEqual(removed, [directory]);
+  assert.deepEqual(unlinked, [file]);
 });

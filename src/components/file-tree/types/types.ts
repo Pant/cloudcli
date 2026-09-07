@@ -3,6 +3,13 @@ import type { LucideIcon } from 'lucide-react';
 export type FileTreeViewMode = 'simple' | 'compact' | 'detailed';
 
 export type FileTreeItemType = 'file' | 'directory';
+export type FileTreeBatchOperation = 'copy' | 'move' | 'delete';
+
+export type FileTreeDestination = {
+  path: string;
+  label: string;
+  depth: number;
+};
 
 export interface FileTreeNode {
   name: string;

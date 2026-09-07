@@ -1380,7 +1380,30 @@ export type FileTreeFileSystem = {
   removeDirectory(directoryPath: string): Promise<void>;
   unlink(filePath: string): Promise<void>;
   copyFile(sourcePath: string, destinationPath: string): Promise<void>;
+  /** Recursively copies a file or directory without replacing an existing destination. */
+  copyEntry(sourcePath: string, destinationPath: string): Promise<void>;
   createReadStream(filePath: string): Readable;
+};
+
+/** Batch mutation supported by the project-scoped File Tree API. */
+export type FileTreeBatchOperation = 'copy' | 'move' | 'delete';
+
+/** Validated service input for one preflighted multi-entry filesystem mutation. */
+export type FileTreeBatchMutationInput = {
+  projectId: string;
+  operation: FileTreeBatchOperation;
+  sourcePaths: string[];
+  /** Required for copy/move and omitted for delete. */
+  destinationPath?: string;
+};
+
+/** Completed batch mutation, including normalized sources and produced destinations. */
+export type FileTreeBatchMutationResult = {
+  success: true;
+  operation: FileTreeBatchOperation;
+  affectedPaths: string[];
+  destinationPaths: string[];
+  message: string;
 };
 
 /**
@@ -1491,6 +1514,7 @@ export type FileTreeServices = {
     type: 'file' | 'directory';
     message: string;
   }>;
+  batchMutateEntries(input: FileTreeBatchMutationInput): Promise<FileTreeBatchMutationResult>;
   storeUploadedFiles(input: {
     projectId: string;
     targetPath: string;
